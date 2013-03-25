@@ -45,21 +45,21 @@ class PipelineSpec extends AkkaSpec {
   "A Pipeline" must {
 
     "be correctly evaluated if single stage" in {
-      val ts = stage[Level1, Level2](1, 0, false).apply(null)
-      ts.commandPipeline(Level2.msgA) must be(Seq(Left(Level1.msgA)))
-      ts.eventPipeline(Level1.msgA) must be(Seq(Right(Level2.msgA)))
-      ts.commandPipeline(Level2.msgB) must be(Seq(Left(Level1.msgB)))
-      ts.eventPipeline(Level1.msgB) must be(Seq(Right(Level2.msgB)))
+      val (cmd, evt) = PipelineFactory.buildFunctionPair(null, stage[Level1, Level2](1, 0, false))
+      cmd(Level2.msgA) must be(Seq(Level1.msgA) -> Nil)
+      evt(Level1.msgA) must be(Nil -> Seq(Level2.msgA))
+      cmd(Level2.msgB) must be(Seq(Level1.msgB) -> Nil)
+      evt(Level1.msgB) must be(Nil -> Seq(Level2.msgB))
     }
 
     "be correctly evaluated when two combined" in {
       val stage1 = stage[Level1, Level2](1, 0, false)
       val stage2 = stage[Level2, Level3](1, 0, false)
-      val ts = stage1 >> stage2 apply null
-      ts.commandPipeline(Level3.msgA) must be(Seq(Left(Level1.msgA)))
-      ts.eventPipeline(Level1.msgA) must be(Seq(Right(Level3.msgA)))
-      ts.commandPipeline(Level3.msgB) must be(Seq(Left(Level1.msgB)))
-      ts.eventPipeline(Level1.msgB) must be(Seq(Right(Level3.msgB)))
+      val (cmd, evt) = PipelineFactory.buildFunctionPair(null, stage1 >> stage2)
+      cmd(Level3.msgA) must be(Seq(Left(Level1.msgA)))
+      evt(Level1.msgA) must be(Seq(Right(Level3.msgA)))
+      cmd(Level3.msgB) must be(Seq(Left(Level1.msgB)))
+      evt(Level1.msgB) must be(Seq(Right(Level3.msgB)))
     }
 
     "be correctly evaluated when three combined" in {
@@ -85,11 +85,11 @@ class PipelineSpec extends AkkaSpec {
   }
 
   def stage[Below: LevelFactory, Above: LevelFactory](forward: Int, backward: Int, invert: Boolean) =
-    new PipelineStage[PipelineContext, Below, Above] {
-      override def apply(ctx: PipelineContext) = {
+    new SymmetricPipelineStage[AnyRef, Below, Above] {
+      override def apply(ctx: AnyRef) = {
         val below = implicitly[LevelFactory[Below]]
         val above = implicitly[LevelFactory[Above]]
-        Pipelines(
+        PipePairFactory(
           { a ⇒
             val msgA = a == above.msgA
             val msgAbove = if (invert ^ msgA) above.msgA else above.msgB
@@ -109,26 +109,23 @@ class PipelineSpec extends AkkaSpec {
 
 object PipelineBench extends App {
 
-  val frame = new PipelineStage[PipelineContext, ByteString, ByteString] {
-    override def apply(ctx: PipelineContext) =
-      new Pipelines[ByteString, ByteString] {
+  val frame = new SymmetricPipelineStage[AnyRef, ByteString, ByteString] {
+    override def apply(ctx: AnyRef) =
+      new SymmetricPipePair[ByteString, ByteString] {
         var buffer = None: Option[ByteString]
         implicit val byteOrder = ByteOrder.BIG_ENDIAN
 
-        @tailrec def extractFrames(bs: ByteString, acc: List[Right[ByteString, ByteString]]): Seq[Right[ByteString, ByteString]] = {
+        @tailrec def extractFrames(bs: ByteString, acc: List[Right[ByteString, ByteString]]): (Option[ByteString], Seq[Right[ByteString, ByteString]]) = {
           if (bs.isEmpty) {
-            buffer = None
-            acc.reverse
+            (None, acc.reverse)
           } else if (bs.length < 4) {
-            buffer = Some(bs.compact)
-            acc.reverse
+            (Some(bs.compact), acc.reverse)
           } else {
             val length = bs.iterator.getInt
             if (bs.length >= length) {
               extractFrames(bs drop length, Right(bs.slice(4, length)) :: acc)
             } else {
-              buffer = Some(bs.compact)
-              acc.reverse
+              (Some(bs.compact), acc.reverse)
             }
           }
         }
@@ -136,14 +133,16 @@ object PipelineBench extends App {
         override def commandPipeline =
           { bs ⇒
             val bb = java.nio.ByteBuffer.allocate(4)
-            bb.order(ByteOrder.BIG_ENDIAN)
+            bb.order(byteOrder)
             bb.putInt(bs.length + 4).flip
             Seq(Left(ByteString(bb) ++ bs))
           }
         override def eventPipeline =
           { bs ⇒
             val data = if (buffer.isEmpty) bs else buffer.get ++ bs
-            extractFrames(data, Nil)
+            extractFrames(data, Nil) match {
+              case (nb, result) ⇒ buffer = nb; result
+            }
           }
       }
   }
