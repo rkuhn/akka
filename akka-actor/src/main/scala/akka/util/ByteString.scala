@@ -69,6 +69,11 @@ object ByteString {
    */
   def fromString(string: String, charset: String): ByteString = apply(string, charset)
 
+  /**
+   * Creates a new ByteString by copying bytes out of a ByteBuffer.
+   */
+  def fromByteBuffer(buffer: ByteBuffer): ByteString = apply(buffer)
+
   val empty: ByteString = CompactByteString(Array.empty[Byte])
 
   def newBuilder: ByteStringBuilder = new ByteStringBuilder
@@ -323,6 +328,11 @@ sealed abstract class ByteString extends IndexedSeq[Byte] with IndexedSeqOptimiz
    * Efficiently concatenate another ByteString.
    */
   def ++(that: ByteString): ByteString
+
+  /**
+   * Java API: efficiently concatenate another ByteString.
+   */
+  def concat(that: ByteString): ByteString = this ++ that
 
   /**
    * Copy as many bytes as possible to a ByteBuffer, starting from it's
