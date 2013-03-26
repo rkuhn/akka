@@ -105,43 +105,53 @@ Compatibility with java.io
 A ``ByteStringBuilder`` can be wrapped in a ``java.io.OutputStream`` via the ``asOutputStream`` method. Likewise, ``ByteIterator`` can be wrapped in a ``java.io.InputStream`` via ``asInputStream``. Using these, ``akka.io`` applications can integrate legacy code based on ``java.io`` streams.
 
 Encoding and decoding binary data
-....................................
+---------------------------------
 
-``ByteStringBuilder`` and ``ByteIterator`` support encoding and decoding of binary data. As an example, consider a stream of binary data frames with the following format:
+.. note::
 
-.. code-block:: text
+  Previously Akka offered a specialized Iteratee implementation in the
+  ``akka.actor.IO`` object which is now deprecated in favor of the pipeline
+  mechanism described here. The documentation for Iteratees can be found `here
+  <http://doc.akka.io/doc/akka/2.1.2/scala/io.html#Encoding_and_decoding_binary_data>`_.
 
-  frameLen: Int
-  n: Int
-  m: Int
-  n times {
-    a: Short
-    b: Long
-  }
-  data: m times Double
+Akka adopted and adapted the implementation of data processing pipelines found
+in the ``spray-io`` module (LINK). The idea is that encoding and decoding often
+go hand in hand and keeping the code pertaining to one protocol layer together
+is deemed more important than writing down the complete read side—say—in the
+iteratee style in one go; pipelines encourage packaging the stages in a form
+which lends itself better to reuse in a protocol stack. Another reason for
+choosing this abstraction is that it is at times necessary to change the
+behavior of encoding and decoding within a stage based on a message stream’s
+state, and pipeline stages allow communication between the read and write
+halves quite naturally.
 
-In this example, the data will be stored in arrays of ``a``, ``b`` of length ``n`` and ``data`` of length ``m``.
+Building a Pipeline Stage
+^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Decoding of such frames can be efficiently implemented in the following fashion:
+As a common example, which is also included in the ``akka-actor`` package, let
+us look at a framing protocol which works by prepending a length field to each
+message.
 
-.. includecode:: code/docs/io/BinaryCoding.scala
-   :include: decoding
+.. includecode:: ../../../akka-actor/src/main/scala/akka/io/Pipelines.scala#length-field-frame
 
-This implementation naturally follows the example data format. In a true Scala application one might of course want to use specialized immutable ``Short``/``Long``/``Double`` containers instead of mutable Arrays.
+In the end a pipeline stage is nothing more than a pair of functions: one
+transforming commands arriving from above, the other transforming events
+arriving from below. The result of the transformation can in either case be a
+sequence of commands flowing downwards or events flowing upwards (or a
+combination thereof).
 
-After extracting data from a ``ByteIterator``, the remaining content can also be turned back into a ``ByteString`` using
-the ``toSeq`` method. No bytes are copied. Because of immutability the underlying bytes can be shared between both the
-``ByteIterator`` and the ``ByteString``.
+In the case above the data type for commands and events are equal as both
+functions operate only on ``ByteString``, and the transformation does not
+change that type because it only adds or removes four octets at the front.
 
-.. includecode:: code/docs/io/BinaryCoding.scala
-   :include: rest-to-seq
-
-In general, conversions from ``ByteString`` to ``ByteIterator`` and vice versa are O(1) for non-chunked ``ByteString``s and (at worst) O(nChunks) for chunked ``ByteString``s.
-
-Encoding of data also is very natural, using ``ByteStringBuilder``
-
-.. includecode:: code/docs/io/BinaryCoding.scala
-   :include: encoding
+The pair of functions is represented by an object of type :class:`PipePair`, or
+in this case a :class:`SymmetricPipePair`. This object could benefit from
+knowledge about the context it is running in, for example an :class:`Actor`,
+and this context is introduced by making a :class:`PipelineStage` be a factory
+for producing a :class:`PipePair`. The factory method is called :meth:`apply`
+(in good Scala tradition) and receives the context object as its argument. The
+implementation of this factory method could now make use of the context in
+whatever way it sees fit, you will see an example further down.
 
 Using TCP
 ---------
