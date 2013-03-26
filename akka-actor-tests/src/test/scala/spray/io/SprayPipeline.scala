@@ -56,7 +56,7 @@ object SprayPipeline extends App {
   val pipe = (frame >> frame >> frame >> frame)(null, { case Tcp.Write(bs, _) ⇒ output += bs }, { case Tcp.Received(bs) ⇒ output += bs })
 
   pipe.commandPipeline(Tcp.Write(ByteString("hello")))
-  val bytes = getOut.head
+  val bytes = getOut.head.compact
   println(bytes)
   pipe.eventPipeline(Tcp.Received(bytes))
   println(getOut.head)

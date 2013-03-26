@@ -9,6 +9,8 @@ import akka.util.ByteString
 import scala.annotation.tailrec
 import java.nio.ByteOrder
 import scala.concurrent.forkjoin.ThreadLocalRandom
+import scala.util.Try
+import scala.util.Success
 
 class PipelineSpec extends AkkaSpec {
 
@@ -127,12 +129,14 @@ class PipelineSpec extends AkkaSpec {
 object PipelineBench extends App {
 
   val frame = new LengthFieldFrame(32000)
+  val frames = frame >> frame >> frame >> frame
 
-  val (cmd, evt, mgmt) = PipelineFactory.buildFunctionTriple(null, frame >> frame >> frame >> frame)
+  val pipe = PipelineFactory.buildPipePair(null, frames)
 
-  val (_, Seq(bytes)) = cmd(ByteString("hello"))
+  val hello = ByteString("hello")
+  val bytes = pipe.commandPipeline(ByteString("hello")).head.fold(identity, identity).compact
   println(bytes)
-  println(evt(bytes)._1)
+  println(pipe.eventPipeline(bytes))
 
   class Bytes {
     var pos = 0
@@ -156,14 +160,59 @@ object PipelineBench extends App {
     }
   }
 
-  val b = new Bytes
-  val y = for (_ ← 1 to 1000000; x ← evt(b.get())._1) yield x
-  assert(y forall (_ == ByteString("hello")))
-  assert(y.size == b.emitted / bytes.length)
+  println("warming up")
+
+  val bpp = new Bytes
+
+  {
+    println(" ... PipePair")
+    val y = for (_ ← 1 to 100000; x ← pipe.eventPipeline(bpp.get())) yield x
+    assert(y forall { case Left(b) ⇒ b == ByteString("hello"); case _ ⇒ false })
+    assert(y.size == bpp.emitted / bytes.length)
+  }
+
+  val (_, evt, _) = PipelineFactory.buildFunctionTriple(null, frames)
+  val bft = new Bytes
+
+  {
+    println(" ... FunctionTriple")
+    val y = for (_ ← 1 to 100000; x ← evt(bft.get())._1) yield x
+    assert(y forall (_ == ByteString("hello")))
+    assert(y.size == bft.emitted / bytes.length)
+  }
+
+  var injected = 0
+  val inj = PipelineFactory.buildWithSinkFunctions(null, frames)(_ ⇒ Nil, { case Success(bs) if bs == hello ⇒ injected += 1 })
+  val bij = new Bytes
+
+  {
+    println(" ... Injector")
+    for (_ ← 1 to 100000) inj.injectEvent(bij.get())
+    assert(injected == bij.emitted / bytes.length)
+  }
 
   val N = 1000000
-  val start = System.nanoTime
-  for (_ ← 1 to N) evt(b.get())
-  val time = System.nanoTime - start
-  println(s"1 iteration took ${time / N}ns")
+
+  {
+    val start = System.nanoTime
+    val y = for (_ ← 1 to N; x ← pipe.eventPipeline(bpp.get())) yield x
+    val time = System.nanoTime - start
+    println(s"PipePair: 1 iteration took ${time / N}ns (${y.size})")
+  }
+
+  {
+    val start = System.nanoTime
+    val y = for (_ ← 1 to N; x ← evt(bft.get())._1) yield x
+    val time = System.nanoTime - start
+    println(s"FunctionTriple: 1 iteration took ${time / N}ns (${y.size})")
+  }
+
+  {
+    injected = 0
+    val start = System.nanoTime
+    for (_ ← 1 to N) inj.injectEvent(bij.get())
+    val time = System.nanoTime - start
+    println(s"Injector: 1 iteration took ${time / N}ns ($injected)")
+  }
+
 }

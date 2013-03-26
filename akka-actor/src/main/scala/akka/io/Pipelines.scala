@@ -246,7 +246,7 @@ object PipelineFactory {
    */
   def buildWithSinkFunctions[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
   (ctx: Ctx,
-   stage: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow],
+   stage: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow])(
    commandSink: Try[CmdBelow] ⇒ Unit,
    eventSink: Try[EvtAbove] ⇒ Unit): PipelineInjector[CmdAbove, EvtBelow] =
     new PipelineInjector[CmdAbove, EvtBelow] {
@@ -296,7 +296,7 @@ object PipelineFactory {
   (ctx: Ctx,
    stage: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow],
    callback: PipelineSink[CmdBelow, EvtAbove]): PipelineInjector[CmdAbove, EvtBelow] =
-    buildWithSinkFunctions[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow](ctx, stage, {
+    buildWithSinkFunctions[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow](ctx, stage)({
       case Failure(thr) ⇒ callback.onCommandFailure(thr)
       case Success(cmd) ⇒ callback.onCommand(cmd)
     }, {
