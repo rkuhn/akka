@@ -581,6 +581,11 @@ final class ByteStringBuilder extends Builder[Byte, ByteString] {
   }
 
   /**
+   * Java API: append a ByteString to this builder.
+   */
+  def append(bs: ByteString): this.type = this ++= bs
+
+  /**
    * Add a single Byte to this builder.
    */
   def putByte(x: Byte): this.type = this += x

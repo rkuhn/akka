@@ -2,10 +2,9 @@
  * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
-package docs.io;
+package docs.io.japi;
 
 import java.nio.ByteOrder;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 
 import scala.util.Either;
@@ -14,6 +13,7 @@ import akka.io.PipePairFactory;
 import akka.io.SymmetricPipePair;
 import akka.io.SymmetricPipelineStage;
 import akka.util.ByteString;
+import akka.util.ByteStringBuilder;
 
 public class LengthFieldFrame extends
     SymmetricPipelineStage<Object, ByteString, ByteString> {
@@ -27,7 +27,7 @@ public class LengthFieldFrame extends
   @Override
   public SymmetricPipePair<ByteString, ByteString> apply(Object unused) {
     return PipePairFactory
-        .<ByteString, ByteString> create(new AbstractSymmetricPipePair<ByteString, ByteString>() {
+        .create(new AbstractSymmetricPipePair<ByteString, ByteString>() {
 
           final ByteOrder byteOrder = ByteOrder.BIG_ENDIAN;
           ByteString buffer = null;
@@ -39,13 +39,12 @@ public class LengthFieldFrame extends
             if (length > maxSize) {
               return new ArrayList<Either<ByteString, ByteString>>(0);
             }
-            final ByteBuffer bb = ByteBuffer.allocate(4);
-            bb.order(byteOrder);
-            bb.putInt(length);
-            bb.flip();
+            final ByteStringBuilder bb = new ByteStringBuilder();
+            bb.putInt(length, byteOrder);
+            bb.append(cmd);
             final ArrayList<Either<ByteString, ByteString>> res = new ArrayList<Either<ByteString, ByteString>>(
                 1);
-            res.add(makeCommand(ByteString.fromByteBuffer(bb).concat(cmd)));
+            res.add(makeCommand(bb.result()));
             return res;
           }
 
@@ -62,7 +61,7 @@ public class LengthFieldFrame extends
                 buffer = current;
                 return res;
               } else {
-                final int length = buffer.iterator().getInt(byteOrder);
+                final int length = current.iterator().getInt(byteOrder);
                 if (length > maxSize)
                   throw new IllegalArgumentException(
                       "received too large frame of size " + length + " (max = "
