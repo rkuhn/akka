@@ -4,19 +4,21 @@
 
 package docs.io.japi;
 
+//#frame
 import java.nio.ByteOrder;
 import java.util.ArrayList;
 
 import scala.util.Either;
 import akka.io.AbstractSymmetricPipePair;
 import akka.io.PipePairFactory;
+import akka.io.PipelineContext;
 import akka.io.SymmetricPipePair;
 import akka.io.SymmetricPipelineStage;
 import akka.util.ByteString;
 import akka.util.ByteStringBuilder;
 
 public class LengthFieldFrame extends
-    SymmetricPipelineStage<Object, ByteString, ByteString> {
+    SymmetricPipelineStage<PipelineContext, ByteString, ByteString> {
 
   final int maxSize;
 
@@ -25,9 +27,9 @@ public class LengthFieldFrame extends
   }
 
   @Override
-  public SymmetricPipePair<ByteString, ByteString> apply(Object unused) {
+  public SymmetricPipePair<ByteString, ByteString> apply(final PipelineContext ctx) {
     return PipePairFactory
-        .create(new AbstractSymmetricPipePair<ByteString, ByteString>() {
+        .create(ctx, new AbstractSymmetricPipePair<ByteString, ByteString>() {
 
           final ByteOrder byteOrder = ByteOrder.BIG_ENDIAN;
           ByteString buffer = null;
@@ -42,16 +44,14 @@ public class LengthFieldFrame extends
             final ByteStringBuilder bb = new ByteStringBuilder();
             bb.putInt(length, byteOrder);
             bb.append(cmd);
-            final ArrayList<Either<ByteString, ByteString>> res = new ArrayList<Either<ByteString, ByteString>>(
-                1);
-            res.add(makeCommand(bb.result()));
-            return res;
+            return singleCommand(bb.result());
           }
 
           @Override
           public Iterable<Either<ByteString, ByteString>> onEvent(
               ByteString event) {
-            final ArrayList<Either<ByteString, ByteString>> res = new ArrayList<Either<ByteString, ByteString>>();
+            final ArrayList<Either<ByteString, ByteString>> res =
+                new ArrayList<Either<ByteString, ByteString>>();
             ByteString current = buffer == null ? event : buffer.concat(event);
             while (true) {
               if (current.length() == 0) {
@@ -81,3 +81,4 @@ public class LengthFieldFrame extends
   }
 
 }
+//#frame

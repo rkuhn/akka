@@ -115,7 +115,7 @@ Encoding and decoding binary data
   <http://doc.akka.io/doc/akka/2.1.2/scala/io.html#Encoding_and_decoding_binary_data>`_.
 
 Akka adopted and adapted the implementation of data processing pipelines found
-in the ``spray-io`` module (LINK). The idea is that encoding and decoding often
+in the ``spray-io`` module. The idea is that encoding and decoding often
 go hand in hand and keeping the code pertaining to one protocol layer together
 is deemed more important than writing down the complete read side—say—in the
 iteratee style in one go; pipelines encourage packaging the stages in a form
@@ -214,9 +214,11 @@ deconstructing byte strings. Let us first take a look at the encoder:
 Note how the byte order to be used by this stage is fixed in exactly one place,
 making it impossible get wrong between commands and events; the way how the
 byte order is passed into the stage demonstrates one possible use for the
-stage’s ``context`` parameter. The basic tool for constucting a
-:class:`ByteString` is a :class:`ByteStringBuilder` which can be obtained by
-calling :meth:`ByteString.newBuilder` since byte strings implement the
+stage’s ``context`` parameter. 
+
+The basic tool for constucting a :class:`ByteString` is a
+:class:`ByteStringBuilder` which can be obtained by calling
+:meth:`ByteString.newBuilder` since byte strings implement the
 :class:`IndexesSeq[Byte]` interface of the standard Scala collections. This
 builder knows a few extra tricks, though, for appending byte representations of
 the primitive data types like ``Int`` and ``Double`` or arrays thereof.
@@ -224,8 +226,17 @@ Encoding a ``String`` requires a bit more work because not only the sequence of
 bytes needs to be encoded but also the length, otherwise the decoding stage
 would not know where the ``String`` terminates. When all values making up the
 :class:`Message` have been appended to the builder, we simply pass the
-resulting :class:`ByteString` on to the next stage as a command (hence wrapped
-in :class:`Right`).
+resulting :class:`ByteString` on to the next stage as a command using the
+optimized :meth:`singleCommand` facility.
+
+.. warning::
+
+  The :meth:`singleCommand` and :meth:`singleEvent` methods provide a way to
+  generate responses which transfer exactly one result from one pipeline stage
+  to the next without suffering the overhead of object allocations. This means
+  that the returned collection object will not work for anything else (you will
+  get :class:`ClassCastExceptions`!) and this facility can only be used *EXACTLY
+  ONCE* during the processing of one input (command or event).
 
 Now let us look at the decoder side:
 
@@ -235,8 +246,8 @@ Now let us look at the decoder side:
 The decoding side does the same things that the encoder does in the same order,
 it just uses a :class:`ByteIterator` to retrieve primitive data types or arrays
 of those from the underlying :class:`ByteString`. And in the end it hands the
-assembled :class:`Message` as an event to the next stage, i.e. wrapped in a
-:class:`Left`.
+assembled :class:`Message` as an event to the next stage using the optimized
+:meth:`singleEvent` facility (see warning above).
 
 Building a Pipeline
 ^^^^^^^^^^^^^^^^^^^
@@ -246,6 +257,11 @@ them to some use. First we define some message to be encoded:
 
 .. includecode:: code/docs/io/Pipelines.scala
    :include: message
+
+Then we need to create a pipeline context which satisfies our declared needs:
+
+.. includecode:: code/docs/io/Pipelines.scala
+   :include: byteorder
 
 Building the pipeline and encoding this message then is quite simple:
 
@@ -270,7 +286,7 @@ Besides the more functional style there is also an explicitly side-effecting one
 The functions passed into the :meth:`buildWithSinkFunctions` factory method
 describe what shall happen to the commands and events as they fall out of the
 pipeline. In this case we just send those to some actors, since that is usually
-a quite good strategy for distributing the work represented by the messages.
+quite a good strategy for distributing the work represented by the messages.
 
 The types of commands or events fed into the provided sink functions are
 wrapped within :class:`Try` so that failures can also be encoded and acted
@@ -284,13 +300,18 @@ Using the Pipeline’s Context
 
 Up to this point there was always a parameter ``ctx`` which was used when
 constructing a pipeline, but it was not explained in full. The context is a
-piece of information which is made available for all stages of a pipeline. The
+piece of information which is made available to all stages of a pipeline. The
 context may also carry behavior, provide infrastructure or helper methods etc.
 It should be noted that the context is bound to the pipeline and as such must
 not be accessed concurrently from different threads unless care is taken to
 properly synchronize such access. Since the context will in many cases be
 provided by an actor it is not recommended to share this context with code
 executing outside of the actor’s message handling.
+
+.. warning::
+
+  A PipelineContext instance *MUST NOT* be used by two different pipelines
+  since it contains mutable fields which are used during message processing.
 
 Using Management Commands
 ^^^^^^^^^^^^^^^^^^^^^^^^^

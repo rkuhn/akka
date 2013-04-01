@@ -21,6 +21,7 @@ import scala.concurrent.duration._
 import akka.io.HasActorContext
 import akka.actor.Props
 import akka.actor.PoisonPill
+import akka.io.PipelineContext
 
 class PipelinesDocSpec extends AkkaSpec {
 
@@ -35,7 +36,7 @@ class PipelinesDocSpec extends AkkaSpec {
    * This trait is used to formualate a requirement for the pipeline context.
    * In this example it is used to configure the byte order to be used.
    */
-  trait HasByteOrder {
+  trait HasByteOrder extends PipelineContext {
     def byteOrder: java.nio.ByteOrder
   }
 
@@ -183,7 +184,7 @@ class PipelinesDocSpec extends AkkaSpec {
         // start off the ticks, but only ONCE
         import TickGenerator.Tick
         override def preStart() { pipeline.managementCommand(Tick) }
-        override def postRestart() {} // do not call preStart() again
+        override def postRestart(thr: Throwable) {} // do not call preStart() again
 
         def receive = {
           case m: Message    ⇒ pipeline.injectCommand(m)

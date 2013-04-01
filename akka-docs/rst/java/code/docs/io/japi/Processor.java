@@ -1,3 +1,7 @@
+/**
+ * Copyright (C) 2013 Typesafe Inc. <http://www.typesafe.com>
+ */
+
 package docs.io.japi;
 
 import java.nio.ByteOrder;
@@ -6,22 +10,23 @@ import java.util.concurrent.TimeUnit;
 import akka.actor.ActorContext;
 import akka.actor.ActorRef;
 import akka.actor.UntypedActor;
-import akka.io.HasActorContext;
+import akka.io.AbstractPipelineContext;
 import akka.io.PipelineFactory;
 import akka.io.PipelineInjector;
 import akka.io.PipelineSink;
 import akka.io.PipelineStage;
-import akka.io.TickGenerator;
 import akka.util.ByteString;
 import scala.concurrent.duration.*;
 
+//#actor
 public class Processor extends UntypedActor {
 
-  private class Context implements HasByteOrder, HasActorContext {
+  private class Context extends AbstractPipelineContext 
+      implements HasByteOrder, HasActorContext {
 
     @Override
-    public ActorContext context() {
-      return getContext();
+    public ActorContext getContext() {
+      return Processor.this.getContext();
     }
 
     @Override
@@ -37,7 +42,7 @@ public class Processor extends UntypedActor {
 
   final PipelineStage<Context, Message, ByteString, Message, ByteString> stages = //
   PipelineStage.sequence(PipelineStage.sequence( //
-      new TickGenerator<Message>(interval), //
+      new TickGenerator<Message, Message>(interval), //
       new MessageStage()), //
       new LengthFieldFrame(10000));
 
@@ -53,18 +58,8 @@ public class Processor extends UntypedActor {
         }
 
         @Override
-        public void onCommandFailure(Throwable thr) throws Throwable {
-          throw thr;
-        }
-
-        @Override
         public void onEvent(Message evt) {
           evts.tell(evt, getSelf());
-        }
-
-        @Override
-        public void onEventFailure(Throwable thr) throws Throwable {
-          throw thr;
         }
       });
 
@@ -75,7 +70,10 @@ public class Processor extends UntypedActor {
   
   @Override
   public void preStart() throws Exception {
-    injector.managementCommand(TickGenerator.Tick());
+    //#omitted
+    injector.managementCommand(new PipelineTest.SetTarget(cmds));
+    //#omitted
+    injector.managementCommand(TickGenerator.tick);
   }
   
   @Override
@@ -89,9 +87,11 @@ public class Processor extends UntypedActor {
       injector.injectCommand((Message) obj);
     } else if (obj instanceof ByteString) {
       injector.injectEvent((ByteString) obj);
-    } else if (obj.equals(TickGenerator.Tick())) {
+    } else if (obj.equals(TickGenerator.tick)) {
       injector.managementCommand(obj);
     }
   }
 
 }
+//#actor
+

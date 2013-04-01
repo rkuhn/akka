@@ -103,8 +103,8 @@ class PipelineSpec extends AkkaSpec {
 
   def stage[Above: LevelFactory, Below: LevelFactory](forward: Int, backward: Int, invert: Boolean,
                                                       mgmt: SymmetricPipePair[Above, Below]#Mgmt = PartialFunction.empty) =
-    new SymmetricPipelineStage[AnyRef, Above, Below] {
-      override def apply(ctx: AnyRef) = {
+    new SymmetricPipelineStage[PipelineContext, Above, Below] {
+      override def apply(ctx: PipelineContext) = {
         val above = implicitly[LevelFactory[Above]]
         val below = implicitly[LevelFactory[Below]]
         PipePairFactory(
@@ -131,10 +131,13 @@ object PipelineBench extends App {
   val frame = new LengthFieldFrame(32000)
   val frames = frame >> frame >> frame >> frame
 
-  val pipe = PipelineFactory.buildPipePair(null, frames)
-
+  val ctx = new PipelineContext {}
+  // this way of creating a pipeline is not user API
+  val pipe = frames(ctx)
+  
   val hello = ByteString("hello")
-  val bytes = pipe.commandPipeline(ByteString("hello")).head.fold(identity, identity).compact
+  // ctx.dealias is only necessary because this is a “raw” pipe, not user API
+  val bytes = ctx.dealias(pipe.commandPipeline(ByteString("hello"))).head.fold(identity, identity).compact
   println(bytes)
   println(pipe.eventPipeline(bytes))
 
@@ -166,28 +169,28 @@ object PipelineBench extends App {
 
   {
     println(" ... PipePair")
-    val y = for (_ ← 1 to 100000; x ← pipe.eventPipeline(bpp.get())) yield x
+    val y = for (_ ← 1 to 500000; x ← ctx.dealias(pipe.eventPipeline(bpp.get()))) yield x
     assert(y forall { case Left(b) ⇒ b == ByteString("hello"); case _ ⇒ false })
     assert(y.size == bpp.emitted / bytes.length)
   }
 
-  val (_, evt, _) = PipelineFactory.buildFunctionTriple(null, frames)
+  val (_, evt, _) = PipelineFactory.buildFunctionTriple(ctx, frames)
   val bft = new Bytes
 
   {
     println(" ... FunctionTriple")
-    val y = for (_ ← 1 to 100000; x ← evt(bft.get())._1) yield x
+    val y = for (_ ← 1 to 500000; x ← evt(bft.get())._1) yield x
     assert(y forall (_ == ByteString("hello")))
     assert(y.size == bft.emitted / bytes.length)
   }
 
   var injected = 0
-  val inj = PipelineFactory.buildWithSinkFunctions(null, frames)(_ ⇒ Nil, { case Success(bs) if bs == hello ⇒ injected += 1 })
+  val inj = PipelineFactory.buildWithSinkFunctions(ctx, frames)(_ ⇒ Nil, { case Success(bs) if bs == hello ⇒ injected += 1 })
   val bij = new Bytes
 
   {
     println(" ... Injector")
-    for (_ ← 1 to 100000) inj.injectEvent(bij.get())
+    for (_ ← 1 to 500000) inj.injectEvent(bij.get())
     assert(injected == bij.emitted / bytes.length)
   }
 
@@ -195,7 +198,7 @@ object PipelineBench extends App {
 
   {
     val start = System.nanoTime
-    val y = for (_ ← 1 to N; x ← pipe.eventPipeline(bpp.get())) yield x
+    val y = for (_ ← 1 to N; x ← ctx.dealias(pipe.eventPipeline(bpp.get()))) yield x
     val time = System.nanoTime - start
     println(s"PipePair: 1 iteration took ${time / N}ns (${y.size})")
   }

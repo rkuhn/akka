@@ -5,27 +5,28 @@
 package docs.io.japi;
 
 import java.nio.ByteOrder;
-import java.util.ArrayList;
 
-import akka.io.PipePairFactory;
+import scala.util.Either;
+import akka.actor.ActorRef;
 import akka.io.AbstractSymmetricPipePair;
+import akka.io.PipePairFactory;
 import akka.io.SymmetricPipePair;
 import akka.io.SymmetricPipelineStage;
 import akka.util.ByteIterator;
 import akka.util.ByteString;
 import akka.util.ByteStringBuilder;
-import scala.util.Either;
 
+//#format
 public class MessageStage extends
     SymmetricPipelineStage<HasByteOrder, Message, ByteString> {
 
   @Override
-  public SymmetricPipePair<Message, ByteString> apply(final HasByteOrder ctx) {
+  public SymmetricPipePair<Message, ByteString> apply(final HasByteOrder context) {
 
     return PipePairFactory
-        .create(new AbstractSymmetricPipePair<Message, ByteString>() {
+        .create(context, new AbstractSymmetricPipePair<Message, ByteString>() {
 
-          final ByteOrder byteOrder = ctx.byteOrder();
+          final ByteOrder byteOrder = context.byteOrder();
 
           private void putString(ByteStringBuilder builder, String str) {
             final byte[] bytes = ByteString.fromString(str, "UTF-8").toArray();
@@ -46,12 +47,11 @@ public class MessageStage extends
             builder.putInt(cmd.getHappinessCurve().length, byteOrder);
             builder.putDoubles(cmd.getHappinessCurve(), byteOrder);
 
-            final ArrayList<Either<Message, ByteString>> res = new ArrayList<Either<Message, ByteString>>(
-                1);
-            res.add(makeCommand(builder.result()));
-            return res;
+            return singleCommand(builder.result());
           }
 
+          //#decoding-omitted
+          //#decoding
           private String getString(ByteIterator iter) {
             final int length = iter.getInt(byteOrder);
             final byte[] bytes = new byte[length];
@@ -77,14 +77,26 @@ public class MessageStage extends
             // extensions
             assert iter.isEmpty();
 
-            final ArrayList<Either<Message, ByteString>> res = new ArrayList<Either<Message, ByteString>>(
-                1);
-            res.add(makeEvent(new Message(persons, curve)));
-            return res;
+            return singleEvent(new Message(persons, curve));
           }
+          //#decoding
+          
+          ActorRef target = null;
+          
+          @Override
+          public Iterable<Either<Message, ByteString>> onManagementCommand(Object cmd) {
+            if (cmd instanceof PipelineTest.SetTarget) {
+              target = ((PipelineTest.SetTarget) cmd).getRef();
+            } else if (cmd == TickGenerator.tick && target != null) {
+              target.tell(TickGenerator.tick, null);
+            }
+            return nothing();
+          }
+          //#decoding-omitted
 
         });
 
   }
 
 }
+//#format

@@ -6,7 +6,9 @@ package docs.io.japi;
 
 import java.nio.ByteOrder;
 
-public interface HasByteOrder {
+import akka.io.PipelineContext;
+
+public interface HasByteOrder extends PipelineContext {
 
   public ByteOrder byteOrder();
   

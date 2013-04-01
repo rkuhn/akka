@@ -4,7 +4,9 @@
 
 package docs.io.japi;
 
+//#message
 public class Message {
+  
   static public class Person {
     private final String first;
     private final String last;
@@ -40,3 +42,4 @@ public class Message {
     return happinessCurve;
   }
 }
+//#message

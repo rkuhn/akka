@@ -12,6 +12,7 @@ import akka.util.ByteString
 import scala.collection.mutable
 import akka.actor.ActorContext
 import scala.concurrent.duration.FiniteDuration
+import scala.collection.mutable.WrappedArray
 
 /**
  * Scala API: A pair of pipes, one for commands and one for events, plus a
@@ -64,6 +65,10 @@ trait PipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow] {
  * for commands and events.
  */
 trait SymmetricPipePair[Above, Below] extends PipePair[Above, Below, Above, Below]
+
+object AbstractPipePair {
+  val nothing = new java.util.ArrayList(0)
+}
 
 /**
  * Java API: A pair of pipes, one for commands and one for events. Commands travel from
@@ -122,6 +127,80 @@ abstract class AbstractPipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow] {
    * Helper method for wrapping an event which shall be emitted.
    */
   def makeEvent(event: EvtAbove): Either[EvtAbove, CmdBelow] = Left(event)
+
+  /**
+   * INTERNAL API: do not touch!
+   */
+  private[io] val cmd = {
+    val l = new java.util.ArrayList[AnyRef](1)
+    l add null
+    l
+  }
+  /**
+   * INTERNAL API: do not touch!
+   */
+  private[io] val evt = {
+    val l = new java.util.ArrayList[AnyRef](1)
+    l add null
+    l
+  }
+
+  /**
+   * Wrap a single command for efficient return to the pipeline’s machinery.
+   * This method avoids allocating a [[Right]] and an [[java.lang.Iterable]] by reusing
+   * one such instance within the AbstractPipePair, hence it can be used ONLY ONCE by
+   * each pipeline stage. Prototypic and safe usage looks like this:
+   *
+   * {{{
+   * final MyResult result = ... ;
+   * return singleCommand(result);
+   * }}}
+   *
+   * @see PipelineContext#singleCommand
+   */
+  def singleCommand(cmd: CmdBelow): JIterable[Either[EvtAbove, CmdBelow]] = {
+    this.cmd.set(0, cmd.asInstanceOf[AnyRef])
+    this.cmd.asInstanceOf[JIterable[Either[EvtAbove, CmdBelow]]]
+  }
+
+  /**
+   * Wrap a single event for efficient return to the pipeline’s machinery.
+   * This method avoids allocating a [[Left]] and an [[Iterable]] by reusing
+   * one such instance within the AbstractPipePair, hence it can be used ONLY ONCE by
+   * each pipeline stage. Prototypic and safe usage looks like this:
+   *
+   * {{{
+   * final MyResult result = ... ;
+   * return singleEvent(result);
+   * }}}
+   *
+   * @see PipelineContext#singleEvent
+   */
+  def singleEvent(evt: EvtAbove): JIterable[Either[EvtAbove, CmdBelow]] = {
+    this.evt.set(0, evt.asInstanceOf[AnyRef])
+    this.evt.asInstanceOf[JIterable[Either[EvtAbove, CmdBelow]]]
+  }
+
+  /**
+   * A shared (and shareable) instance of an empty `Iterable[Either[EvtAbove, CmdBelow]]`.
+   * Use this when processing does not yield any commands or events as result.
+   */
+  def nothing: JIterable[Either[EvtAbove, CmdBelow]] = AbstractPipePair.nothing.asInstanceOf[JIterable[Either[EvtAbove, CmdBelow]]]
+
+  /**
+   * Dealias a possibly optimized return value such that it can be safely used.
+   */
+  def dealias[Cmd, Evt](msg: JIterable[Either[Evt, Cmd]]): JIterable[Either[Evt, Cmd]] = {
+    if (msg eq cmd) mkIterable(Right(cmd.get(0).asInstanceOf[Cmd]))
+    else if (msg eq evt) mkIterable(Left(evt.get(0).asInstanceOf[Evt]))
+    else msg
+  }
+
+  private def mkIterable[Cmd, Evt](e: Either[Evt, Cmd]): JIterable[Either[Evt, Cmd]] = {
+    val a = new java.util.ArrayList[Either[Evt, Cmd]](1)
+    a add e
+    a
+  }
 }
 
 /**
@@ -149,32 +228,37 @@ object PipePairFactory {
       override def managementPort = management
     }
 
+  private abstract class Converter[CmdAbove <: AnyRef, CmdBelow <: AnyRef, EvtAbove <: AnyRef, EvtBelow <: AnyRef] //
+  (val ap: AbstractPipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow], ctx: PipelineContext) {
+    import scala.collection.JavaConverters._
+    protected def normalize(output: JIterable[Either[EvtAbove, CmdBelow]]): Iterable[Either[EvtAbove, CmdBelow]] =
+      if (output eq AbstractPipePair.nothing) Nil
+      else if (output eq ap.cmd) ctx.singleCommand(ap.cmd.get(0).asInstanceOf[CmdBelow])
+      else if (output eq ap.evt) ctx.singleEvent(ap.evt.get(0).asInstanceOf[EvtAbove])
+      else output.asScala
+  }
+
   /**
    * Java API: construct a [[PipePair]] from the given [[AbstractPipePair]].
    */
-  def create[CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
-  (ap: AbstractPipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow]) =
-    new PipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow] {
-      import scala.collection.JavaConverters._
-      override val commandPipeline = (cmd: CmdAbove) ⇒ ap.onCommand(cmd).asScala
-      override val eventPipeline = (evt: EvtBelow) ⇒ ap.onEvent(evt).asScala
-      override val managementPort: Mgmt = {
-        case x ⇒ ap.onManagementCommand(x).asScala
-      }
+  def create[CmdAbove <: AnyRef, CmdBelow <: AnyRef, EvtAbove <: AnyRef, EvtBelow <: AnyRef] //
+  (ctx: PipelineContext, ap: AbstractPipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow]) //
+  : PipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow] =
+    new Converter(ap, ctx) with PipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow] {
+      override val commandPipeline = { cmd: CmdAbove ⇒ normalize(ap.onCommand(cmd)) }
+      override val eventPipeline = { evt: EvtBelow ⇒ normalize(ap.onEvent(evt)) }
+      override val managementPort: Mgmt = { case x ⇒ normalize(ap.onManagementCommand(x)) }
     }
 
   /**
    * Java API: construct a [[PipePair]] from the given [[AbstractSymmetricPipePair]].
    */
-  def create[Above, Below] //
-  (ap: AbstractSymmetricPipePair[Above, Below]): SymmetricPipePair[Above, Below] =
-    new SymmetricPipePair[Above, Below] {
-      import scala.collection.JavaConverters._
-      override val commandPipeline = (cmd: Above) ⇒ ap.onCommand(cmd).asScala
-      override val eventPipeline = (evt: Below) ⇒ ap.onEvent(evt).asScala
-      override val managementPort: Mgmt = {
-        case x ⇒ ap.onManagementCommand(x).asScala
-      }
+  def create[Above <: AnyRef, Below <: AnyRef] //
+  (ctx: PipelineContext, ap: AbstractSymmetricPipePair[Above, Below]): SymmetricPipePair[Above, Below] =
+    new Converter(ap, ctx) with SymmetricPipePair[Above, Below] {
+      override val commandPipeline = { cmd: Above ⇒ normalize(ap.onCommand(cmd)) }
+      override val eventPipeline = { evt: Below ⇒ normalize(ap.onEvent(evt)) }
+      override val managementPort: Mgmt = { case x ⇒ normalize(ap.onManagementCommand(x)) }
     }
 }
 
@@ -183,20 +267,6 @@ object PipePairFactory {
  * and a [[PipelineStage]] into readily usable pipelines.
  */
 object PipelineFactory {
-
-  /**
-   * Scala API: build the pipeline and return the “naked” [[PipePair]] which
-   * holds the command and event pipeline functions. Exceptions thrown by the
-   * pipeline stages will not be caught.
-   *
-   * @param ctx The context object for this pipeline
-   * @param stage The (composite) pipeline stage from which to build the pipeline
-   * @return the [[PipePair]] built from the pipeline stage
-   */
-  def buildPipePair[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
-  (ctx: Ctx, stage: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow]) //
-  : PipePair[CmdAbove, CmdBelow, EvtAbove, EvtBelow] =
-    stage apply ctx
 
   /**
    * Scala API: build the pipeline and return a pair of functions representing
@@ -211,14 +281,16 @@ object PipelineFactory {
    * @param stage The (composite) pipeline stage from whcih to build the pipeline
    * @return a pair of command and event pipeline functions
    */
-  def buildFunctionTriple[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
+  def buildFunctionTriple[Ctx <: PipelineContext, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
   (ctx: Ctx, stage: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow]) //
   : (CmdAbove ⇒ (Iterable[EvtAbove], Iterable[CmdBelow]), //
   EvtBelow ⇒ (Iterable[EvtAbove], Iterable[CmdBelow]), //
   PartialFunction[AnyRef, (Iterable[EvtAbove], Iterable[CmdBelow])]) = {
     val pp = stage apply ctx
-    val split = (in: Iterable[Either[EvtAbove, CmdBelow]]) ⇒ {
+    val split: (Iterable[Either[EvtAbove, CmdBelow]]) ⇒ (Iterable[EvtAbove], Iterable[CmdBelow]) = { in ⇒
       if (in.isEmpty) (Nil, Nil)
+      else if (in eq ctx.cmd) (Nil, Seq[CmdBelow](ctx.cmd(0)))
+      else if (in eq ctx.evt) (Seq[EvtAbove](ctx.evt(0)), Nil)
       else {
         val cmds = Vector.newBuilder[CmdBelow]
         val evts = Vector.newBuilder[EvtAbove]
@@ -246,7 +318,7 @@ object PipelineFactory {
    * @param eventSink The function to invoke for events or event failures
    * @return a handle for injecting events or commands into the pipeline
    */
-  def buildWithSinkFunctions[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
+  def buildWithSinkFunctions[Ctx <: PipelineContext, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
   (ctx: Ctx,
    stage: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow])(
      commandSink: Try[CmdBelow] ⇒ Unit,
@@ -257,7 +329,10 @@ object PipelineFactory {
         Try(pl.commandPipeline(cmd)) match {
           case f: Failure[_] ⇒ commandSink(f.asInstanceOf[Try[CmdBelow]])
           case Success(out) ⇒
-            out foreach {
+            if (out.isEmpty) () // nothing
+            else if (out eq ctx.cmd) commandSink(Success(ctx.cmd(0)))
+            else if (out eq ctx.evt) eventSink(Success(ctx.evt(0)))
+            else out foreach {
               case Right(cmd) ⇒ commandSink(Success(cmd))
               case Left(evt)  ⇒ eventSink(Success(evt))
             }
@@ -267,14 +342,21 @@ object PipelineFactory {
         Try(pl.eventPipeline(evt)) match {
           case f: Failure[_] ⇒ eventSink(f.asInstanceOf[Try[EvtAbove]])
           case Success(out) ⇒
-            out foreach {
+            if (out.isEmpty) () // nothing
+            else if (out eq ctx.cmd) commandSink(Success(ctx.cmd(0)))
+            else if (out eq ctx.evt) eventSink(Success(ctx.evt(0)))
+            else out foreach {
               case Right(cmd) ⇒ commandSink(Success(cmd))
               case Left(evt)  ⇒ eventSink(Success(evt))
             }
         }
       }
       override def managementCommand(cmd: AnyRef): Unit = {
-        pl.managementPort(cmd) foreach {
+        val out = pl.managementPort(cmd)
+        if (out.isEmpty) () // nothing
+        else if (out eq ctx.cmd) commandSink(Success(ctx.cmd(0)))
+        else if (out eq ctx.evt) eventSink(Success(ctx.evt(0)))
+        else out foreach {
           case Right(cmd) ⇒ commandSink(Success(cmd))
           case Left(evt)  ⇒ eventSink(Success(evt))
         }
@@ -294,7 +376,7 @@ object PipelineFactory {
    * @param callback The [[PipelineSink]] to attach to the built pipeline
    * @return a handle for injecting events or commands into the pipeline
    */
-  def buildWithSink[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
+  def buildWithSink[Ctx <: PipelineContext, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
   (ctx: Ctx,
    stage: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow],
    callback: PipelineSink[CmdBelow, EvtAbove]): PipelineInjector[CmdAbove, EvtBelow] =
@@ -346,32 +428,140 @@ abstract class PipelineSink[Cmd, Evt] {
 
   /**
    * This callback is invoked for every command generated by the pipeline.
+   *
+   * By default this does nothing.
    */
   @throws(classOf[Throwable])
-  def onCommand(cmd: Cmd): Unit
+  def onCommand(cmd: Cmd): Unit = {}
 
   /**
    * This callback is invoked if an exception occurred while processing an
    * injected command. If this callback is invoked that no other callbacks will
    * be invoked for the same injection.
+   *
+   * By default this will just throw the exception.
    */
   @throws(classOf[Throwable])
-  def onCommandFailure(thr: Throwable): Unit
+  def onCommandFailure(thr: Throwable): Unit = throw thr
 
   /**
    * This callback is invoked for every event generated by the pipeline.
+   *
+   * By default this does nothing.
    */
   @throws(classOf[Throwable])
-  def onEvent(event: Evt): Unit
+  def onEvent(event: Evt): Unit = {}
 
   /**
    * This callback is invoked if an exception occurred while processing an
    * injected event. If this callback is invoked that no other callbacks will
    * be invoked for the same injection.
+   *
+   * By default this will just throw the exception.
    */
   @throws(classOf[Throwable])
-  def onEventFailure(thr: Throwable): Unit
+  def onEventFailure(thr: Throwable): Unit = throw thr
 }
+
+/**
+ * This base trait of each pipeline’s context provides optimized facilities
+ * for generating single commands or events (i.e. the fast common case of 1:1
+ * message transformations).
+ *
+ * <b>IMPORTANT NOTICE:</b>
+ *
+ * A PipelineContext MUST NOT be shared between multiple pipelines, it contains mutable
+ * state without synchronization. You have been warned!
+ *
+ * @see AbstractPipelineContext see AbstractPipelineContext for a default implementation (Java)
+ */
+trait PipelineContext {
+
+  /**
+   * INTERNAL API: do not touch!
+   */
+  private val cmdHolder = new Array[AnyRef](1)
+  /**
+   * INTERNAL API: do not touch!
+   */
+  private val evtHolder = new Array[AnyRef](1)
+  /**
+   * INTERNAL API: do not touch!
+   */
+  private[io] val cmd = WrappedArray.make(cmdHolder)
+  /**
+   * INTERNAL API: do not touch!
+   */
+  private[io] val evt = WrappedArray.make(evtHolder)
+
+  /**
+   * Scala API: Wrap a single command for efficient return to the pipeline’s machinery.
+   * This method avoids allocating a [[Right]] and an [[Iterable]] by reusing
+   * one such instance within the PipelineContext, hence it can be used ONLY ONCE by
+   * each pipeline stage. Prototypic and safe usage looks like this:
+   *
+   * {{{
+   * override val commandPipeline = { cmd =>
+   *   val myResult = ...
+   *   ctx.singleCommand(myResult)
+   * }
+   * }}}
+   *
+   * @see AbstractPipePair#singleCommand see AbstractPipePair for the Java API
+   */
+  def singleCommand[Cmd <: AnyRef, Evt <: AnyRef](cmd: Cmd): Iterable[Either[Evt, Cmd]] = {
+    cmdHolder(0) = cmd
+    this.cmd
+  }
+
+  /**
+   * Scala API: Wrap a single event for efficient return to the pipeline’s machinery.
+   * This method avoids allocating a [[Left]] and an [[Iterable]] by reusing
+   * one such instance within the context, hence it can be used ONLY ONCE by
+   * each pipeline stage. Prototypic and safe usage looks like this:
+   *
+   * {{{
+   * override val eventPipeline = { cmd =>
+   *   val myResult = ...
+   *   ctx.singleEvent(myResult)
+   * }
+   * }}}
+   *
+   * @see AbstractPipePair#singleEvent see AbstractPipePair for the Java API
+   */
+  def singleEvent[Cmd <: AnyRef, Evt <: AnyRef](evt: Evt): Iterable[Either[Evt, Cmd]] = {
+    evtHolder(0) = evt
+    this.evt
+  }
+
+  /**
+   * A shared (and shareable) instance of an empty `Iterable[Either[EvtAbove, CmdBelow]]`.
+   * Use this when processing does not yield any commands or events as result.
+   */
+  def nothing[Cmd, Evt]: Iterable[Either[Evt, Cmd]] = Nil
+
+  /**
+   * Dealias a possibly optimized return value such that it can be safely used.
+   */
+  def dealias[Cmd, Evt](msg: Iterable[Either[Evt, Cmd]]): Iterable[Either[Evt, Cmd]] = {
+    if (msg.isEmpty) Nil
+    else if (msg eq cmd) Seq(Right(cmd(0)))
+    else if (msg eq evt) Seq(Left(evt(0)))
+    else msg
+  }
+}
+
+/**
+ * This base trait of each pipeline’s context provides optimized facilities
+ * for generating single commands or events (i.e. the fast common case of 1:1
+ * message transformations).
+ *
+ * <b>IMPORTANT NOTICE:</b>
+ *
+ * A PipelineContext MUST NOT be shared between multiple pipelines, it contains mutable
+ * state without synchronization. You have been warned!
+ */
+abstract class AbstractPipelineContext extends PipelineContext
 
 object PipelineStage {
 
@@ -385,7 +575,7 @@ object PipelineStage {
    * @param right the right or lower pipeline stage
    * @return a pipeline stage representing the sequence of the two stages
    */
-  def sequence[Ctx, CmdAbove, CmdBelow, CmdBelowBelow, EvtAbove, EvtBelow, EvtBelowBelow] //
+  def sequence[Ctx <: PipelineContext, CmdAbove, CmdBelow, CmdBelowBelow, EvtAbove, EvtBelow, EvtBelowBelow] //
   (left: PipelineStage[_ >: Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow],
    right: PipelineStage[_ >: Ctx, CmdBelow, CmdBelowBelow, EvtBelow, EvtBelowBelow]) //
    : PipelineStage[Ctx, CmdAbove, CmdBelowBelow, EvtAbove, EvtBelowBelow] =
@@ -400,7 +590,7 @@ object PipelineStage {
    * @param right the event pipeline
    * @return a pipeline stage using the left command pipeline and the right event pipeline
    */
-  def combine[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
+  def combine[Ctx <: PipelineContext, CmdAbove, CmdBelow, EvtAbove, EvtBelow] //
   (left: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow],
    right: PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow]) //
    : PipelineStage[Ctx, CmdAbove, CmdBelow, EvtAbove, EvtBelow] =
@@ -411,7 +601,7 @@ object PipelineStage {
  * A [[PipelineStage]] which is symmetric in command and event types, i.e. it only
  * has one command and event type above and one below.
  */
-abstract class SymmetricPipelineStage[Context, Above, Below] extends PipelineStage[Context, Above, Below, Above, Below]
+abstract class SymmetricPipelineStage[Context <: PipelineContext, Above, Below] extends PipelineStage[Context, Above, Below, Above, Below]
 
 /**
  * A pipeline stage which can be combined with other stages to build a
@@ -421,12 +611,15 @@ abstract class SymmetricPipelineStage[Context, Above, Below] extends PipelineSta
  *
  * @see [[PipelineFactory]]
  */
-abstract class PipelineStage[Context, CmdAbove, CmdBelow, EvtAbove, EvtBelow] { left ⇒
+abstract class PipelineStage[Context <: PipelineContext, CmdAbove, CmdBelow, EvtAbove, EvtBelow] { left ⇒
 
   /**
    * Implement this method to generate this stage’s pair of command and event
    * functions.
    *
+   * INTERNAL API: do not use this method to instantiate a pipeline!
+   *
+   * @see [[PipelineFactory]]
    * @see [[AbstractPipePair]]
    * @see [[AbstractSymmetricPipePair]]
    */
@@ -454,51 +647,48 @@ abstract class PipelineStage[Context, CmdAbove, CmdBelow, EvtAbove, EvtBelow] { 
         new PipePair[CmdAbove, CmdBelowBelow, EvtAbove, EvtBelowBelow] {
 
           type Output = Either[EvtAbove, CmdBelowBelow]
-          type Builder = mutable.Builder[Output, Vector[Output]]
 
           import language.implicitConversions
           @inline implicit def narrowRight[A, B, C](in: Right[A, B]): Right[C, B] = in.asInstanceOf[Right[C, B]]
           @inline implicit def narrowLeft[A, B, C](in: Left[A, B]): Left[A, C] = in.asInstanceOf[Left[A, C]]
 
-          def loopLeft(output: Builder, input: Iterable[Either[EvtAbove, CmdBelow]]): Unit = {
-            input foreach {
-              case Right(cmd) ⇒
-                rightPL.commandPipeline(cmd) foreach {
-                  case r @ Right(_) ⇒ output += r
-                  case Left(evt)    ⇒ loopLeft(output, leftPL.eventPipeline(evt))
-                }
-              case l @ Left(_) ⇒ output += l
+          def loopLeft(input: Iterable[Either[EvtAbove, CmdBelow]]): Iterable[Output] = {
+            if (input.isEmpty) Nil
+            else if (input eq ctx.cmd) loopRight(rightPL.commandPipeline(ctx.cmd(0)))
+            else if (input eq ctx.evt) ctx.evt
+            else {
+              val output = Vector.newBuilder[Output]
+              input foreach {
+                case Right(cmd)  ⇒ output ++= ctx.dealias(loopRight(rightPL.commandPipeline(cmd)))
+                case l @ Left(_) ⇒ output += l
+              }
+              output.result
             }
           }
 
-          def loopRight(output: Builder, input: Iterable[Either[EvtBelow, CmdBelowBelow]]): Unit = {
-            input foreach {
-              case r @ Right(_) ⇒ output += r
-              case Left(evt) ⇒
-                leftPL.eventPipeline(evt) foreach {
-                  case Right(cmd)  ⇒ loopRight(output, rightPL.commandPipeline(cmd))
-                  case l @ Left(_) ⇒ output += l
-                }
+          def loopRight(input: Iterable[Either[EvtBelow, CmdBelowBelow]]): Iterable[Output] = {
+            if (input.isEmpty) Nil
+            else if (input eq ctx.cmd) ctx.cmd
+            else if (input eq ctx.evt) loopLeft(leftPL.eventPipeline(ctx.evt(0)))
+            else {
+              val output = Vector.newBuilder[Output]
+              input foreach {
+                case r @ Right(_) ⇒ output += r
+                case Left(evt)    ⇒ output ++= ctx.dealias(loopLeft(leftPL.eventPipeline(evt)))
+              }
+              output.result
             }
           }
 
-          override val commandPipeline = { a: CmdAbove ⇒
-            val output = Vector.newBuilder[Output]
-            loopLeft(output, leftPL.commandPipeline(a))
-            output.result
-          }
+          override val commandPipeline = { a: CmdAbove ⇒ loopLeft(leftPL.commandPipeline(a)) }
 
-          override val eventPipeline = { b: EvtBelowBelow ⇒
-            val output = Vector.newBuilder[Output]
-            loopRight(output, rightPL.eventPipeline(b))
-            output.result
-          }
+          override val eventPipeline = { b: EvtBelowBelow ⇒ loopRight(rightPL.eventPipeline(b)) }
 
           override val managementPort: PartialFunction[AnyRef, Iterable[Either[EvtAbove, CmdBelowBelow]]] = {
             case x ⇒
               val output = Vector.newBuilder[Output]
-              loopLeft(output, leftPL.managementPort.applyOrElse(x, (_: AnyRef) ⇒ Nil))
-              loopRight(output, rightPL.managementPort.applyOrElse(x, (_: AnyRef) ⇒ Nil))
+              output ++= ctx.dealias(loopLeft(leftPL.managementPort.applyOrElse(x, (_: AnyRef) ⇒ Nil)))
+              output ++= ctx.dealias(loopRight(rightPL.managementPort.applyOrElse(x, (_: AnyRef) ⇒ Nil)))
               output.result
           }
         }
@@ -526,7 +716,11 @@ abstract class PipelineStage[Context, CmdAbove, CmdBelow, EvtAbove, EvtBelow] { 
           override val commandPipeline = leftPL.commandPipeline
           override val eventPipeline = rightPL.eventPipeline
           override val managementPort: Mgmt = {
-            case x ⇒ leftPL.managementPort(x) ++ rightPL.managementPort(x)
+            case x ⇒
+              val output = Vector.newBuilder[Either[EvtAbove, CmdBelow]]
+              output ++= ctx.dealias(leftPL.managementPort(x))
+              output ++= ctx.dealias(rightPL.managementPort(x))
+              output.result
           }
         }
     }
@@ -543,34 +737,34 @@ abstract class PipelineStage[Context, CmdAbove, CmdBelow, EvtAbove, EvtBelow] { 
  * stream decoding would be broken, hence throwing an IllegalArgumentException).
  */
 class LengthFieldFrame(maxSize: Int)
-  extends SymmetricPipelineStage[AnyRef, ByteString, ByteString] {
+  extends SymmetricPipelineStage[PipelineContext, ByteString, ByteString] {
 
-  override def apply(ctx: AnyRef) =
+  override def apply(ctx: PipelineContext) =
     new SymmetricPipePair[ByteString, ByteString] {
       var buffer = None: Option[ByteString]
       implicit val byteOrder = ByteOrder.BIG_ENDIAN
 
       /**
        * Extract as many complete frames as possible from the given ByteString
-       * and return the remainder together with the extracted frames as
-       * events (i.e. a `Left(...)`).
+       * and return the remainder together with the extracted frames in reverse
+       * order.
        */
       @tailrec
-      def extractFrames(bs: ByteString, acc: List[Left[ByteString, ByteString]]) //
-      : (Option[ByteString], Seq[Left[ByteString, ByteString]]) = {
+      def extractFrames(bs: ByteString, acc: List[ByteString]) //
+      : (Option[ByteString], Seq[ByteString]) = {
         if (bs.isEmpty) {
-          (None, acc.reverse)
+          (None, acc)
         } else if (bs.length < 4) {
-          (Some(bs.compact), acc.reverse)
+          (Some(bs.compact), acc)
         } else {
           val length = bs.iterator.getInt
           if (length > maxSize)
             throw new IllegalArgumentException(
               s"received too large frame of size $length (max = $maxSize)")
           if (bs.length >= length) {
-            extractFrames(bs drop length, Left(bs.slice(4, length)) :: acc)
+            extractFrames(bs drop length, bs.slice(4, length) :: acc)
           } else {
-            (Some(bs.compact), acc.reverse)
+            (Some(bs.compact), acc)
           }
         }
       }
@@ -588,7 +782,7 @@ class LengthFieldFrame(maxSize: Int)
             val bb = ByteString.newBuilder
             bb.putInt(bs.length + 4)
             bb ++= bs
-            Seq(Right(bb.result))
+            ctx.singleCommand(bb.result)
           }
         }
 
@@ -601,8 +795,16 @@ class LengthFieldFrame(maxSize: Int)
       override def eventPipeline =
         { bs: ByteString ⇒
           val data = if (buffer.isEmpty) bs else buffer.get ++ bs
-          extractFrames(data, Nil) match {
-            case (nb, result) ⇒ buffer = nb; result
+          val (nb, frames) = extractFrames(data, Nil)
+          buffer = nb
+          /*
+           * please note the specialized (optimized) facility for emitting
+           * just a single event
+           */
+          frames match {
+            case Nil        ⇒ Nil
+            case one :: Nil ⇒ ctx.singleEvent(one)
+            case many       ⇒ many.reverse map (Left(_))
           }
         }
     }
@@ -614,7 +816,7 @@ class LengthFieldFrame(maxSize: Int)
  * This trait expresses that the pipeline’s context needs to live within an
  * actor and provide its ActorContext.
  */
-trait HasActorContext {
+trait HasActorContext extends PipelineContext {
   def context: ActorContext
 }
 
@@ -630,14 +832,14 @@ object TickGenerator {
 /**
  * This pipeline stage does not alter the events or commands
  */
-class TickGenerator[Cmd, Evt](interval: FiniteDuration)
+class TickGenerator[Cmd <: AnyRef, Evt <: AnyRef](interval: FiniteDuration)
   extends PipelineStage[HasActorContext, Cmd, Cmd, Evt, Evt] {
   import TickGenerator._
 
   override def apply(ctx: HasActorContext) =
     new PipePair[Cmd, Cmd, Evt, Evt] {
-      override val commandPipeline = (cmd: Cmd) ⇒ Seq(Right(cmd))
-      override val eventPipeline = (evt: Evt) ⇒ Seq(Left(evt))
+      override val commandPipeline = (cmd: Cmd) ⇒ ctx.singleCommand(cmd)
+      override val eventPipeline = (evt: Evt) ⇒ ctx.singleEvent(evt)
       override val managementPort: Mgmt = {
         case Tick ⇒
           ctx.context.system.scheduler.scheduleOnce(
