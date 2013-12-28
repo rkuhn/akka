@@ -14,9 +14,9 @@ trait ActorContext[T] {
   
   def stop(childName: String): Unit
   
-  def watch[T](other: ActorRef[T]): other.type
+  def watch[U](other: ActorRef[U]): other.type
   
-  def unwatch[T](other: ActorRef[T]): other.type
+  def unwatch[U](other: ActorRef[U]): other.type
 
-  // TODO: add method for registering automatic wrapping of given message type into Holder
+  def registerWrapper[T](foreign: Class[T], local: Class[Holder[_ <: T]]): Unit
 }

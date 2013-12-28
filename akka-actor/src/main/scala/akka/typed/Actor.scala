@@ -7,19 +7,19 @@ case class PostRestart(failure: Throwable) extends Management
 case object PostStop extends Management
 case class Failure(cause: Throwable, child: ActorRef[Nothing]) extends Management
 
-trait Actor[T] {
+abstract class Behavior[T] {
+  def management(ctx: ActorContext[T], msg: Management): Behavior[T]
+  def message(ctx: ActorContext[T], msg: T): Behavior[T]
+}
 
-  sealed trait Behavior {
-    def management(ctx: ActorContext[T], msg: Management): Behavior
-    def message(ctx: ActorContext[T], msg: T): Behavior
-  }
+object Behavior {
 
-  case class FullBehavior(behavior: PartialFunction[(ActorContext[T], Either[Management, T]), Behavior]) extends Behavior {
-    override def management(ctx: ActorContext[T], msg: Management): Behavior = {
-      lazy val fallback: ((ActorContext[T], Either[Management, T])) => Behavior = _ =>
+  case class Full[T](behavior: PartialFunction[(ActorContext[T], Either[Management, T]), Behavior[T]]) extends Behavior[T] {
+    override def management(ctx: ActorContext[T], msg: Management): Behavior[T] = {
+      lazy val fallback: ((ActorContext[T], Either[Management, T])) => Behavior[T] = _ =>
         msg match {
-          case PreStart => SameBehavior
-          case PostStop => SameBehavior
+          case PreStart => Same
+          case PostStop => Same
           case PreRestart(_) =>
             ctx.children foreach { child =>
               ctx.unwatch(child)
@@ -31,33 +31,33 @@ trait Actor[T] {
         }
       behavior.applyOrElse((ctx, Left(msg)), fallback)
     }
-    override def message(ctx: ActorContext[T], msg: T): Behavior = {
-      behavior.applyOrElse((ctx, Right(msg)), (_: (ActorContext[T], Either[Management, T])) => SameBehavior)
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
+      behavior.applyOrElse((ctx, Right(msg)), (_: (ActorContext[T], Either[Management, T])) => Same)
     }
   }
 
-  case class SimpleBehavior(behavior: T => Behavior) extends Behavior {
-    override def management(ctx: ActorContext[T], msg: Management): Behavior = msg match {
+  case class Simple[T](behavior: T => Behavior[T]) extends Behavior[T] {
+    override def management(ctx: ActorContext[T], msg: Management): Behavior[T] = msg match {
       case Failure(cause, _) => throw cause
-      case _                 => SameBehavior
+      case _                 => Same
     }
-    override def message(ctx: ActorContext[T], msg: T): Behavior = behavior(msg)
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(msg)
   }
 
-  case class ContextualBehavior(behavior: (ActorContext[T], T) => Behavior) extends Behavior {
-    override def management(ctx: ActorContext[T], msg: Management): Behavior = msg match {
+  case class Contextual[T](behavior: (ActorContext[T], T) => Behavior[T]) extends Behavior[T] {
+    override def management(ctx: ActorContext[T], msg: Management): Behavior[T] = msg match {
       case Failure(cause, _) => throw cause
-      case _                 => SameBehavior
+      case _                 => Same
     }
-    override def message(ctx: ActorContext[T], msg: T): Behavior = behavior(ctx, msg)
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(ctx, msg)
   }
 
-  case class CompositeBehavior(mgmt: PartialFunction[(ActorContext[T], Management), Behavior], behavior: (ActorContext[T], T) => Behavior) extends Behavior {
-    override def management(ctx: ActorContext[T], msg: Management): Behavior = {
-      lazy val fallback: ((ActorContext[T], Management)) => Behavior = _ =>
+  case class Composite[T](mgmt: PartialFunction[(ActorContext[T], Management), Behavior[T]], behavior: (ActorContext[T], T) => Behavior[T]) extends Behavior[T] {
+    override def management(ctx: ActorContext[T], msg: Management): Behavior[T] = {
+      lazy val fallback: ((ActorContext[T], Management)) => Behavior[T] = _ =>
         msg match {
-          case PreStart => SameBehavior
-          case PostStop => SameBehavior
+          case PreStart => Same
+          case PostStop => Same
           case PreRestart(_) =>
             ctx.children foreach { child =>
               ctx.unwatch(child)
@@ -69,19 +69,21 @@ trait Actor[T] {
         }
       mgmt.applyOrElse((ctx, msg), fallback)
     }
-    override def message(ctx: ActorContext[T], msg: T): Behavior = behavior(ctx, msg)
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(ctx, msg)
   }
 
-  case object SameBehavior extends Behavior {
-    override def management(ctx: ActorContext[T], msg: Management): Behavior = ???
-    override def message(ctx: ActorContext[T], msg: T): Behavior = ???
-  }
-  
-  case object StoppedBehavior extends Behavior {
-    override def management(ctx: ActorContext[T], msg: Management): Behavior = ???
-    override def message(ctx: ActorContext[T], msg: T): Behavior = ???
+  def Same[T]: Behavior[T] = sameBehavior.asInstanceOf
+  def Stopped[T]: Behavior[T] = stoppedBehavior.asInstanceOf
+
+  private[akka] val sameBehavior, stoppedBehavior = new Behavior[Nothing] {
+    override def management(ctx: ActorContext[Nothing], msg: Management): Behavior[Nothing] = ???
+    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = ???
   }
 
-  def initialBehavior: Behavior
+}
+
+trait Actor[T] {
+
+  def initialBehavior: Behavior[T]
 
 }
