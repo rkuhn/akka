@@ -6,6 +6,7 @@ case class PreRestart(failure: Throwable) extends Management
 case class PostRestart(failure: Throwable) extends Management
 case object PostStop extends Management
 case class Failure(cause: Throwable, child: ActorRef[Nothing]) extends Management
+// also include Terminated and ReceiveTimeout
 
 abstract class Behavior[T] {
   def management(ctx: ActorContext[T], msg: Management): Behavior[T]
@@ -83,7 +84,9 @@ object Behavior {
 }
 
 trait Actor[T] {
+  
+  type Behavior = akka.typed.Behavior[T]
 
-  def initialBehavior: Behavior[T]
+  def initialBehavior: Behavior
 
 }

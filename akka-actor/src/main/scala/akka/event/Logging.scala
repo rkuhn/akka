@@ -91,7 +91,7 @@ trait LoggingBus extends ActorEventBus {
   /**
    * Internal Akka use only
    */
-  private[akka] def startDefaultLoggers(system: ActorSystemImpl) {
+  private[akka] def startDefaultLoggers(system: ActorSystemImpl[Nothing]) {
     val logName = simpleName(this) + "(" + system + ")"
     val level = levelFor(system.settings.LogLevel) getOrElse {
       // only log initialization errors directly with StandardOutLogger.print
@@ -169,7 +169,7 @@ trait LoggingBus extends ActorEventBus {
   /**
    * INTERNAL API
    */
-  private def addLogger(system: ActorSystemImpl, clazz: Class[_ <: Actor], level: LogLevel, logName: String): ActorRef = {
+  private def addLogger(system: ActorSystemImpl[Nothing], clazz: Class[_ <: Actor], level: LogLevel, logName: String): ActorRef = {
     val name = "log" + Extension(system).id() + "-" + simpleName(clazz)
     val actor = system.systemActorOf(Props(clazz), name)
     implicit def timeout = system.settings.LoggerStartTimeout

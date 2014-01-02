@@ -203,7 +203,7 @@ private[akka] trait Cell {
   /**
    * The system internals where this Cell lives.
    */
-  def systemImpl: ActorSystemImpl
+  def systemImpl: ActorSystemImpl[Nothing]
   /**
    * Start the cell: enqueued message must not be processed before this has
    * been called. The usual action is to attach the mailbox to a dispatcher.
@@ -342,7 +342,7 @@ private[akka] object ActorCell {
  * for! (waves hand)
  */
 private[akka] class ActorCell(
-  val system: ActorSystemImpl,
+  val system: ActorSystemImpl[Nothing],
   val self: InternalActorRef,
   val props: Props,
   val dispatcher: MessageDispatcher,

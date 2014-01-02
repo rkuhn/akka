@@ -282,7 +282,7 @@ private[akka] case object Nobody extends MinimalActorRef {
  *  INTERNAL API
  */
 private[akka] class LocalActorRef private[akka] (
-  _system: ActorSystemImpl,
+  _system: ActorSystemImpl[Nothing],
   _props: Props,
   _dispatcher: MessageDispatcher,
   _mailboxType: MailboxType,
@@ -303,7 +303,7 @@ private[akka] class LocalActorRef private[akka] (
   private val actorCell: ActorCell = newActorCell(_system, this, _props, _dispatcher, _supervisor)
   actorCell.init(sendSupervise = true, _mailboxType)
 
-  protected def newActorCell(system: ActorSystemImpl, ref: InternalActorRef, props: Props, dispatcher: MessageDispatcher, supervisor: InternalActorRef): ActorCell =
+  protected def newActorCell(system: ActorSystemImpl[Nothing], ref: InternalActorRef, props: Props, dispatcher: MessageDispatcher, supervisor: InternalActorRef): ActorCell =
     new ActorCell(system, ref, props, dispatcher, supervisor)
 
   protected def actorContext: ActorContext = actorCell

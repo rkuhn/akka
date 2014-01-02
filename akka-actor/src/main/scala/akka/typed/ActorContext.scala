@@ -4,6 +4,8 @@ trait ActorContext[T] {
 
   def self: ActorRef[T]
   
+  def props: Props[T]
+  
   def system: ActorSystem[Nothing]
   
   def children: Iterable[ActorRef[Nothing]]

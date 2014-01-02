@@ -23,7 +23,7 @@ import akka.dispatch.MessageDispatcher
  * send a message to one (or more) of these actors.
  */
 private[akka] class RoutedActorRef(
-  _system: ActorSystemImpl,
+  _system: ActorSystemImpl[Nothing],
   _routerProps: Props,
   _routerDispatcher: MessageDispatcher,
   _routerMailbox: MailboxType,

@@ -90,6 +90,10 @@ trait Scheduler {
     initialDelay: FiniteDuration,
     interval: FiniteDuration,
     runnable: Runnable)(implicit executor: ExecutionContext): Cancellable
+    
+  def schedule[T](initialDelay: FiniteDuration, interval: FiniteDuration, target: akka.typed.ActorRef[T], msg: T)(
+      implicit executor: ExecutionContext): Cancellable =
+    schedule(initialDelay, interval, new Runnable { override def run = target ! msg })
 
   /**
    * Schedules a message to be sent once with a delay, i.e. a time period that has
@@ -125,6 +129,9 @@ trait Scheduler {
   def scheduleOnce(
     delay: FiniteDuration,
     runnable: Runnable)(implicit executor: ExecutionContext): Cancellable
+
+  def scheduleOnce[T](delay: FiniteDuration, target: akka.typed.ActorRef[T], msg: T)(implicit executor: ExecutionContext): Cancellable =
+    scheduleOnce(delay, new Runnable { override def run = target ! msg })
 
   /**
    * The maximum supported task frequency of this scheduler, i.e. the inverse

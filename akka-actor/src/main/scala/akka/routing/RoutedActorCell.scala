@@ -39,7 +39,7 @@ private[akka] object RoutedActorCell {
  * INTERNAL API
  */
 private[akka] class RoutedActorCell(
-  _system: ActorSystemImpl,
+  _system: ActorSystemImpl[Nothing],
   _ref: InternalActorRef,
   _routerProps: Props,
   _routerDispatcher: MessageDispatcher,

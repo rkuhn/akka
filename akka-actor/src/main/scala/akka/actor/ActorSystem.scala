@@ -20,6 +20,7 @@ import scala.concurrent.duration.{ FiniteDuration, Duration }
 import scala.concurrent.{ Await, Awaitable, CanAwait, Future, ExecutionContext }
 import scala.util.{ Failure, Success }
 import scala.util.control.{ NonFatal, ControlThrowable }
+import java.util.concurrent.Executor
 
 object ActorSystem {
 
@@ -108,7 +109,11 @@ object ActorSystem {
    *
    * @see <a href="http://typesafehub.github.com/config/v0.4.1/" target="_blank">The Typesafe Config Library API Documentation</a>
    */
-  def apply(name: String, config: Config, classLoader: ClassLoader): ActorSystem = new ActorSystemImpl(name, config, classLoader).start()
+  def apply(name: String, config: Config, classLoader: ClassLoader): ActorSystem = new ActorSystemImpl[Nothing](name, config, classLoader, defaultGuardianProps).start()
+  
+  def apply[T](guardianProps: akka.typed.Props[T], name: String): akka.typed.ActorSystem[T] = ???
+  
+  private val defaultGuardianProps: akka.typed.Props[Nothing] = ???
 
   /**
    * Settings are the overall ActorSystem Settings which also provides a convenient access to the Config object.
@@ -453,7 +458,8 @@ abstract class ExtendedActorSystem extends ActorSystem {
   private[akka] def printTree: String
 }
 
-private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config, classLoader: ClassLoader) extends ExtendedActorSystem {
+private[akka] class ActorSystemImpl[-T](val name: String, applicationConfig: Config, classLoader: ClassLoader, guardianProps: akka.typed.Props[T])
+  extends ExtendedActorSystem with akka.typed.ExtendedActorSystem[T] {
 
   if (!name.matches("""^[a-zA-Z0-9][a-zA-Z0-9-]*$"""))
     throw new IllegalArgumentException(
@@ -461,6 +467,8 @@ private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config,
         "], must contain only word characters (i.e. [a-zA-Z0-9] plus non-leading '-')")
 
   import ActorSystem._
+  
+  override def untyped: ActorSystem = this
 
   @volatile private var logDeadLetterListener: Option[ActorRef] = None
   final val settings: Settings = new Settings(classLoader, applicationConfig, name)
@@ -507,7 +515,7 @@ private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config,
 
   def logConfiguration(): Unit = log.info(settings.toString)
 
-  protected def systemImpl: ActorSystemImpl = this
+  protected def systemImpl: ActorSystemImpl[T] = this
 
   private[akka] def systemActorOf(props: Props, name: String): ActorRef = systemGuardian.underlying.attachChild(props, name, systemService = true)
 
@@ -553,7 +561,7 @@ private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config,
   val dispatchers: Dispatchers = new Dispatchers(settings, DefaultDispatcherPrerequisites(
     threadFactory, eventStream, scheduler, dynamicAccess, settings, mailboxes))
 
-  val dispatcher: ExecutionContext = dispatchers.defaultGlobalDispatcher
+  val dispatcher: ExecutionContext with Executor = dispatchers.defaultGlobalDispatcher
 
   val internalCallingThreadExecutionContext: ExecutionContext =
     dynamicAccess.getObjectFor[ExecutionContext]("scala.concurrent.Future$InternalCallbackExecutor$").getOrElse(
@@ -564,24 +572,30 @@ private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config,
 
   def terminationFuture: Future[Unit] = provider.terminationFuture
   def lookupRoot: InternalActorRef = provider.rootGuardian
-  def guardian: LocalActorRef = provider.guardian
+  def guardian: LocalActorRef = ???
   def systemGuardian: LocalActorRef = provider.systemGuardian
+  
+  def !(msg: T) = guardianRef ! msg
+  def path = guardianRef.path
 
   def /(actorName: String): ActorPath = guardian.path / actorName
   def /(path: Iterable[String]): ActorPath = guardian.path / path
 
-  private lazy val _start: this.type = {
+  private lazy val guardianRef: akka.typed.ActorRef[T] = {
     // the provider is expected to start default loggers, LocalActorRefProvider does this
-    provider.init(this)
+    val guardian = provider.init(this, guardianProps)
     if (settings.LogDeadLetters > 0)
       logDeadLetterListener = Some(systemActorOf(Props[DeadLetterListener], "deadLetterListener"))
     registerOnTermination(stopScheduler())
     loadExtensions()
     if (LogConfigOnStart) logConfiguration()
-    this
+    guardian
   }
 
-  def start(): this.type = _start
+  def start(): this.type = {
+    guardianRef
+    this
+  }
 
   private lazy val terminationCallbacks = {
     implicit val d = dispatcher

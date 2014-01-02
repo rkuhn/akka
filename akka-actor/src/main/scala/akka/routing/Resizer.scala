@@ -247,7 +247,7 @@ case class DefaultResizer(
  * INTERNAL API
  */
 private[akka] final class ResizablePoolCell(
-  _system: ActorSystemImpl,
+  _system: ActorSystemImpl[Nothing],
   _ref: InternalActorRef,
   _routerProps: Props,
   _routerDispatcher: MessageDispatcher,

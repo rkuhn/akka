@@ -1,5 +1,7 @@
 package akka.typed
 
+import akka.actor.ActorSystem
+
 object Sample {
 
   sealed trait Command
@@ -11,12 +13,12 @@ object Sample {
   case class GetResult(x: Int)
 
   class Counter extends Actor[Command] {
-    def behavior(count: Int): Behavior = SimpleBehavior {
+    def behavior(count: Int): Behavior = Behavior.Simple {
       case Increment(x) =>
         behavior(count + x)
       case Get(sender) =>
         sender ! GetResult(count)
-        SameBehavior
+        Behavior.Same
     }
     def initialBehavior = behavior(0)
   }
@@ -26,24 +28,24 @@ object Sample {
   sys ! Increment(42)
 
   class Wrapper[T](target: ActorRef[T]) extends Actor[T] {
-    def initialBehavior = SimpleBehavior { msg =>
+    def initialBehavior = Behavior.Simple { msg =>
       target ! msg
-      SameBehavior
+      Behavior.Same
     }
   }
 
   class Wrapper2[T](props: Props[T]) extends Actor[T] {
-    def initialBehavior = FullBehavior {
+    def initialBehavior = Behavior.Full {
       case (ctx, Left(PreStart)) =>
         behavior(ctx.actorOf(props, "target"))
     }
-    def behavior(target: ActorRef[T]): Behavior = CompositeBehavior(
+    def behavior(target: ActorRef[T]): Behavior = Behavior.Composite(
       {
-        case (ctx, Failure(_, _)) => StoppedBehavior
+        case (ctx, Failure(_, _)) => Behavior.Stopped
       },
       { (ctx, msg) =>
         target ! msg
-        SameBehavior
+        Behavior.Same
       })
   }
 

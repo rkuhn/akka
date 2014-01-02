@@ -233,7 +233,7 @@ private[akka] final class PromiseActorRef private (val provider: ActorRefProvide
   override def getParent: InternalActorRef = provider.tempContainer
 
   def internalCallingThreadExecutionContext: ExecutionContext =
-    provider.guardian.underlying.systemImpl.internalCallingThreadExecutionContext
+    provider.system.internalCallingThreadExecutionContext
 
   /**
    * Contract of this method:
@@ -326,7 +326,7 @@ private[akka] object PromiseActorRef {
 
   def apply(provider: ActorRefProvider, timeout: Timeout, targetName: String): PromiseActorRef = {
     val result = Promise[Any]()
-    val scheduler = provider.guardian.underlying.system.scheduler
+    val scheduler = provider.system.scheduler
     val a = new PromiseActorRef(provider, result)
     implicit val ec = a.internalCallingThreadExecutionContext
     val f = scheduler.scheduleOnce(timeout.duration) {

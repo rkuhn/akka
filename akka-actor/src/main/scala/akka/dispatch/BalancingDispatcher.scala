@@ -52,7 +52,7 @@ class BalancingDispatcher(
    */
   private[akka] val messageQueue: MessageQueue = _mailboxType.create(None, None)
 
-  private class SharingMailbox(val system: ActorSystemImpl, _messageQueue: MessageQueue)
+  private class SharingMailbox(val system: ActorSystemImpl[_], _messageQueue: MessageQueue)
     extends Mailbox(_messageQueue) with DefaultSystemMessageQueue {
     override def cleanUp(): Unit = {
       val dlq = mailboxes.deadLetterMailbox

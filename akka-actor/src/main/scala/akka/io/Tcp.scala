@@ -552,7 +552,7 @@ class TcpExt(system: ExtendedActorSystem) extends IO.Extension {
    *
    */
   val manager: ActorRef = {
-    system.asInstanceOf[ActorSystemImpl].systemActorOf(
+    system.asInstanceOf[ActorSystemImpl[_]].systemActorOf(
       props = Props(classOf[TcpManager], this).withDispatcher(Settings.ManagementDispatcher).withDeploy(Deploy.local),
       name = "IO-TCP")
   }

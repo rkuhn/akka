@@ -28,7 +28,7 @@ import util.Try
  * and swap out the cell ref.
  */
 private[akka] class RepointableActorRef(
-  val system: ActorSystemImpl,
+  val system: ActorSystemImpl[Nothing],
   val props: Props,
   val dispatcher: MessageDispatcher,
   val mailboxType: MailboxType,
@@ -171,7 +171,7 @@ private[akka] class RepointableActorRef(
   protected def writeReplace(): AnyRef = SerializedActorRef(this)
 }
 
-private[akka] class UnstartedCell(val systemImpl: ActorSystemImpl,
+private[akka] class UnstartedCell(val systemImpl: ActorSystemImpl[Nothing],
                                   val self: RepointableActorRef,
                                   val props: Props,
                                   val supervisor: InternalActorRef) extends Cell {

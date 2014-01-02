@@ -1,7 +1,8 @@
 package akka.typed
 
-class Props[T] {
-  
+abstract class Props[T] {
+  def actorClass: Class[_ <: Actor[_]]
+  private[akka] def newActor(): Actor[T]
 }
 
 object Props {
