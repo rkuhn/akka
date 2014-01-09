@@ -17,6 +17,7 @@ import scala.concurrent.duration.Duration
 import scala.concurrent.forkjoin.ThreadLocalRandom
 import scala.util.control.NonFatal
 import akka.dispatch.MessageDispatcher
+import akka.dispatch.MailboxType
 
 /**
  * The actor context - the view of the actor cell from the actor.
@@ -134,13 +135,13 @@ trait ActorContext extends ActorRefFactory {
    * actor is terminated.
    * @return the provided ActorRef
    */
-  def watch(subject: ActorRef): ActorRef
+  def watch(subject: ActorRef): subject.type
 
   /**
    * Unregisters this actor as Monitor for the provided ActorRef.
    * @return the provided ActorRef
    */
-  def unwatch(subject: ActorRef): ActorRef
+  def unwatch(subject: ActorRef): subject.type
 
   /**
    * ActorContexts shouldn't be Serializable
@@ -195,7 +196,7 @@ private[akka] trait Cell {
   /**
    * The “self” reference which this Cell is attached to.
    */
-  def self: ActorRef
+  def self: InternalActorRef
   /**
    * The system within which this Cell lives.
    */
@@ -204,6 +205,14 @@ private[akka] trait Cell {
    * The system internals where this Cell lives.
    */
   def systemImpl: ActorSystemImpl[Nothing]
+  /**
+   * The provider which has created this Cell.
+   */
+  def provider: ActorRefProvider
+  /**
+   * Initialize the cell, but do not start it yet
+   */
+  def init(sendSupervise: Boolean, mailboxType: MailboxType): this.type
   /**
    * Start the cell: enqueued message must not be processed before this has
    * been called. The usual action is to attach the mailbox to a dispatcher.
@@ -248,6 +257,24 @@ private[akka] trait Cell {
    * It is racy if called from the outside.
    */
   def getSingleChild(name: String): InternalActorRef
+  
+  /**
+   * reserve a child name
+   */
+  def reserveChild(name: String): Boolean
+  /**
+   * unreserve a child name
+   */
+  protected def unreserveChild(name: String): Boolean
+  /**
+   * finish initialization of a child, publishing it for lookups
+   */
+  def initChild(ref: ActorRef): Option[ChildRestartStats]
+  /**
+   * attach a child (will reserve and init)
+   */
+  private[akka] def attachChild(props: Props, name: String, systemService: Boolean): ActorRef
+  private[akka] def attachChild(props: Props, systemService: Boolean): ActorRef
 
   /**
    * Enqueue a message to be sent to the actor; may or may not actually
@@ -288,7 +315,12 @@ private[akka] trait Cell {
   /**
    * The props for this actor cell.
    */
-  def props: Props
+  def props: ActorFactory
+}
+
+trait ActorFactory {
+  def actorClass: Class[_ <: IsActor]
+  private[akka] def newActor(): IsActor
 }
 
 /**
@@ -352,7 +384,8 @@ private[akka] class ActorCell(
   with dungeon.Children
   with dungeon.Dispatch
   with dungeon.DeathWatch
-  with dungeon.FaultHandling {
+  with dungeon.FaultHandling
+  with dungeon.Infrastructure {
 
   import ActorCell._
 
@@ -514,6 +547,10 @@ private[akka] class ActorCell(
       if (original.isEmpty || original.tail.isEmpty) actor.receive :: emptyBehaviorStack
       else original.tail
   }
+  
+  def watch(subject: ActorRef): subject.type = watchImpl(subject)
+  
+  def unwatch(subject: ActorRef): subject.type = unwatchImpl(subject)
 
   /*
    * ACTOR INSTANCE HANDLING
@@ -622,9 +659,5 @@ private[akka] class ActorCell(
         throw new IllegalActorStateException(actorInstance.getClass + " is not an Actor since it have not mixed in the 'Actor' trait")
     }
 
-  // logging is not the main purpose, and if it fails there’s nothing we can do
-  protected final def publish(e: LogEvent): Unit = try system.eventStream.publish(e) catch { case NonFatal(_) ⇒ }
-
-  protected final def clazz(o: AnyRef): Class[_] = if (o eq null) this.getClass else o.getClass
 }
 

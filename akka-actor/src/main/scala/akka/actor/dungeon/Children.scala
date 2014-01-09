@@ -12,7 +12,7 @@ import akka.actor.ActorPath.ElementRegex
 import akka.serialization.SerializationExtension
 import akka.util.{ Unsafe, Helpers }
 
-private[akka] trait Children { this: ActorCell ⇒
+private[akka] trait Children { this: Cell with Dispatch ⇒
 
   import ChildrenContainer._
 
@@ -33,13 +33,13 @@ private[akka] trait Children { this: ActorCell ⇒
   }
 
   def actorOf(props: Props): ActorRef =
-    makeChild(this, props, randomName(), async = false, systemService = false)
+    makeChild(props, randomName(), async = false, systemService = false)
   def actorOf(props: Props, name: String): ActorRef =
-    makeChild(this, props, checkName(name), async = false, systemService = false)
+    makeChild(props, checkName(name), async = false, systemService = false)
   private[akka] def attachChild(props: Props, systemService: Boolean): ActorRef =
-    makeChild(this, props, randomName(), async = true, systemService = systemService)
+    makeChild(props, randomName(), async = true, systemService = systemService)
   private[akka] def attachChild(props: Props, name: String, systemService: Boolean): ActorRef =
-    makeChild(this, props, checkName(name), async = true, systemService = systemService)
+    makeChild(props, checkName(name), async = true, systemService = systemService)
 
   @volatile private var _nextNameDoNotCallMeDirectly = 0L
   final protected def randomName(): String = {
@@ -183,28 +183,28 @@ private[akka] trait Children { this: ActorCell ⇒
     }
   }
 
-  private def makeChild(cell: ActorCell, props: Props, name: String, async: Boolean, systemService: Boolean): ActorRef = {
-    if (cell.system.settings.SerializeAllCreators && !systemService && props.deploy.scope != LocalScope)
+  private def makeChild(props: Props, name: String, async: Boolean, systemService: Boolean): ActorRef = {
+    if (system.settings.SerializeAllCreators && !systemService && props.deploy.scope != LocalScope)
       try {
-        val ser = SerializationExtension(cell.system)
+        val ser = SerializationExtension(system)
         props.args forall (arg ⇒
           arg.isInstanceOf[NoSerializationVerificationNeeded] ||
             ser.deserialize(ser.serialize(arg.asInstanceOf[AnyRef]).get, arg.getClass).get != null)
       } catch {
-        case NonFatal(e) ⇒ throw new IllegalArgumentException(s"pre-creation serialization check failed at [${cell.self.path}/$name]", e)
+        case NonFatal(e) ⇒ throw new IllegalArgumentException(s"pre-creation serialization check failed at [${self.path}/$name]", e)
       }
     /*
      * in case we are currently terminating, fail external attachChild requests
      * (internal calls cannot happen anyway because we are suspended)
      */
-    if (cell.childrenRefs.isTerminating) throw new IllegalStateException("cannot create children while terminating or terminated")
+    if (childrenRefs.isTerminating) throw new IllegalStateException("cannot create children while terminating or terminated")
     else {
       reserveChild(name)
       // this name will either be unreserved or overwritten with a real child below
       val actor =
         try {
-          val childPath = new ChildActorPath(cell.self.path, name, ActorCell.newUid())
-          cell.provider.actorOf(cell.systemImpl, props, cell.self, childPath,
+          val childPath = new ChildActorPath(self.path, name, ActorCell.newUid())
+          provider.actorOf(systemImpl, props, self, childPath,
             systemService = systemService, deploy = None, lookupDeploy = true, async = async)
         } catch {
           case e: InterruptedException ⇒

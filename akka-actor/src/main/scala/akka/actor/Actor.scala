@@ -399,7 +399,7 @@ object Actor {
  * direct access to `actorOf`, `stop` etc. This is not default in order to keep
  * the name-space clean.
  */
-trait Actor {
+trait Actor extends IsActor {
 
   import Actor._
 
@@ -566,3 +566,4 @@ trait Actor {
   }
 }
 
+private[akka] trait IsActor

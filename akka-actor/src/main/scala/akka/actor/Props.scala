@@ -172,7 +172,7 @@ object Props {
  * }}}
  */
 @SerialVersionUID(2L)
-final case class Props(deploy: Deploy, clazz: Class[_], args: immutable.Seq[Any]) {
+final case class Props(deploy: Deploy, clazz: Class[_], args: immutable.Seq[Any]) extends ActorFactory {
 
   // derived property, does not need to be serialized
   @transient

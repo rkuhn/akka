@@ -4,19 +4,24 @@
 
 package akka.actor.dungeon
 
-import akka.actor.{ Terminated, InternalActorRef, ActorRef, ActorRefScope, ActorCell, Actor, Address, AddressTerminated }
+import akka.actor.{ Terminated, InternalActorRef, ActorRef, ActorRefScope, Cell, ActorCell, Actor, Address, AddressTerminated }
 import akka.dispatch.sysmsg.{ DeathWatchNotification, Watch, Unwatch }
 import akka.event.Logging.{ Warning, Error, Debug }
 import scala.util.control.NonFatal
 import akka.actor.MinimalActorRef
 
-private[akka] trait DeathWatch { this: ActorCell ⇒
+private[akka] trait DeathWatch { this: Cell with Infrastructure ⇒
+  
+  def actor: AnyRef
+  protected def isTerminating: Boolean
+  protected def handleChildTerminated(child: ActorRef): Unit
+  def receiveMessage(msg: Any): Unit
 
   private var watching: Set[ActorRef] = ActorCell.emptyActorRefSet
   private var watchedBy: Set[ActorRef] = ActorCell.emptyActorRefSet
   private var terminatedQueued: Set[ActorRef] = ActorCell.emptyActorRefSet
 
-  override final def watch(subject: ActorRef): ActorRef = subject match {
+  final def watchImpl(subject: akka.typed.ActorRef[_]): subject.type = subject match {
     case a: InternalActorRef ⇒
       if (a != self && !watchingContains(a)) {
         maintainAddressTerminatedSubscription(a) {
@@ -24,10 +29,10 @@ private[akka] trait DeathWatch { this: ActorCell ⇒
           watching += a
         }
       }
-      a
+      subject
   }
 
-  override final def unwatch(subject: ActorRef): ActorRef = subject match {
+  final def unwatchImpl(subject: akka.typed.ActorRef[_]): subject.type = subject match {
     case a: InternalActorRef ⇒
       if (a != self && watchingContains(a)) {
         a.sendSystemMessage(Unwatch(a, self)) // ➡➡➡ NEVER SEND THE SAME SYSTEM MESSAGE OBJECT TO TWO ACTORS ⬅⬅⬅
@@ -36,7 +41,7 @@ private[akka] trait DeathWatch { this: ActorCell ⇒
         }
       }
       terminatedQueued = removeFromSet(a, terminatedQueued)
-      a
+      subject
   }
 
   protected def receivedTerminated(t: Terminated): Unit =
@@ -126,7 +131,7 @@ private[akka] trait DeathWatch { this: ActorCell ⇒
         if (system.settings.DebugLifecycle) publish(Debug(self.path.toString, clazz(actor), "now monitoring " + watcher))
       }
     } else if (!watcheeSelf && watcherSelf) {
-      watch(watchee)
+      watchImpl(watchee)
     } else {
       publish(Warning(self.path.toString, clazz(actor), "BUG: illegal Watch(%s,%s) for %s".format(watchee, watcher, self)))
     }
@@ -142,7 +147,7 @@ private[akka] trait DeathWatch { this: ActorCell ⇒
         if (system.settings.DebugLifecycle) publish(Debug(self.path.toString, clazz(actor), "stopped monitoring " + watcher))
       }
     } else if (!watcheeSelf && watcherSelf) {
-      unwatch(watchee)
+      unwatchImpl(watchee)
     } else {
       publish(Warning(self.path.toString, clazz(actor), "BUG: illegal Unwatch(%s,%s) for %s".format(watchee, watcher, self)))
     }

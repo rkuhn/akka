@@ -1,5 +1,7 @@
 package akka.typed
 
+import scala.reflect.ClassTag
+
 trait ActorContext[T] {
 
   def self: ActorRef[T]
@@ -20,5 +22,7 @@ trait ActorContext[T] {
   
   def unwatch[U](other: ActorRef[U]): other.type
 
-  def registerWrapper[T](foreign: Class[T], local: Class[Holder[_ <: T]]): Unit
+  def registerWrapper[T](foreign: Class[T], local: Class[Holder[_ <: T]]): Unit // TODO: remove
+  
+  def selfRef[T: ClassTag]: ActorRef[T] // TODO: remove
 }

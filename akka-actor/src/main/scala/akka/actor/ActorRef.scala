@@ -97,7 +97,7 @@ object ActorRef {
  * about the exact actor incarnation you can use the ``ActorPath`` as key because
  * the unique id of the actor is not taken into account when comparing actor paths.
  */
-abstract class ActorRef extends java.lang.Comparable[ActorRef] with Serializable {
+abstract class ActorRef extends java.lang.Comparable[ActorRef] with Serializable with akka.typed.ActorRef[Envelope]{
   scalaRef: InternalActorRef ⇒
 
   /**
@@ -300,13 +300,11 @@ private[akka] class LocalActorRef private[akka] (
    * actorCell before we call init and start, since we can start using "this"
    * object from another thread as soon as we run init.
    */
-  private val actorCell: ActorCell = newActorCell(_system, this, _props, _dispatcher, _supervisor)
+  private val actorCell: Cell = newActorCell(_system, this, _props, _dispatcher, _supervisor)
   actorCell.init(sendSupervise = true, _mailboxType)
 
   protected def newActorCell(system: ActorSystemImpl[Nothing], ref: InternalActorRef, props: Props, dispatcher: MessageDispatcher, supervisor: InternalActorRef): ActorCell =
     new ActorCell(system, ref, props, dispatcher, supervisor)
-
-  protected def actorContext: ActorContext = actorCell
 
   /**
    * Is the actor terminated?
@@ -343,7 +341,7 @@ private[akka] class LocalActorRef private[akka] (
 
   override def provider: ActorRefProvider = actorCell.provider
 
-  def children: immutable.Iterable[ActorRef] = actorCell.children
+  def children: immutable.Iterable[ActorRef] = actorCell.childrenRefs.children
 
   /**
    * Method for looking up a single child beneath this actor. Override in order
@@ -377,7 +375,7 @@ private[akka] class LocalActorRef private[akka] (
 
   // ========= AKKA PROTECTED FUNCTIONS =========
 
-  def underlying: ActorCell = actorCell
+  def underlying: Cell = actorCell
 
   override def sendSystemMessage(message: SystemMessage): Unit = actorCell.sendSystemMessage(message)
 
@@ -438,6 +436,7 @@ private[akka] trait MinimalActorRef extends InternalActorRef with LocalRef {
   @deprecated("Use context.watch(actor) and receive Terminated(actor)", "2.2") override def isTerminated = false
 
   override def !(message: Any)(implicit sender: ActorRef = Actor.noSender): Unit = ()
+  override def !(env: Envelope): Unit = ()
 
   override def sendSystemMessage(message: SystemMessage): Unit = ()
   override def restart(cause: Throwable): Unit = ()
