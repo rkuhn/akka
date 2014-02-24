@@ -1,14 +1,18 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.zeromq
 
 import com.google.protobuf.Message
-import org.zeromq.{ ZMQ ⇒ JZMQ }
 import akka.actor.ActorRef
-import akka.util.duration._
-import akka.util.Duration
+import scala.concurrent.duration._
+import scala.collection.immutable
+import org.zeromq.{ ZMQ ⇒ JZMQ }
 import org.zeromq.ZMQ.{ Poller, Socket }
+import akka.japi.Util.immutableSeq
+import akka.util.ByteString
+import akka.util.Collections.EmptyImmutableSeq
+import annotation.varargs
 
 /**
  * Marker trait representing request messages for zeromq
@@ -37,7 +41,7 @@ sealed trait SocketConnectOption extends SocketOption {
  * A base trait for pubsub options for the ZeroMQ socket
  */
 sealed trait PubSubOption extends SocketOption {
-  def payload: Seq[Byte]
+  def payload: ByteString
 }
 
 /**
@@ -48,7 +52,7 @@ sealed trait SocketOptionQuery extends Request
 /**
  * This socket should be a client socket and connect to the specified endpoint
  *
- * @param endpoint an uri like tcp://127.0.0.1.5432
+ * @param endpoint URI (ex. tcp://127.0.0.1:5432)
  */
 case class Connect(endpoint: String) extends SocketConnectOption
 
@@ -80,7 +84,7 @@ class Context(numIoThreads: Int) extends SocketMeta {
  * A base trait for message deserializers
  */
 trait Deserializer extends SocketOption {
-  def apply(frames: Seq[Frame]): Any
+  def apply(frames: immutable.Seq[ByteString]): Any
 }
 
 /**
@@ -152,7 +156,7 @@ case class PollDispatcher(name: String) extends SocketMeta
  * An option containing the duration a poll cycle should wait for a message before it loops
  * @param duration
  */
-case class PollTimeoutDuration(duration: Duration = 100 millis) extends SocketMeta
+case class PollTimeoutDuration(duration: FiniteDuration = 100 millis) extends SocketMeta
 
 /**
  * Start listening with this server socket on the specified address
@@ -162,23 +166,26 @@ case class PollTimeoutDuration(duration: Duration = 100 millis) extends SocketMe
 case class Bind(endpoint: String) extends SocketConnectOption
 
 /**
- * The [[akka.zeromq.Subscribe]] option shall establish a new message filter on a [[akka.zeromq.SocketType.Pub]] socket.
- * Newly created [[akka.zeromq.SocketType.Sub]] sockets shall filter out all incoming messages,
+ * The [[akka.zeromq.Subscribe]] option establishes a new message filter on a [[akka.zeromq.SocketType.Pub]] socket.
+ * Newly created [[akka.zeromq.SocketType.Sub]] sockets filter out all incoming messages,
  * therefore you should send this option to establish an initial message filter.
  *
- * An empty payload of length zero shall subscribe to all incoming messages.
- * A non-empty payload shall subscribe to all messages beginning with the specified prefix.
+ * An empty payload of length zero will subscribe to all incoming messages.
+ * A non-empty payload will subscribe to all messages beginning with the specified prefix.
  * Multiple filters may be attached to a single [[akka.zeromq.SocketType.Sub]] socket,
- * in which case a message shall be accepted if it matches at least one filter.
+ * in which case a message will be accepted if it matches at least one filter.
  *
  * @param payload the topic to subscribe to
  */
-case class Subscribe(payload: Seq[Byte]) extends PubSubOption {
-  def this(topic: String) = this(topic.getBytes("UTF-8"))
+case class Subscribe(payload: ByteString) extends PubSubOption {
+  def this(topic: String) = this(ByteString(topic))
 }
 object Subscribe {
-  def apply(topic: String): Subscribe = new Subscribe(topic)
-  val all = Subscribe(Seq.empty)
+  val all = Subscribe(ByteString.empty)
+  def apply(topic: String): Subscribe = topic match {
+    case null | "" ⇒ all
+    case t         ⇒ new Subscribe(t)
+  }
 }
 
 /**
@@ -190,8 +197,8 @@ object Subscribe {
  *
  * @param payload
  */
-case class Unsubscribe(payload: Seq[Byte]) extends PubSubOption {
-  def this(topic: String) = this(topic.getBytes("UTF-8"))
+case class Unsubscribe(payload: ByteString) extends PubSubOption {
+  def this(topic: String) = this(ByteString(topic))
 }
 object Unsubscribe {
   def apply(topic: String): Unsubscribe = new Unsubscribe(topic)
@@ -201,32 +208,35 @@ object Unsubscribe {
  * Send a message over the zeromq socket
  * @param frames
  */
-case class Send(frames: Seq[Frame]) extends Request
+case class Send(frames: immutable.Seq[ByteString]) extends Request
 
 /**
  * A message received over the zeromq socket
  * @param frames
  */
-case class ZMQMessage(frames: Seq[Frame]) {
-
-  def this(frame: Frame) = this(Seq(frame))
-  def this(frame1: Frame, frame2: Frame) = this(Seq(frame1, frame2))
-  def this(frameArray: Array[Frame]) = this(frameArray.toSeq)
-
-  /**
-   * Convert the bytes in the first frame to a String, using specified charset.
-   */
-  def firstFrameAsString(charsetName: String): String = new String(frames.head.payload.toArray, charsetName)
-  /**
-   * Convert the bytes in the first frame to a String, using "UTF-8" charset.
-   */
-  def firstFrameAsString: String = firstFrameAsString("UTF-8")
-
-  def payload(frameIndex: Int): Array[Byte] = frames(frameIndex).payload.toArray
+case class ZMQMessage(frames: immutable.Seq[ByteString]) {
+  def frame(frameIndex: Int): ByteString = frames(frameIndex)
 }
 object ZMQMessage {
-  def apply(bytes: Array[Byte]): ZMQMessage = ZMQMessage(Seq(Frame(bytes)))
-  def apply(message: Message): ZMQMessage = ZMQMessage(message.toByteArray)
+  val empty = new ZMQMessage(EmptyImmutableSeq)
+
+  /**
+   * Scala API
+   * @param frames the frames of the returned ZMQMessage
+   * @return a ZMQMessage with the given frames
+   */
+  def apply(frames: ByteString*): ZMQMessage =
+    if ((frames eq null) || frames.length == 0) empty else new ZMQMessage(frames.to[immutable.Seq])
+
+  /**
+   * Java API: create a message from the given frames
+   *
+   * @param frames the frames of the returned ZMQMessage
+   * @return a ZMQMessage with the given frames
+   */
+  @varargs def withFrames(frames: ByteString*): ZMQMessage = apply(frames: _*)
+
+  def apply[T](frames: T*)(implicit converter: T ⇒ ByteString): ZMQMessage = apply(frames map converter: _*)
 }
 
 /**
@@ -255,7 +265,9 @@ case class Linger(value: Long) extends SocketOption
 /**
  * Gets the linger option @see [[akka.zeromq.Linger]]
  */
-object Linger extends SocketOptionQuery
+object Linger extends SocketOptionQuery {
+  val no: Linger = Linger(0)
+}
 
 /**
  * Sets the recovery interval for multicast transports using the specified socket.

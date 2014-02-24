@@ -1,16 +1,19 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.zeromq
 
 import org.zeromq.{ ZMQ ⇒ JZMQ }
+import org.zeromq.ZMQ.Poller
 import akka.actor._
-import akka.dispatch.{ Await }
 import akka.pattern.ask
-import akka.util.Duration
+import scala.collection.immutable
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
 import java.util.concurrent.TimeUnit
 import akka.util.Timeout
 import org.zeromq.ZMQException
+import scala.concurrent.duration.FiniteDuration
 
 /**
  * A Model to represent a version of the zeromq library
@@ -19,7 +22,7 @@ import org.zeromq.ZMQException
  * @param patch
  */
 case class ZeroMQVersion(major: Int, minor: Int, patch: Int) {
-  override def toString = "%d.%d.%d".format(major, minor, patch)
+  override def toString: String = "%d.%d.%d".format(major, minor, patch)
 }
 
 /**
@@ -27,17 +30,11 @@ case class ZeroMQVersion(major: Int, minor: Int, patch: Int) {
  */
 object ZeroMQExtension extends ExtensionId[ZeroMQExtension] with ExtensionIdProvider {
   override def get(system: ActorSystem): ZeroMQExtension = super.get(system)
-  def lookup() = this
-  def createExtension(system: ExtendedActorSystem) = new ZeroMQExtension(system)
+  def lookup(): this.type = this
+  override def createExtension(system: ExtendedActorSystem): ZeroMQExtension = new ZeroMQExtension(system)
 
   private val minVersionString = "2.1.0"
   private val minVersion = JZMQ.makeVersion(2, 1, 0)
-
-  private[zeromq] def check[TOption <: SocketOption: Manifest](parameters: Seq[SocketOption]) = {
-    parameters exists { p ⇒
-      ClassManifest.singleType(p) <:< manifest[TOption]
-    }
-  }
 }
 
 /**
@@ -47,16 +44,16 @@ object ZeroMQExtension extends ExtensionId[ZeroMQExtension] with ExtensionIdProv
  */
 class ZeroMQExtension(system: ActorSystem) extends Extension {
 
-  val DefaultPollTimeout = Duration(system.settings.config.getMilliseconds("akka.zeromq.poll-timeout"), TimeUnit.MILLISECONDS)
-  val NewSocketTimeout = Timeout(Duration(system.settings.config.getMilliseconds("akka.zeromq.new-socket-timeout"), TimeUnit.MILLISECONDS))
+  val DefaultPollTimeout: FiniteDuration = Duration(system.settings.config.getMilliseconds("akka.zeromq.poll-timeout"), TimeUnit.MILLISECONDS)
+  val NewSocketTimeout: Timeout = Timeout(Duration(system.settings.config.getMilliseconds("akka.zeromq.new-socket-timeout"), TimeUnit.MILLISECONDS))
+
+  val pollTimeUnit = if (version.major >= 3) TimeUnit.MILLISECONDS else TimeUnit.MICROSECONDS
 
   /**
    * The version of the ZeroMQ library
    * @return a [[akka.zeromq.ZeroMQVersion]]
    */
-  def version = {
-    ZeroMQVersion(JZMQ.getMajorVersion, JZMQ.getMinorVersion, JZMQ.getPatchVersion)
-  }
+  def version: ZeroMQVersion = ZeroMQVersion(JZMQ.getMajorVersion, JZMQ.getMinorVersion, JZMQ.getPatchVersion)
 
   /**
    * Factory method to create the [[akka.actor.Props]] to build the ZeroMQ socket actor.
@@ -66,69 +63,73 @@ class ZeroMQExtension(system: ActorSystem) extends Extension {
    */
   def newSocketProps(socketParameters: SocketOption*): Props = {
     verifyZeroMQVersion
-    require(ZeroMQExtension.check[SocketType.ZMQSocketType](socketParameters), "A socket type is required")
-    Props(new ConcurrentSocketActor(socketParameters)).withDispatcher("akka.zeromq.socket-dispatcher")
+    require(socketParameters exists {
+      case s: SocketType.ZMQSocketType ⇒ true
+      case _                           ⇒ false
+    }, "A socket type is required")
+    val params = socketParameters.to[immutable.Seq]
+    Props(new ConcurrentSocketActor(params)).withDispatcher("akka.zeromq.socket-dispatcher")
   }
 
   /**
-   * Java API helper
-   * Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Publisher socket actor.
+   * Java API: Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Publisher socket actor.
+   *
    * @param socketParameters a varargs list of [[akka.zeromq.SocketOption]] to configure the socket
    * @return the [[akka.actor.Props]]
    */
   def newPubSocketProps(socketParameters: SocketOption*): Props = newSocketProps((SocketType.Pub +: socketParameters): _*)
 
   /**
-   * Java API helper
-   * Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Subscriber socket actor.
+   * Java API: Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Subscriber socket actor.
+   *
    * @param socketParameters a varargs list of [[akka.zeromq.SocketOption]] to configure the socket
    * @return the [[akka.actor.Props]]
    */
   def newSubSocketProps(socketParameters: SocketOption*): Props = newSocketProps((SocketType.Sub +: socketParameters): _*)
 
   /**
-   * Java API helper
-   * Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Dealer socket actor.
+   * Java API: Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Dealer socket actor.
+   *
    * @param socketParameters a varargs list of [[akka.zeromq.SocketOption]] to configure the socket
    * @return the [[akka.actor.Props]]
    */
   def newDealerSocketProps(socketParameters: SocketOption*): Props = newSocketProps((SocketType.Dealer +: socketParameters): _*)
 
   /**
-   * Java API helper
-   * Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Router socket actor.
+   * Java API: Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Router socket actor.
+   *
    * @param socketParameters a varargs list of [[akka.zeromq.SocketOption]] to configure the socket
    * @return the [[akka.actor.Props]]
    */
   def newRouterSocketProps(socketParameters: SocketOption*): Props = newSocketProps((SocketType.Router +: socketParameters): _*)
 
   /**
-   * Java API helper
-   * Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Push socket actor.
+   * Java API: Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Push socket actor.
+   *
    * @param socketParameters a varargs list of [[akka.zeromq.SocketOption]] to configure the socket
    * @return the [[akka.actor.Props]]
    */
   def newPushSocketProps(socketParameters: SocketOption*): Props = newSocketProps((SocketType.Push +: socketParameters): _*)
 
   /**
-   * Java API helper
-   * Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Pull socket actor.
+   * Java API: Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Pull socket actor.
+   *
    * @param socketParameters a varargs list of [[akka.zeromq.SocketOption]] to configure the socket
    * @return the [[akka.actor.Props]]
    */
   def newPullSocketProps(socketParameters: SocketOption*): Props = newSocketProps((SocketType.Pull +: socketParameters): _*)
 
   /**
-   * Java API helper
-   * Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Req socket actor.
+   * Java API: Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Req socket actor.
+   *
    * @param socketParameters a varargs list of [[akka.zeromq.SocketOption]] to configure the socket
    * @return the [[akka.actor.Props]]
    */
   def newReqSocketProps(socketParameters: SocketOption*): Props = newSocketProps((SocketType.Rep +: socketParameters): _*)
 
   /**
-   * Java API helper
-   * Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Rep socket actor.
+   * Java API: Factory method to create the [[akka.actor.Props]] to build a ZeroMQ Rep socket actor.
+   *
    * @param socketParameters a varargs list of [[akka.zeromq.SocketOption]] to configure the socket
    * @return the [[akka.actor.Props]]
    */
@@ -144,8 +145,7 @@ class ZeroMQExtension(system: ActorSystem) extends Extension {
    */
   def newSocket(socketParameters: SocketOption*): ActorRef = {
     implicit val timeout = NewSocketTimeout
-    val req = (zeromqGuardian ? newSocketProps(socketParameters: _*)).mapTo[ActorRef]
-    Await.result(req, timeout.duration)
+    Await.result((zeromqGuardian ? newSocketProps(socketParameters: _*)).mapTo[ActorRef], timeout.duration)
   }
 
   /**
@@ -253,9 +253,7 @@ class ZeroMQExtension(system: ActorSystem) extends Extension {
         case _                                         ⇒ false
       }
 
-      def receive = {
-        case p: Props ⇒ sender ! context.actorOf(p)
-      }
+      def receive = { case p: Props ⇒ sender ! context.actorOf(p) }
     }), "zeromq")
   }
 

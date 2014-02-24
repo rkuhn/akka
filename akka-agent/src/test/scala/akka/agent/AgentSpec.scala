@@ -1,12 +1,13 @@
 package akka.agent
 
-import akka.dispatch.Await
-import akka.util.Duration
-import akka.util.duration._
+import language.postfixOps
+
+import scala.concurrent.{ Await, Future }
+import scala.concurrent.duration._
 import akka.util.Timeout
 import akka.testkit._
 import scala.concurrent.stm._
-import java.util.concurrent.CountDownLatch
+import java.util.concurrent.{ CountDownLatch, TimeUnit }
 
 class CountDownFunction[A](num: Int = 1) extends Function1[A, A] {
   val latch = new CountDownLatch(num)
@@ -17,7 +18,7 @@ class CountDownFunction[A](num: Int = 1) extends Function1[A, A] {
 class AgentSpec extends AkkaSpec {
 
   implicit val timeout = Timeout(5.seconds.dilated)
-
+  import system.dispatcher
   "Agent" must {
     "update with send dispatches in order sent" in {
       val countDown = new CountDownFunction[String]
@@ -30,51 +31,46 @@ class AgentSpec extends AkkaSpec {
 
       countDown.await(5 seconds)
       agent() must be("abcd")
-
-      agent.close()
     }
 
     "maintain order between send and sendOff" in {
       val countDown = new CountDownFunction[String]
-
+      val l1, l2 = new TestLatch(1)
       val agent = Agent("a")
       agent send (_ + "b")
-      val longRunning = (s: String) ⇒ { Thread.sleep(2000); s + "c" }
-      agent sendOff longRunning
+      agent.sendOff((s: String) ⇒ { l1.countDown; Await.ready(l2, timeout.duration); s + "c" })
+      Await.ready(l1, timeout.duration)
       agent send (_ + "d")
       agent send countDown
-
+      l2.countDown
       countDown.await(5 seconds)
       agent() must be("abcd")
-
-      agent.close()
     }
 
     "maintain order between alter and alterOff" in {
-
+      val l1, l2 = new TestLatch(1)
       val agent = Agent("a")
 
-      val r1 = agent.alter(_ + "b")(5000)
-      val r2 = agent.alterOff((s: String) ⇒ { Thread.sleep(2000); s + "c" })(5000)
-      val r3 = agent.alter(_ + "d")(5000)
+      val r1 = agent.alter(_ + "b")
+      val r2 = agent.alterOff(s ⇒ { l1.countDown; Await.ready(l2, timeout.duration); s + "c" })
+      Await.ready(l1, timeout.duration)
+      val r3 = agent.alter(_ + "d")
+      val result = Future.sequence(Seq(r1, r2, r3)).map(_.mkString(":"))
+      l2.countDown
 
-      Await.result(r1, 5 seconds) must be === "ab"
-      Await.result(r2, 5 seconds) must be === "abc"
-      Await.result(r3, 5 seconds) must be === "abcd"
+      Await.result(result, 5 seconds) must be === "ab:abc:abcd"
 
       agent() must be("abcd")
-
-      agent.close()
     }
 
     "be immediately readable" in {
       val countDown = new CountDownFunction[Int]
-      val readLatch = new CountDownLatch(1)
+      val readLatch = new TestLatch(1)
       val readTimeout = 5 seconds
 
       val agent = Agent(5)
       val f1 = (i: Int) ⇒ {
-        readLatch.await(readTimeout.length, readTimeout.unit)
+        Await.ready(readLatch, readTimeout)
         i + 5
       }
       agent send f1
@@ -85,15 +81,12 @@ class AgentSpec extends AkkaSpec {
       countDown.await(5 seconds)
       read must be(5)
       agent() must be(10)
-
-      agent.close()
     }
 
     "be readable within a transaction" in {
       val agent = Agent(5)
       val value = atomic { t ⇒ agent() }
       value must be(5)
-      agent.close()
     }
 
     "dispatch sends in successful transactions" in {
@@ -107,8 +100,6 @@ class AgentSpec extends AkkaSpec {
 
       countDown.await(5 seconds)
       agent() must be(10)
-
-      agent.close()
     }
 
     "not dispatch sends in aborted transactions" in {
@@ -127,8 +118,6 @@ class AgentSpec extends AkkaSpec {
 
       countDown.await(5 seconds)
       agent() must be(5)
-
-      agent.close()
     }
 
     "be able to return a 'queued' future" in {
@@ -137,8 +126,6 @@ class AgentSpec extends AkkaSpec {
       agent send (_ + "c")
 
       Await.result(agent.future, timeout.duration) must be("abc")
-
-      agent.close()
     }
 
     "be able to await the value after updates have completed" in {
@@ -146,9 +133,7 @@ class AgentSpec extends AkkaSpec {
       agent send (_ + "b")
       agent send (_ + "c")
 
-      agent.await must be("abc")
-
-      agent.close()
+      Await.result(agent.future, timeout.duration) must be("abc")
     }
 
     "be able to be mapped" in {
@@ -157,9 +142,6 @@ class AgentSpec extends AkkaSpec {
 
       agent1() must be(5)
       agent2() must be(10)
-
-      agent1.close()
-      agent2.close()
     }
 
     "be able to be used in a 'foreach' for comprehension" in {
@@ -171,8 +153,6 @@ class AgentSpec extends AkkaSpec {
       }
 
       result must be(3)
-
-      agent.close()
     }
 
     "be able to be used in a 'map' for comprehension" in {
@@ -181,9 +161,6 @@ class AgentSpec extends AkkaSpec {
 
       agent1() must be(5)
       agent2() must be(10)
-
-      agent1.close()
-      agent2.close()
     }
 
     "be able to be used in a 'flatMap' for comprehension" in {
@@ -198,10 +175,6 @@ class AgentSpec extends AkkaSpec {
       agent1() must be(1)
       agent2() must be(2)
       agent3() must be(3)
-
-      agent1.close()
-      agent2.close()
-      agent3.close()
     }
   }
 }

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
@@ -36,7 +36,7 @@ import akka.japi.{ Creator }
  *      }
  *    }
  *
- *   private static SupervisorStrategy strategy = new OneForOneStrategy(10, Duration.parse("1 minute"),
+ *   private static SupervisorStrategy strategy = new OneForOneStrategy(10, Duration.create("1 minute"),
  *     new Function<Throwable, Directive>() {
  *       @Override
  *       public Directive apply(Throwable t) {
@@ -93,11 +93,17 @@ import akka.japi.{ Creator }
 abstract class UntypedActor extends Actor {
 
   /**
-   * To be implemented by concrete UntypedActor. Defines the message handler.
+   * To be implemented by concrete UntypedActor, this defines the behavior of the
+   * UntypedActor.
    */
   @throws(classOf[Exception])
   def onReceive(message: Any): Unit
 
+  /**
+   * Returns this UntypedActor's UntypedActorContext
+   * The UntypedActorContext is not thread safe so do not expose it outside of the
+   * UntypedActor.
+   */
   def getContext(): UntypedActorContext = context.asInstanceOf[UntypedActorContext]
 
   /**
@@ -116,7 +122,7 @@ abstract class UntypedActor extends Actor {
    * User overridable definition the strategy to use for supervising
    * child actors.
    */
-  override def supervisorStrategy(): SupervisorStrategy = super.supervisorStrategy()
+  override def supervisorStrategy: SupervisorStrategy = super.supervisorStrategy
 
   /**
    * User overridable callback.
@@ -125,6 +131,7 @@ abstract class UntypedActor extends Actor {
    * Actor are automatically started asynchronously when created.
    * Empty default implementation.
    */
+  @throws(classOf[Exception])
   override def preStart(): Unit = super.preStart()
 
   /**
@@ -133,6 +140,7 @@ abstract class UntypedActor extends Actor {
    * Is called asynchronously after 'actor.stop()' is invoked.
    * Empty default implementation.
    */
+  @throws(classOf[Exception])
   override def postStop(): Unit = super.postStop()
 
   /**
@@ -141,6 +149,7 @@ abstract class UntypedActor extends Actor {
    * Is called on a crashed Actor right BEFORE it is restarted to allow clean
    * up of resources before Actor is terminated.
    */
+  @throws(classOf[Exception])
   override def preRestart(reason: Throwable, message: Option[Any]): Unit = super.preRestart(reason, message)
 
   /**
@@ -148,11 +157,10 @@ abstract class UntypedActor extends Actor {
    * <p/>
    * Is called right AFTER restart on the newly created Actor to allow reinitialization after an Actor crash.
    */
+  @throws(classOf[Exception])
   override def postRestart(reason: Throwable): Unit = super.postRestart(reason)
 
-  final protected def receive = {
-    case msg ⇒ onReceive(msg)
-  }
+  final def receive = { case msg ⇒ onReceive(msg) }
 }
 
 /**

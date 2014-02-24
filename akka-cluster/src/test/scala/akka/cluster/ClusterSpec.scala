@@ -1,62 +1,102 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
+
 package akka.cluster
 
-import akka.actor.ActorSystem
-import akka.util._
-import akka.util.duration._
-
+import language.postfixOps
+import language.reflectiveCalls
+import scala.concurrent.duration._
 import akka.testkit.AkkaSpec
-import akka.testkit.TestEvent._
-import akka.testkit.EventFilter
-
-import com.typesafe.config.{ Config, ConfigFactory }
+import akka.testkit.ImplicitSender
+import akka.actor.ExtendedActorSystem
+import akka.actor.Address
+import akka.cluster.InternalClusterAction._
+import java.lang.management.ManagementFactory
+import javax.management.ObjectName
+import akka.actor.ActorRef
 
 object ClusterSpec {
-  val testConf: Config = ConfigFactory.parseString("""
-    akka {
-      actor.provider = "akka.remote.RemoteActorRefProvider"
-      event-handlers = ["akka.testkit.TestEventListener"]
-      loglevel = "WARNING"
-      stdout-loglevel = "WARNING"
-      actor {
-        default-dispatcher {
-          executor = "fork-join-executor"
-          fork-join-executor {
-            parallelism-min = 8
-            parallelism-factor = 2.0
-            parallelism-max = 8
-          }
-        }
-      }
-      remote.netty.hostname = localhost
-      cluster {
-        failure-detector.threshold = 3
-        auto-down = on
-      }
+  val config = """
+    akka.cluster {
+      auto-join                    = off
+      auto-down                    = off
+      periodic-tasks-initial-delay = 120 seconds // turn off scheduled tasks
+      publish-stats-interval = 0 s # always, when it happens
+      failure-detector.implementation-class = akka.cluster.FailureDetectorPuppet
     }
-    """)
+    akka.actor.provider = "akka.cluster.ClusterActorRefProvider"
+    akka.remote.log-remote-lifecycle-events = off
+    akka.remote.netty.tcp.port = 0
+    # akka.loglevel = DEBUG
+    """
+
+  case class GossipTo(address: Address)
 }
 
-abstract class ClusterSpec(_system: ActorSystem) extends AkkaSpec(_system) {
-  def this(config: Config) = this(ActorSystem(AkkaSpec.getCallerName, config.withFallback(ClusterSpec.testConf)))
+@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
+class ClusterSpec extends AkkaSpec(ClusterSpec.config) with ImplicitSender {
+  import ClusterSpec._
 
-  def this(s: String) = this(ConfigFactory.parseString(s))
+  // FIXME: temporary workaround. See #2663
+  val selfAddress = system.asInstanceOf[ExtendedActorSystem].provider.asInstanceOf[ClusterActorRefProvider].transport.defaultAddress
 
-  def this() = this(ActorSystem(AkkaSpec.getCallerName, ClusterSpec.testConf))
+  val cluster = Cluster(system)
+  def clusterView = cluster.readView
 
-  def awaitConvergence(nodes: Iterable[Cluster], maxWaitTime: Duration = 60 seconds) {
-    val deadline = maxWaitTime.fromNow
-    while (nodes map (_.convergence.isDefined) exists (_ == false)) {
-      if (deadline.isOverdue) throw new IllegalStateException("Convergence could no be reached within " + maxWaitTime)
-      Thread.sleep(1000)
+  def leaderActions(): Unit =
+    cluster.clusterCore ! LeaderActionsTick
+
+  "A Cluster" must {
+
+    "use the address of the remote transport" in {
+      cluster.selfAddress must be(selfAddress)
     }
-    nodes foreach { n ⇒ println("Converged: " + n.self + " == " + n.convergence.isDefined) }
-  }
 
-  override def atStartup {
-    system.eventStream.publish(Mute(EventFilter[java.net.ConnectException]()))
-    system.eventStream.publish(Mute(EventFilter[java.nio.channels.ClosedChannelException]()))
+    "register jmx mbean" in {
+      val name = new ObjectName("akka:type=Cluster")
+      val info = ManagementFactory.getPlatformMBeanServer.getMBeanInfo(name)
+      info.getAttributes.length must be > (0)
+      info.getOperations.length must be > (0)
+    }
+
+    "initially become singleton cluster when joining itself and reach convergence" in {
+      clusterView.members.size must be(0) // auto-join = off
+      cluster.join(selfAddress)
+      leaderActions() // Joining -> Up
+      awaitCond(clusterView.isSingletonCluster)
+      clusterView.self.address must be(selfAddress)
+      clusterView.members.map(_.address) must be(Set(selfAddress))
+      awaitCond(clusterView.status == MemberStatus.Up)
+    }
+
+    "publish CurrentClusterState to subscribers when requested" in {
+      try {
+        cluster.subscribe(testActor, classOf[ClusterEvent.ClusterDomainEvent])
+        // first, is in response to the subscription
+        expectMsgClass(classOf[ClusterEvent.CurrentClusterState])
+
+        cluster.publishCurrentClusterState()
+        expectMsgClass(classOf[ClusterEvent.CurrentClusterState])
+      } finally {
+        cluster.unsubscribe(testActor)
+      }
+    }
+
+    "send CurrentClusterState to one receiver when requested" in {
+      cluster.sendCurrentClusterState(testActor)
+      expectMsgClass(classOf[ClusterEvent.CurrentClusterState])
+    }
+
+    // this must be the last test step, since the cluster is shutdown
+    "publish MemberRemoved when shutdown" in {
+      cluster.subscribe(testActor, classOf[ClusterEvent.MemberRemoved])
+      // first, is in response to the subscription
+      expectMsgClass(classOf[ClusterEvent.CurrentClusterState])
+
+      cluster.shutdown()
+      expectMsgType[ClusterEvent.MemberRemoved].member.address must be(selfAddress)
+    }
+
   }
 }

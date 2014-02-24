@@ -1,5 +1,5 @@
 /**
- *  Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.actor;
 
@@ -64,6 +64,7 @@ public class JavaExtension {
 
   @Test
   public void mustBeAccessible() {
+    assertTrue(system.hasExtension((TestExtensionId.TestExtensionProvider)));
     assertSame(system.extension(TestExtensionId.TestExtensionProvider).system, system);
     assertSame(TestExtensionId.TestExtensionProvider.apply(system).system, system);
   }

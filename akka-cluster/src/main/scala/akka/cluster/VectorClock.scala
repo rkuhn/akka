@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.cluster
@@ -19,7 +19,7 @@ class VectorClockException(message: String) extends AkkaException(message)
  */
 trait Versioned[T] {
   def version: VectorClock
-  def +(node: VectorClock.Node): T
+  def :+(node: VectorClock.Node): T
 }
 
 /**
@@ -105,7 +105,7 @@ object VectorClock {
   object Timestamp {
     private val counter = new AtomicLong(newTimestamp)
 
-    def zero(): Timestamp = Timestamp(0L)
+    val zero: Timestamp = Timestamp(0L)
 
     def apply(): Timestamp = {
       var newTime: Long = 0L
@@ -142,7 +142,7 @@ case class VectorClock(
   /**
    * Increment the version for the node passed as argument. Returns a new VectorClock.
    */
-  def +(node: Node): VectorClock = copy(versions = versions + (node -> Timestamp()))
+  def :+(node: Node): VectorClock = copy(versions = versions + (node -> Timestamp()))
 
   /**
    * Returns true if <code>this</code> and <code>that</code> are concurrent else false.
@@ -160,7 +160,7 @@ case class VectorClock(
    * Compare two vector clocks. The outcomes will be one of the following:
    * <p/>
    * {{{
-   *   1. Clock 1 is BEFORE (>)      Clock 2 if there exists an i such that c1(i) <= c(2) and there does not exist a j such that c1(j) > c2(j).
+   *   1. Clock 1 is BEFORE (>)      Clock 2 if there exists an i such that c1(i) <= c2(i) and there does not exist a j such that c1(j) > c2(j).
    *   2. Clock 1 is CONCURRENT (<>) to Clock 2 if there exists an i, j such that c1(i) < c2(i) and c1(j) > c2(j).
    *   3. Clock 1 is AFTER (<)       Clock 2 otherwise.
    * }}}

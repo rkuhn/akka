@@ -1,38 +1,38 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.camel
 
+import language.postfixOps
+
 import org.scalatest.matchers.MustMatchers
-import akka.util.duration._
+import scala.concurrent.duration._
 import org.apache.camel.ProducerTemplate
 import akka.actor._
-import akka.util.Timeout
 import TestSupport._
 import org.scalatest.WordSpec
 import akka.testkit.TestLatch
-import akka.dispatch.Await
+import scala.concurrent.Await
+import java.util.concurrent.TimeoutException
+import akka.util.Timeout
 
 class ActivationIntegrationTest extends WordSpec with MustMatchers with SharedCamelSystem {
-  implicit val timeout = Timeout(10 seconds)
+  val timeoutDuration = 10 seconds
+  implicit val timeout = Timeout(timeoutDuration)
   def template: ProducerTemplate = camel.template
-
-  def testActorWithEndpoint(uri: String): ActorRef = { system.actorOf(Props(new TestConsumer(uri))) }
+  import system.dispatcher
 
   "ActivationAware must be notified when endpoint is activated" in {
-    val actor = testActorWithEndpoint("direct:actor-1")
-    try {
-      camel.awaitActivation(actor, 1 second)
-    } catch {
-      case e: ActivationTimeoutException ⇒ fail("Failed to get notification within 1 second")
-    }
+    val latch = new TestLatch(0)
+    val actor = system.actorOf(Props(new TestConsumer("direct:actor-1", latch)), "act-direct-actor-1")
+    Await.result(camel.activationFutureFor(actor), 10 seconds) must be === actor
 
     template.requestBody("direct:actor-1", "test") must be("received test")
   }
 
   "ActivationAware must be notified when endpoint is de-activated" in {
-    val latch = TestLatch()
+    val latch = TestLatch(1)
     val actor = start(new Consumer {
       def endpointUri = "direct:a3"
       def receive = { case _ ⇒ {} }
@@ -41,31 +41,39 @@ class ActivationIntegrationTest extends WordSpec with MustMatchers with SharedCa
         super.postStop()
         latch.countDown()
       }
-    })
-    camel.awaitActivation(actor, 1 second)
+    }, name = "direct-a3")
+    Await.result(camel.activationFutureFor(actor), timeoutDuration)
 
     system.stop(actor)
-    camel.awaitDeactivation(actor, 1 second)
-    Await.ready(latch, 1 second)
+    Await.result(camel.deactivationFutureFor(actor), timeoutDuration)
+    Await.ready(latch, timeoutDuration)
   }
 
   "ActivationAware must time out when waiting for endpoint de-activation for too long" in {
-    val actor = start(new TestConsumer("direct:a5"))
-    camel.awaitActivation(actor, 1 second)
-    intercept[DeActivationTimeoutException] {
-      camel.awaitDeactivation(actor, 1 millis)
-    }
+    val latch = new TestLatch(0)
+    val actor = start(new TestConsumer("direct:a5", latch), name = "direct-a5")
+    Await.result(camel.activationFutureFor(actor), timeoutDuration)
+    intercept[TimeoutException] { Await.result(camel.deactivationFutureFor(actor), 1 millis) }
   }
 
-  "awaitActivation must fail if notification timeout is too short and activation is not complete yet" in {
-    val actor = testActorWithEndpoint("direct:actor-4")
-    intercept[ActivationTimeoutException] {
-      camel.awaitActivation(actor, 0 seconds)
-    }
+  "activationFutureFor must fail if notification timeout is too short and activation is not complete yet" in {
+    val latch = new TestLatch(1)
+    val actor = system.actorOf(Props(new TestConsumer("direct:actor-4", latch)), "direct-actor-4")
+    intercept[TimeoutException] { Await.result(camel.activationFutureFor(actor), 1 millis) }
+    latch.countDown()
+    // after the latch is removed, complete the wait for completion so this test does not later on
+    // print errors because of the registerConsumer timing out.
+    Await.result(camel.activationFutureFor(actor), timeoutDuration)
   }
 
-  class TestConsumer(uri: String) extends Consumer {
+  class TestConsumer(uri: String, latch: TestLatch) extends Consumer {
     def endpointUri = uri
+
+    override def preStart() {
+      Await.ready(latch, 60 seconds)
+      super.preStart()
+    }
+
     override def receive = {
       case msg: CamelMessage ⇒ sender ! "received " + msg.body
     }

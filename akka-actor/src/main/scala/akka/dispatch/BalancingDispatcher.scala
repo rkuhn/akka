@@ -1,14 +1,18 @@
 /**
- *    Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *    Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.dispatch
 
 import akka.actor.{ ActorCell, ActorRef }
-import annotation.tailrec
-import akka.util.{ Duration, Helpers }
+import akka.dispatch.sysmsg._
+import scala.annotation.tailrec
+import scala.concurrent.duration.Duration
+import akka.util.Helpers
 import java.util.{ Comparator, Iterator }
 import java.util.concurrent.{ Executor, LinkedBlockingQueue, ConcurrentLinkedQueue, ConcurrentSkipListSet }
+import akka.actor.ActorSystemImpl
+import scala.concurrent.duration.FiniteDuration
 
 /**
  * An executor based event driven dispatcher which will try to redistribute work from busy actors to idle actors. It is assumed
@@ -31,18 +35,40 @@ class BalancingDispatcher(
   throughputDeadlineTime: Duration,
   mailboxType: MailboxType,
   _executorServiceFactoryProvider: ExecutorServiceFactoryProvider,
-  _shutdownTimeout: Duration,
+  _shutdownTimeout: FiniteDuration,
   attemptTeamWork: Boolean)
   extends Dispatcher(_prerequisites, _id, throughput, throughputDeadlineTime, mailboxType, _executorServiceFactoryProvider, _shutdownTimeout) {
 
-  val team = new ConcurrentSkipListSet[ActorCell](
+  /**
+   * INTERNAL API
+   */
+  private[akka] val team = new ConcurrentSkipListSet[ActorCell](
     Helpers.identityHashComparator(new Comparator[ActorCell] {
       def compare(l: ActorCell, r: ActorCell) = l.self.path compareTo r.self.path
     }))
 
-  val messageQueue: MessageQueue = mailboxType.create(None)
+  /**
+   * INTERNAL API
+   */
+  private[akka] val messageQueue: MessageQueue = mailboxType.create(None, None)
 
-  protected[akka] override def createMailbox(actor: ActorCell): Mailbox = new SharingMailbox(actor, messageQueue)
+  private class SharingMailbox(val system: ActorSystemImpl, _messageQueue: MessageQueue)
+    extends Mailbox(_messageQueue) with DefaultSystemMessageQueue {
+    override def cleanUp(): Unit = {
+      val dlq = system.deadLetterMailbox
+      //Don't call the original implementation of this since it scraps all messages, and we don't want to do that
+      var messages = systemDrain(new LatestFirstSystemMessageList(NoMessage))
+      while (messages.nonEmpty) {
+        // message must be “virgin” before being able to systemEnqueue again
+        val message = messages.head
+        messages = messages.tail
+        message.unlink()
+        dlq.systemEnqueue(system.deadLetters, message)
+      }
+    }
+  }
+
+  protected[akka] override def createMailbox(actor: akka.actor.Cell): Mailbox = new SharingMailbox(actor.systemImpl, messageQueue)
 
   protected[akka] override def register(actor: ActorCell): Unit = {
     super.register(actor)
@@ -60,36 +86,18 @@ class BalancingDispatcher(
     if (!registerForExecution(receiver.mailbox, false, false)) teamWork()
   }
 
-  protected def teamWork(): Unit = if (attemptTeamWork) {
-    @tailrec def scheduleOne(i: Iterator[ActorCell] = team.iterator): Unit =
-      if (messageQueue.hasMessages
-        && i.hasNext
-        && (executorService.get().executor match {
-          case lm: LoadMetrics ⇒ lm.atFullThrottle == false
-          case other           ⇒ true
-        })
-        && !registerForExecution(i.next.mailbox, false, false))
-        scheduleOne(i)
+  protected def teamWork(): Unit =
+    if (attemptTeamWork) {
+      @tailrec def scheduleOne(i: Iterator[ActorCell] = team.iterator): Unit =
+        if (messageQueue.hasMessages
+          && i.hasNext
+          && (executorService.executor match {
+            case lm: LoadMetrics ⇒ lm.atFullThrottle == false
+            case other           ⇒ true
+          })
+          && !registerForExecution(i.next.mailbox, false, false))
+          scheduleOne(i)
 
-    scheduleOne()
-  }
-}
-
-class SharingMailbox(_actor: ActorCell, _messageQueue: MessageQueue)
-  extends Mailbox(_actor, _messageQueue) with DefaultSystemMessageQueue {
-
-  override def cleanUp(): Unit = {
-    //Don't call the original implementation of this since it scraps all messages, and we don't want to do that
-    if (hasSystemMessages) {
-      val dlq = actor.systemImpl.deadLetterMailbox
-      var message = systemDrain()
-      while (message ne null) {
-        // message must be “virgin” before being able to systemEnqueue again
-        val next = message.next
-        message.next = null
-        dlq.systemEnqueue(actor.self, message)
-        message = next
-      }
+      scheduleOne()
     }
-  }
 }

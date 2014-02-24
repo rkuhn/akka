@@ -1,12 +1,12 @@
 /**
- * Copyright (C) 2009-2010 Typesafe Inc. <http://www.typesafe.com>.
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>.
  */
 package sample.fsm.dining.fsm
 
+import language.postfixOps
 import akka.actor._
 import akka.actor.FSM._
-import akka.util.Duration
-import akka.util.duration._
+import scala.concurrent.duration._
 
 /*
 * Some messages for the chopstick
@@ -157,7 +157,7 @@ class FSMHakker(name: String, left: ActorRef, right: ActorRef) extends Actor wit
   // Initialize the hakker
   initialize
 
-  private def startThinking(duration: Duration): State = {
+  private def startThinking(duration: FiniteDuration): State = {
     goto(Thinking) using TakenChopsticks(None, None) forMax duration
   }
 }
@@ -169,16 +169,14 @@ object DiningHakkersOnFsm {
 
   val system = ActorSystem()
 
-  def main(args: Array[String]): Unit = {
-    run
-  }
+  def main(args: Array[String]): Unit = run
 
   def run = {
     // Create 5 chopsticks
-    val chopsticks = for (i ← 1 to 5) yield system.actorOf(Props[Chopstick], "Chopstick " + i)
+    val chopsticks = for (i ← 1 to 5) yield system.actorOf(Props[Chopstick], "Chopstick" + i)
     // Create 5 awesome fsm hakkers and assign them their left and right chopstick
     val hakkers = for {
-      (name, i) ← List("Ghosh", "Bonér", "Klang", "Krasser", "Manie").zipWithIndex
+      (name, i) ← List("Ghosh", "Boner", "Klang", "Krasser", "Manie").zipWithIndex
     } yield system.actorOf(Props(new FSMHakker(name, chopsticks(i), chopsticks((i + 1) % 5))))
 
     hakkers.foreach(_ ! Think)

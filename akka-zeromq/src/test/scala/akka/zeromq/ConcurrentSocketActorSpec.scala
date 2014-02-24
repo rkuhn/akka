@@ -1,20 +1,25 @@
 /**
- * Copyright (C) 2009-2011 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.zeromq
 
+import language.postfixOps
+
 import org.scalatest.matchers.MustMatchers
 import akka.testkit.{ TestProbe, DefaultTimeout, AkkaSpec }
-import akka.util.duration._
+import scala.concurrent.duration._
 import akka.actor.{ Cancellable, Actor, Props, ActorRef }
+import akka.util.{ ByteString, Timeout }
 
-class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
+class ConcurrentSocketActorSpec extends AkkaSpec {
+
+  implicit val timeout: Timeout = Timeout(15 seconds)
 
   def checkZeroMQInstallation =
     try {
       zmq.version match {
-        case ZeroMQVersion(2, 1, _) ⇒ Unit
-        case version                ⇒ invalidZeroMQVersion(version)
+        case ZeroMQVersion(x, y, _) if x >= 3 || (x >= 2 && y >= 1) ⇒ Unit
+        case version ⇒ invalidZeroMQVersion(version)
       }
     } catch {
       case e: LinkageError ⇒ zeroMQNotInstalled
@@ -42,10 +47,11 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
       val context = Context()
       val publisher = zmq.newSocket(SocketType.Pub, context, Bind(endpoint))
       val subscriber = zmq.newSocket(SocketType.Sub, context, Listener(subscriberProbe.ref), Connect(endpoint), SubscribeAll)
+      import system.dispatcher
       val msgGenerator = system.scheduler.schedule(100 millis, 10 millis, new Runnable {
         var number = 0
         def run() {
-          publisher ! ZMQMessage(Seq(Frame(number.toString.getBytes), Frame(Seq())))
+          publisher ! ZMQMessage(ByteString(number.toString), ByteString.empty)
           number += 1
         }
       })
@@ -54,9 +60,9 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
         subscriberProbe.expectMsg(Connecting)
         val msgNumbers = subscriberProbe.receiveWhile(2 seconds) {
           case msg: ZMQMessage if msg.frames.size == 2 ⇒
-            msg.payload(1).length must be(0)
+            msg.frames(1).length must be(0)
             msg
-        }.map(_.firstFrameAsString.toInt)
+        }.map(m ⇒ m.frames(0).utf8String.toInt)
         msgNumbers.length must be > 0
         msgNumbers must equal(for (i ← msgNumbers.head to msgNumbers.last) yield i)
       } finally {
@@ -66,8 +72,8 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
         subscriberProbe.receiveWhile(1 seconds) {
           case msg ⇒ msg
         }.last must equal(Closed)
-        awaitCond(publisher.isTerminated())
-        awaitCond(subscriber.isTerminated())
+        awaitCond(publisher.isTerminated)
+        awaitCond(subscriber.isTerminated)
         context.term
       }
     }
@@ -82,8 +88,8 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
 
       try {
         replierProbe.expectMsg(Connecting)
-        val request = ZMQMessage(Seq(Frame("Request")))
-        val reply = ZMQMessage(Seq(Frame("Reply")))
+        val request = ZMQMessage(ByteString("Request"))
+        val reply = ZMQMessage(ByteString("Reply"))
 
         requester ! request
         replierProbe.expectMsg(request)
@@ -93,6 +99,8 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
         system stop requester
         system stop replier
         replierProbe.expectMsg(Closed)
+        awaitCond(requester.isTerminated)
+        awaitCond(replier.isTerminated)
         context.term
       }
     }
@@ -106,7 +114,7 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
 
       try {
         pullerProbe.expectMsg(Connecting)
-        val message = ZMQMessage(Seq(Frame("Pushed message")))
+        val message = ZMQMessage(ByteString("Pushed message"))
 
         pusher ! message
         pullerProbe.expectMsg(message)
@@ -114,6 +122,8 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
         system stop pusher
         system stop puller
         pullerProbe.expectMsg(Closed)
+        awaitCond(pusher.isTerminated)
+        awaitCond(puller.isTerminated)
         context.term
       }
     }
@@ -125,6 +135,7 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
     var genMessages: Cancellable = null
 
     override def preStart() = {
+      import system.dispatcher
       genMessages = system.scheduler.schedule(100 millis, 10 millis, self, "genMessage")
     }
 
@@ -135,11 +146,11 @@ class ConcurrentSocketActorSpec extends AkkaSpec with DefaultTimeout {
       }
     }
 
-    protected def receive = {
+    def receive = {
       case _ ⇒
         val payload = "%s".format(messageNumber)
         messageNumber += 1
-        actorRef ! ZMQMessage(payload.getBytes)
+        actorRef ! ZMQMessage(ByteString(payload))
     }
   }
 }

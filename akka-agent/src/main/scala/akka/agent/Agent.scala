@@ -1,28 +1,90 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.agent
 
-import akka.actor._
-import akka.japi.{ Function ⇒ JFunc, Procedure ⇒ JProc }
-import akka.dispatch._
-import akka.pattern.ask
-import akka.util.Timeout
 import scala.concurrent.stm._
+import scala.concurrent.{ ExecutionContext, Future, Promise }
+import akka.util.{ SerializedSuspendableExecutionContext }
 
-/**
- * Used internally to send functions.
- */
-private[akka] case class Update[T](function: T ⇒ T)
-private[akka] case class Alter[T](function: T ⇒ T)
-private[akka] case object Get
-
-/**
- * Factory method for creating an Agent.
- */
 object Agent {
-  def apply[T](initialValue: T)(implicit system: ActorSystem) = new Agent(initialValue, system)
+  /**
+   * Factory method for creating an Agent.
+   */
+  def apply[T](initialValue: T)(implicit context: ExecutionContext): Agent[T] = new SecretAgent(initialValue, context)
+
+  /**
+   * Java API: Factory method for creating an Agent.
+   */
+  def create[T](initialValue: T, context: ExecutionContext): Agent[T] = Agent(initialValue)(context)
+
+  /**
+   * Default agent implementation.
+   */
+  private final class SecretAgent[T](initialValue: T, context: ExecutionContext) extends Agent[T] {
+    private val ref = Ref(initialValue)
+    private val updater = SerializedSuspendableExecutionContext(10)(context)
+
+    def get(): T = ref.single.get
+
+    def send(newValue: T): Unit = withinTransaction(new Runnable { def run = ref.single.update(newValue) })
+
+    def send(f: T ⇒ T): Unit = withinTransaction(new Runnable { def run = ref.single.transform(f) })
+
+    def sendOff(f: T ⇒ T)(implicit ec: ExecutionContext): Unit = withinTransaction(
+      new Runnable {
+        def run =
+          try updater.suspend() finally ec.execute(new Runnable { def run = try ref.single.transform(f) finally updater.resume() })
+      })
+
+    def alter(newValue: T): Future[T] = doAlter({ ref.single.update(newValue); newValue })
+
+    def alter(f: T ⇒ T): Future[T] = doAlter(ref.single.transformAndGet(f))
+
+    def alterOff(f: T ⇒ T)(implicit ec: ExecutionContext): Future[T] = {
+      val result = Promise[T]()
+      withinTransaction(new Runnable {
+        def run = {
+          updater.suspend()
+          result completeWith Future(try ref.single.transformAndGet(f) finally updater.resume())
+        }
+      })
+      result.future
+    }
+
+    /**
+     * Internal helper method
+     */
+    private final def withinTransaction(run: Runnable): Unit = {
+      def dispatch = updater.execute(run)
+      Txn.findCurrent match {
+        case Some(txn) ⇒ Txn.afterCommit(status ⇒ dispatch)(txn)
+        case _         ⇒ dispatch
+      }
+    }
+
+    /**
+     * Internal helper method
+     */
+    private final def doAlter(f: ⇒ T): Future[T] = {
+      Txn.findCurrent match {
+        case Some(txn) ⇒
+          val result = Promise[T]()
+          Txn.afterCommit(status ⇒ result completeWith Future(f)(updater))(txn)
+          result.future
+        case _ ⇒ Future(f)(updater)
+      }
+    }
+
+    def future(): Future[T] = Future(ref.single.get)(updater)
+
+    def map[B](f: T ⇒ B): Agent[B] = Agent(f(get))(updater)
+
+    def flatMap[B](f: T ⇒ Agent[B]): Agent[B] = f(get)
+
+    def foreach[U](f: T ⇒ U): Unit = f(get)
+  }
 }
 
 /**
@@ -95,223 +157,86 @@ object Agent {
  * agent4.close
  * }}}
  */
-class Agent[T](initialValue: T, system: ActorSystem) {
-  private[akka] val ref = Ref(initialValue)
-  private[akka] val updater = system.actorOf(Props(new AgentUpdater(this))).asInstanceOf[LocalActorRef] //TODO can we avoid this somehow?
+abstract class Agent[T] {
+
+  /**
+   * Java API: Read the internal state of the agent.
+   */
+  def get(): T
 
   /**
    * Read the internal state of the agent.
    */
-  def get() = ref.single.get
+  def apply(): T = get
 
   /**
-   * Read the internal state of the agent.
+   * Dispatch a new value for the internal state. Behaves the same
+   * as sending a function (x => newValue).
    */
-  def apply() = get
+  def send(newValue: T): Unit
 
   /**
    * Dispatch a function to update the internal state.
+   * In Java, pass in an instance of `akka.dispatch.Mapper`.
    */
-  def send(f: T ⇒ T): Unit = {
-    def dispatch = updater ! Update(f)
-    val txn = Txn.findCurrent
-    if (txn.isDefined) Txn.afterCommit(status ⇒ dispatch)(txn.get)
-    else dispatch
-  }
-
-  /**
-   * Dispatch a function to update the internal state, and return a Future where
-   * that new state can be obtained within the given timeout.
-   */
-  def alter(f: T ⇒ T)(timeout: Timeout): Future[T] = {
-    def dispatch = ask(updater, Alter(f))(timeout).asInstanceOf[Future[T]]
-    val txn = Txn.findCurrent
-    if (txn.isDefined) {
-      val result = Promise[T]()(system.dispatcher)
-      Txn.afterCommit(status ⇒ result completeWith dispatch)(txn.get)
-      result
-    } else dispatch
-  }
-
-  /**
-   * Dispatch a new value for the internal state. Behaves the same
-   * as sending a function (x => newValue).
-   */
-  def send(newValue: T): Unit = send(_ ⇒ newValue)
-
-  /**
-   * Dispatch a new value for the internal state. Behaves the same
-   * as sending a function (x => newValue).
-   */
-  def update(newValue: T) = send(newValue)
+  def send(f: T ⇒ T): Unit
 
   /**
    * Dispatch a function to update the internal state but on its own thread.
    * This does not use the reactive thread pool and can be used for long-running
    * or blocking operations. Dispatches using either `sendOff` or `send` will
    * still be executed in order.
+   * In Java, pass in an instance of `akka.dispatch.Mapper`.
    */
-  def sendOff(f: T ⇒ T): Unit = {
-    send((value: T) ⇒ {
-      suspend()
-      val threadBased = system.actorOf(Props(new ThreadBasedAgentUpdater(this)).withDispatcher("akka.agent.send-off-dispatcher"))
-      threadBased ! Update(f)
-      value
-    })
-  }
+  def sendOff(f: T ⇒ T)(implicit ec: ExecutionContext): Unit
+
+  /**
+   * Dispatch an update to the internal state, and return a Future where
+   * that new state can be obtained.
+   * In Java, pass in an instance of `akka.dispatch.Mapper`.
+   */
+  def alter(newValue: T): Future[T]
+
+  /**
+   * Dispatch a function to update the internal state, and return a Future where
+   * that new state can be obtained.
+   * In Java, pass in an instance of `akka.dispatch.Mapper`.
+   */
+  def alter(f: T ⇒ T): Future[T]
 
   /**
    * Dispatch a function to update the internal state but on its own thread,
-   * and return a Future where that new state can be obtained within the given timeout.
+   * and return a Future where that new state can be obtained.
    * This does not use the reactive thread pool and can be used for long-running
    * or blocking operations. Dispatches using either `alterOff` or `alter` will
    * still be executed in order.
+   * In Java, pass in an instance of `akka.dispatch.Mapper`.
    */
-  def alterOff(f: T ⇒ T)(timeout: Timeout): Future[T] = {
-    val result = Promise[T]()(system.dispatcher)
-    send((value: T) ⇒ {
-      suspend()
-      val threadBased = system.actorOf(Props(new ThreadBasedAgentUpdater(this)).withDispatcher("akka.agent.alter-off-dispatcher"))
-      result completeWith ask(threadBased, Alter(f))(timeout).asInstanceOf[Future[T]]
-      value
-    })
-    result
-  }
+  def alterOff(f: T ⇒ T)(implicit ec: ExecutionContext): Future[T]
 
   /**
    * A future to the current value that will be completed after any currently
    * queued updates.
    */
-  def future(implicit timeout: Timeout): Future[T] = (updater ? Get).asInstanceOf[Future[T]]
-
-  /**
-   * Gets this agent's value after all currently queued updates have completed.
-   */
-  def await(implicit timeout: Timeout): T = Await.result(future, timeout.duration)
+  def future(): Future[T]
 
   /**
    * Map this agent to a new agent, applying the function to the internal state.
    * Does not change the value of this agent.
+   * In Java, pass in an instance of `akka.dispatch.Mapper`.
    */
-  def map[B](f: T ⇒ B): Agent[B] = Agent(f(get))(system)
+  def map[B](f: T ⇒ B): Agent[B]
 
   /**
    * Flatmap this agent to a new agent, applying the function to the internal state.
    * Does not change the value of this agent.
+   * In Java, pass in an instance of `akka.dispatch.Mapper`.
    */
-  def flatMap[B](f: T ⇒ Agent[B]): Agent[B] = f(get)
+  def flatMap[B](f: T ⇒ Agent[B]): Agent[B]
 
   /**
    * Applies the function to the internal state. Does not change the value of this agent.
+   * In Java, pass in an instance of `akka.dispatch.Foreach`.
    */
-  def foreach[U](f: T ⇒ U): Unit = f(get)
-
-  /**
-   * Suspends processing of `send` actions for the agent.
-   */
-  def suspend() = updater.suspend()
-
-  /**
-   * Resumes processing of `send` actions for the agent.
-   */
-  def resume() = updater.resume()
-
-  /**
-   * Closes the agents and makes it eligible for garbage collection.
-   * A closed agent cannot accept any `send` actions.
-   */
-  def close() = updater.stop()
-
-  // ---------------------------------------------
-  // Support for Java API Functions and Procedures
-  // ---------------------------------------------
-
-  /**
-   * Java API:
-   * Dispatch a function to update the internal state.
-   */
-  def send(f: JFunc[T, T]): Unit = send(x ⇒ f(x))
-
-  /**
-   * Java API
-   * Dispatch a function to update the internal state, and return a Future where that new state can be obtained
-   * within the given timeout
-   */
-  def alter(f: JFunc[T, T], timeout: Long): Future[T] = alter(x ⇒ f(x))(timeout)
-
-  /**
-   * Java API:
-   * Dispatch a function to update the internal state but on its own thread.
-   * This does not use the reactive thread pool and can be used for long-running
-   * or blocking operations. Dispatches using either `sendOff` or `send` will
-   * still be executed in order.
-   */
-  def sendOff(f: JFunc[T, T]): Unit = sendOff(x ⇒ f(x))
-
-  /**
-   * Java API:
-   * Dispatch a function to update the internal state but on its own thread,
-   * and return a Future where that new state can be obtained within the given timeout.
-   * This does not use the reactive thread pool and can be used for long-running
-   * or blocking operations. Dispatches using either `alterOff` or `alter` will
-   * still be executed in order.
-   */
-  def alterOff(f: JFunc[T, T], timeout: Long): Unit = alterOff(x ⇒ f(x))(timeout)
-
-  /**
-   * Java API:
-   * Map this agent to a new agent, applying the function to the internal state.
-   * Does not change the value of this agent.
-   */
-  def map[B](f: JFunc[T, B]): Agent[B] = Agent(f(get))(system)
-
-  /**
-   * Java API:
-   * Flatmap this agent to a new agent, applying the function to the internal state.
-   * Does not change the value of this agent.
-   */
-  def flatMap[B](f: JFunc[T, Agent[B]]): Agent[B] = f(get)
-
-  /**
-   * Java API:
-   * Applies the function to the internal state. Does not change the value of this agent.
-   */
-  def foreach(f: JProc[T]): Unit = f(get)
-}
-
-/**
- * Agent updater actor. Used internally for `send` actions.
- */
-class AgentUpdater[T](agent: Agent[T]) extends Actor {
-  def receive = {
-    case u: Update[_] ⇒ update(u.function.asInstanceOf[T ⇒ T])
-    case a: Alter[_]  ⇒ sender ! update(a.function.asInstanceOf[T ⇒ T])
-    case Get          ⇒ sender ! agent.get
-    case _            ⇒
-  }
-
-  def update(function: T ⇒ T): T = agent.ref.single.transformAndGet(function)
-}
-
-/**
- * Thread-based agent updater actor. Used internally for `sendOff` actions.
- */
-class ThreadBasedAgentUpdater[T](agent: Agent[T]) extends Actor {
-  def receive = {
-    case u: Update[_] ⇒ try {
-      update(u.function.asInstanceOf[T ⇒ T])
-    } finally {
-      agent.resume()
-      context.stop(self)
-    }
-    case a: Alter[_] ⇒ try {
-      sender ! update(a.function.asInstanceOf[T ⇒ T])
-    } finally {
-      agent.resume()
-      context.stop(self)
-    }
-    case _ ⇒ context.stop(self)
-  }
-
-  def update(function: T ⇒ T): T = agent.ref.single.transformAndGet(function)
+  def foreach[U](f: T ⇒ U): Unit
 }

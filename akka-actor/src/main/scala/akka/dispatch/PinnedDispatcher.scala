@@ -1,11 +1,12 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.dispatch
 
 import akka.actor.ActorCell
-import akka.util.Duration
+import scala.concurrent.duration.Duration
+import scala.concurrent.duration.FiniteDuration
 
 /**
  * Dedicates a unique thread for each actor passed in as reference. Served through its messageQueue.
@@ -18,14 +19,14 @@ class PinnedDispatcher(
   _actor: ActorCell,
   _id: String,
   _mailboxType: MailboxType,
-  _shutdownTimeout: Duration,
-  _threadPoolConfig: ThreadPoolConfig = ThreadPoolConfig())
+  _shutdownTimeout: FiniteDuration,
+  _threadPoolConfig: ThreadPoolConfig)
   extends Dispatcher(_prerequisites,
     _id,
     Int.MaxValue,
     Duration.Zero,
     _mailboxType,
-    _threadPoolConfig.copy(allowCorePoolTimeout = true, corePoolSize = 1, maxPoolSize = 1),
+    _threadPoolConfig.copy(corePoolSize = 1, maxPoolSize = 1),
     _shutdownTimeout) {
 
   @volatile

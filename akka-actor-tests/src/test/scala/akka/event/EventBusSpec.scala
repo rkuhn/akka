@@ -1,12 +1,14 @@
 /**
- * Copyright (C) 2009-2011 Scalable Solutions AB <http://scalablesolutions.se>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.event
 
+import language.postfixOps
+
 import org.scalatest.BeforeAndAfterEach
 import akka.testkit._
-import akka.util.duration._
+import scala.concurrent.duration._
 import java.util.concurrent.atomic._
 import akka.actor.{ Props, Actor, ActorRef, ActorSystem }
 import java.util.Comparator

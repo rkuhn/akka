@@ -1,10 +1,12 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.actor.dispatch
 
+import language.postfixOps
+
 import java.util.concurrent.{ CountDownLatch, TimeUnit }
-import scala.reflect.{ Manifest }
+import scala.reflect.ClassTag
 import akka.dispatch._
 import akka.testkit.AkkaSpec
 import akka.testkit.ImplicitSender
@@ -12,7 +14,7 @@ import scala.collection.JavaConverters._
 import com.typesafe.config.ConfigFactory
 import akka.actor.Actor
 import akka.actor.Props
-import akka.util.duration._
+import scala.concurrent.duration._
 
 object DispatchersSpec {
   val config = """
@@ -22,6 +24,13 @@ object DispatchersSpec {
       }
       thread-pool-dispatcher {
         executor = thread-pool-executor
+      }
+      my-pinned-dispatcher {
+        executor = thread-pool-executor
+        type = PinnedDispatcher
+      }
+      balancing-dispatcher {
+        type = BalancingDispatcher
       }
     }
     """
@@ -48,7 +57,7 @@ class DispatchersSpec extends AkkaSpec(DispatchersSpec.config) with ImplicitSend
   val id = "id"
 
   def instance(dispatcher: MessageDispatcher): (MessageDispatcher) ⇒ Boolean = _ == dispatcher
-  def ofType[T <: MessageDispatcher: Manifest]: (MessageDispatcher) ⇒ Boolean = _.getClass == manifest[T].erasure
+  def ofType[T <: MessageDispatcher: ClassTag]: (MessageDispatcher) ⇒ Boolean = _.getClass == implicitly[ClassTag[T]].runtimeClass
 
   def typesAndValidators: Map[String, (MessageDispatcher) ⇒ Boolean] = Map(
     "BalancingDispatcher" -> ofType[BalancingDispatcher],
@@ -108,7 +117,7 @@ class DispatchersSpec extends AkkaSpec(DispatchersSpec.config) with ImplicitSend
     "include system name and dispatcher id in thread names for fork-join-executor" in {
       system.actorOf(Props[ThreadNameEcho].withDispatcher("myapp.mydispatcher")) ! "what's the name?"
       val Expected = "(DispatchersSpec-myapp.mydispatcher-[1-9][0-9]*)".r
-      expectMsgPF(5 seconds) {
+      expectMsgPF(remaining) {
         case Expected(x) ⇒
       }
     }
@@ -116,7 +125,7 @@ class DispatchersSpec extends AkkaSpec(DispatchersSpec.config) with ImplicitSend
     "include system name and dispatcher id in thread names for thread-pool-executor" in {
       system.actorOf(Props[ThreadNameEcho].withDispatcher("myapp.thread-pool-dispatcher")) ! "what's the name?"
       val Expected = "(DispatchersSpec-myapp.thread-pool-dispatcher-[1-9][0-9]*)".r
-      expectMsgPF(5 seconds) {
+      expectMsgPF(remaining) {
         case Expected(x) ⇒
       }
     }
@@ -124,7 +133,23 @@ class DispatchersSpec extends AkkaSpec(DispatchersSpec.config) with ImplicitSend
     "include system name and dispatcher id in thread names for default-dispatcher" in {
       system.actorOf(Props[ThreadNameEcho]) ! "what's the name?"
       val Expected = "(DispatchersSpec-akka.actor.default-dispatcher-[1-9][0-9]*)".r
-      expectMsgPF(5 seconds) {
+      expectMsgPF(remaining) {
+        case Expected(x) ⇒
+      }
+    }
+
+    "include system name and dispatcher id in thread names for pinned dispatcher" in {
+      system.actorOf(Props[ThreadNameEcho].withDispatcher("myapp.my-pinned-dispatcher")) ! "what's the name?"
+      val Expected = "(DispatchersSpec-myapp.my-pinned-dispatcher-[1-9][0-9]*)".r
+      expectMsgPF(remaining) {
+        case Expected(x) ⇒
+      }
+    }
+
+    "include system name and dispatcher id in thread names for balancing dispatcher" in {
+      system.actorOf(Props[ThreadNameEcho].withDispatcher("myapp.balancing-dispatcher")) ! "what's the name?"
+      val Expected = "(DispatchersSpec-myapp.balancing-dispatcher-[1-9][0-9]*)".r
+      expectMsgPF(remaining) {
         case Expected(x) ⇒
       }
     }

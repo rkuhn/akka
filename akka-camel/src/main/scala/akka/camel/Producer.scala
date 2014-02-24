@@ -1,32 +1,34 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.camel
 
-import akka.actor.Actor
+import akka.actor.{ Props, NoSerializationVerificationNeeded, ActorRef, Actor }
+import internal.CamelSupervisor.{ CamelProducerObjects, Register }
 import internal.CamelExchangeAdapter
-import org.apache.camel.{ Exchange, ExchangePattern, AsyncCallback }
+import akka.actor.Status.Failure
+import org.apache.camel.{ Endpoint, ExchangePattern, AsyncCallback }
+import org.apache.camel.processor.SendProcessor
 
 /**
  * Support trait for producing messages to Camel endpoints.
- *
- * @author Martin Krasser
  */
-trait ProducerSupport { this: Actor ⇒
-  protected[this] implicit def camel = CamelExtension(context.system)
+trait ProducerSupport extends Actor with CamelSupport {
+  private[this] var messages = Map[ActorRef, Any]()
+  private[this] var producerChild: Option[ActorRef] = None
 
-  /**
-   * camelContext implicit is useful when using advanced methods of CamelMessage.
-   */
-  protected[this] implicit def camelContext = camel.context
+  override def preStart() {
+    super.preStart()
+    register()
+  }
 
-  protected[this] lazy val (endpoint, processor) = camel.registerProducer(self, endpointUri)
+  private[this] def register() { camel.supervisor ! Register(self, endpointUri) }
 
   /**
    * CamelMessage headers to copy by default from request message to response-message.
    */
-  private val headersToCopyDefault = Set(CamelMessage.MessageExchangeId)
+  private val headersToCopyDefault: Set[String] = Set(CamelMessage.MessageExchangeId)
 
   /**
    * If set to false (default), this producer expects a response message from the Camel endpoint.
@@ -48,39 +50,6 @@ trait ProducerSupport { this: Actor ⇒
   def headersToCopy: Set[String] = headersToCopyDefault
 
   /**
-   * Initiates a message exchange of given <code>pattern</code> with the endpoint specified by
-   * <code>endpointUri</code>. The in-message of the initiated exchange is the canonical form
-   * of <code>msg</code>. After sending the in-message, the processing result (response) is passed
-   * as argument to <code>receiveAfterProduce</code>. If the response is received synchronously from
-   * the endpoint then <code>receiveAfterProduce</code> is called synchronously as well. If the
-   * response is received asynchronously, the <code>receiveAfterProduce</code> is called
-   * asynchronously. The original
-   * sender and senderFuture are preserved.
-   *
-   * @see CamelMessage#canonicalize(Any)
-   *
-   * @param msg message to produce
-   * @param pattern exchange pattern
-   */
-  protected def produce(msg: Any, pattern: ExchangePattern): Unit = {
-    implicit def toExchangeAdapter(exchange: Exchange): CamelExchangeAdapter = new CamelExchangeAdapter(exchange)
-
-    val cmsg = CamelMessage.canonicalize(msg)
-    val exchange = endpoint.createExchange(pattern)
-    exchange.setRequest(cmsg)
-    processor.process(exchange, new AsyncCallback {
-      val producer = self
-      // Need copies of sender reference here since the callback could be done
-      // later by another thread.
-      val originalSender = sender
-      // Ignoring doneSync, sending back async uniformly.
-      def done(doneSync: Boolean): Unit = producer.tell(
-        if (exchange.isFailed) FailureResult(exchange.toFailureMessage(cmsg.headers(headersToCopy)))
-        else MessageResult(exchange.toResponseMessage(cmsg.headers(headersToCopy))), originalSender)
-    })
-  }
-
-  /**
    * Produces <code>msg</code> to the endpoint specified by <code>endpointUri</code>. Before the message is
    * actually sent it is pre-processed by calling <code>receiveBeforeProduce</code>. If <code>oneway</code>
    * is <code>true</code>, an in-only message exchange is initiated, otherwise an in-out message exchange.
@@ -88,14 +57,28 @@ trait ProducerSupport { this: Actor ⇒
    * @see Producer#produce(Any, ExchangePattern)
    */
   protected def produce: Receive = {
+    case CamelProducerObjects(endpoint, processor) ⇒
+      if (producerChild.isEmpty) {
+        producerChild = Some(context.actorOf(Props(new ProducerChild(endpoint, processor))))
+        messages = {
+          for (
+            child ← producerChild;
+            (sender, msg) ← messages
+          ) child.tell(transformOutgoingMessage(msg), sender)
+          Map()
+        }
+      }
     case res: MessageResult ⇒ routeResponse(res.message)
-    case res: FailureResult ⇒ routeResponse(res.failure)
-    case msg ⇒ {
-      if (oneway)
-        produce(transformOutgoingMessage(msg), ExchangePattern.InOnly)
-      else
-        produce(transformOutgoingMessage(msg), ExchangePattern.InOut)
-    }
+    case res: FailureResult ⇒
+      val e = new AkkaCamelException(res.cause, res.headers)
+      routeResponse(Failure(e))
+      throw e
+
+    case msg ⇒
+      producerChild match {
+        case Some(child) ⇒ child forward transformOutgoingMessage(msg)
+        case None        ⇒ messages += (sender -> msg)
+      }
   }
 
   /**
@@ -122,36 +105,75 @@ trait ProducerSupport { this: Actor ⇒
 
   protected def routeResponse(msg: Any): Unit = if (!oneway) sender ! transformResponse(msg)
 
-}
+  private class ProducerChild(endpoint: Endpoint, processor: SendProcessor) extends Actor {
+    def receive = {
+      case msg @ (_: FailureResult | _: MessageResult) ⇒ context.parent forward msg
+      case msg                                         ⇒ produce(endpoint, processor, msg, if (oneway) ExchangePattern.InOnly else ExchangePattern.InOut)
+    }
+    /**
+     * Initiates a message exchange of given <code>pattern</code> with the endpoint specified by
+     * <code>endpointUri</code>. The in-message of the initiated exchange is the canonical form
+     * of <code>msg</code>. After sending the in-message, the processing result (response) is passed
+     * as argument to <code>receiveAfterProduce</code>. If the response is received synchronously from
+     * the endpoint then <code>receiveAfterProduce</code> is called synchronously as well. If the
+     * response is received asynchronously, the <code>receiveAfterProduce</code> is called
+     * asynchronously. The original
+     * sender and senderFuture are preserved.
+     *
+     * @see CamelMessage#canonicalize(Any)
+     * @param endpoint the endpoint
+     * @param processor the processor
+     * @param msg message to produce
+     * @param pattern exchange pattern
+     */
+    protected def produce(endpoint: Endpoint, processor: SendProcessor, msg: Any, pattern: ExchangePattern): Unit = {
+      // Need copies of sender reference here since the callback could be done
+      // later by another thread.
+      val producer = self
+      val originalSender = sender
+      val xchg = new CamelExchangeAdapter(endpoint.createExchange(pattern))
+      val cmsg = CamelMessage.canonicalize(msg)
+      xchg.setRequest(cmsg)
 
+      processor.process(xchg.exchange, new AsyncCallback {
+        // Ignoring doneSync, sending back async uniformly.
+        def done(doneSync: Boolean): Unit = producer.tell(
+          if (xchg.exchange.isFailed) xchg.toFailureResult(cmsg.headers(headersToCopy))
+          else MessageResult(xchg.toResponseMessage(cmsg.headers(headersToCopy))), originalSender)
+      })
+    }
+  }
+}
 /**
  * Mixed in by Actor implementations to produce messages to Camel endpoints.
  */
 trait Producer extends ProducerSupport { this: Actor ⇒
 
   /**
-   * Default implementation of Actor.receive. Any messages received by this actors
+   * Implementation of Actor.receive. Any messages received by this actor
    * will be produced to the endpoint specified by <code>endpointUri</code>.
    */
-  protected def receive = produce
+  final def receive: Actor.Receive = produce
 }
 
 /**
- * @author Martin Krasser
+ * For internal use only.
+ *
  */
-private case class MessageResult(message: CamelMessage)
+private case class MessageResult(message: CamelMessage) extends NoSerializationVerificationNeeded
 
 /**
- * @author Martin Krasser
+ * For internal use only.
+ *
  */
-private case class FailureResult(failure: Failure)
+private case class FailureResult(cause: Throwable, headers: Map[String, Any] = Map.empty) extends NoSerializationVerificationNeeded
 
 /**
  * A one-way producer.
  *
- * @author Martin Krasser
+ *
  */
 trait Oneway extends Producer { this: Actor ⇒
-  override def oneway = true
+  override def oneway: Boolean = true
 }
 

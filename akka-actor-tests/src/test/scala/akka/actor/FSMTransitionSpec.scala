@@ -1,11 +1,12 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.actor
 
+import language.postfixOps
+
 import akka.testkit._
-import akka.util.duration._
-import akka.util.Duration
+import scala.concurrent.duration._
 
 object FSMTransitionSpec {
 
@@ -71,16 +72,11 @@ class FSMTransitionSpec extends AkkaSpec with ImplicitSender {
     "not fail when listener goes away" in {
       val forward = system.actorOf(Props(new Forwarder(testActor)))
       val fsm = system.actorOf(Props(new MyFSM(testActor)))
-      val sup = system.actorOf(Props(new Actor {
-        context.watch(fsm)
-        override val supervisorStrategy = OneForOneStrategy(withinTimeRange = Duration.Inf)(List(classOf[Throwable]))
-        def receive = { case _ ⇒ }
-      }))
 
-      within(300 millis) {
+      within(1 second) {
         fsm ! FSM.SubscribeTransitionCallBack(forward)
         expectMsg(FSM.CurrentState(fsm, 0))
-        system.stop(forward)
+        akka.pattern.gracefulStop(forward, 5 seconds)
         fsm ! "tick"
         expectNoMsg
       }
@@ -91,7 +87,7 @@ class FSMTransitionSpec extends AkkaSpec with ImplicitSender {
 
     "make previous and next state data available in onTransition" in {
       val fsm = system.actorOf(Props(new OtherFSM(testActor)))
-      within(300 millis) {
+      within(1 second) {
         fsm ! "tick"
         expectMsg((0, 1))
       }

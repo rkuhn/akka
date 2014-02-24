@@ -1,16 +1,17 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
 
-import akka.util.Duration
+import scala.concurrent.duration.Duration
 import com.typesafe.config._
 import akka.routing._
+import akka.japi.Util.immutableSeq
 import java.util.concurrent.{ TimeUnit }
 import akka.util.WildcardTree
 import java.util.concurrent.atomic.AtomicReference
-import annotation.tailrec
+import scala.annotation.tailrec
 
 /**
  * This class represents deployment configuration for a given actor path. It is
@@ -27,15 +28,26 @@ import annotation.tailrec
  * context.actorOf(someProps, "someName", Deploy(scope = RemoteScope("someOtherNodeName")))
  * }}}
  */
-//TODO add @SerialVersionUID(1L) when SI-4804 is fixed
+@SerialVersionUID(1L)
 final case class Deploy(
   path: String = "",
   config: Config = ConfigFactory.empty,
   routerConfig: RouterConfig = NoRouter,
   scope: Scope = NoScopeGiven) {
 
+  /**
+   * Java API to create a Deploy with the given RouterConfig
+   */
   def this(routing: RouterConfig) = this("", ConfigFactory.empty, routing)
+
+  /**
+   * Java API to create a Deploy with the given RouterConfig with Scope
+   */
   def this(routing: RouterConfig, scope: Scope) = this("", ConfigFactory.empty, routing, scope)
+
+  /**
+   * Java API to create a Deploy with the given Scope
+   */
   def this(scope: Scope) = this("", ConfigFactory.empty, NoRouter, scope)
 
   /**
@@ -65,15 +77,15 @@ trait Scope {
   def withFallback(other: Scope): Scope
 }
 
-//TODO add @SerialVersionUID(1L) when SI-4804 is fixed
+@SerialVersionUID(1L)
 abstract class LocalScope extends Scope
-case object LocalScope extends LocalScope {
-  /**
-   * Java API
-   */
-  @deprecated("use instance() method instead", "2.0.1")
-  def scope: Scope = this
 
+/**
+ * The Local Scope is the default one, which is assumed on all deployments
+ * which do not set a different scope. It is also the only scope handled by
+ * the LocalActorRefProvider.
+ */
+case object LocalScope extends LocalScope {
   /**
    * Java API: get the singleton instance
    */
@@ -85,7 +97,7 @@ case object LocalScope extends LocalScope {
 /**
  * This is the default value and as such allows overrides.
  */
-//TODO add @SerialVersionUID(1L) when SI-4804 is fixed
+@SerialVersionUID(1L)
 abstract class NoScopeGiven extends Scope
 case object NoScopeGiven extends NoScopeGiven {
   def withFallback(other: Scope): Scope = other
@@ -98,8 +110,6 @@ case object NoScopeGiven extends NoScopeGiven {
 
 /**
  * Deployer maps actor paths to actor deployments.
- *
- * @author <a href="http://jonasboner.com">Jonas Bon&#233;r</a>
  */
 private[akka] class Deployer(val settings: ActorSystem.Settings, val dynamicAccess: DynamicAccess) {
 
@@ -128,39 +138,46 @@ private[akka] class Deployer(val settings: ActorSystem.Settings, val dynamicAcce
     add(d.path.split("/").drop(1), d)
   }
 
-  protected def parseConfig(key: String, config: Config): Option[Deploy] = {
-
+  def parseConfig(key: String, config: Config): Option[Deploy] = {
     val deployment = config.withFallback(default)
+    val router = createRouterConfig(deployment.getString("router"), key, config, deployment)
+    Some(Deploy(key, deployment, router, NoScopeGiven))
+  }
 
-    val routees = deployment.getStringList("routees.paths").asScala.toSeq
-
+  /**
+   * Factory method for creating `RouterConfig`
+   * @param routerType the configured name of the router, or FQCN
+   * @param key the full configuration key of the deployment section
+   * @param config the user defined config of the deployment, without defaults
+   * @param deployment the deployment config, with defaults
+   */
+  protected def createRouterConfig(routerType: String, key: String, config: Config, deployment: Config): RouterConfig = {
+    val routees = immutableSeq(deployment.getStringList("routees.paths"))
     val nrOfInstances = deployment.getInt("nr-of-instances")
+    val resizer = if (config.hasPath("resizer")) Some(DefaultResizer(deployment.getConfig("resizer"))) else None
 
-    val within = Duration(deployment.getMilliseconds("within"), TimeUnit.MILLISECONDS)
-
-    val resizer: Option[Resizer] = if (config.hasPath("resizer")) Some(DefaultResizer(deployment.getConfig("resizer"))) else None
-
-    val router: RouterConfig = deployment.getString("router") match {
+    routerType match {
       case "from-code"        ⇒ NoRouter
       case "round-robin"      ⇒ RoundRobinRouter(nrOfInstances, routees, resizer)
       case "random"           ⇒ RandomRouter(nrOfInstances, routees, resizer)
       case "smallest-mailbox" ⇒ SmallestMailboxRouter(nrOfInstances, routees, resizer)
-      case "scatter-gather"   ⇒ ScatterGatherFirstCompletedRouter(nrOfInstances, routees, within, resizer)
       case "broadcast"        ⇒ BroadcastRouter(nrOfInstances, routees, resizer)
+      case "scatter-gather" ⇒
+        val within = Duration(deployment.getMilliseconds("within"), TimeUnit.MILLISECONDS)
+        ScatterGatherFirstCompletedRouter(nrOfInstances, routees, within, resizer)
+      case "consistent-hashing" ⇒
+        val vnodes = deployment.getInt("virtual-nodes-factor")
+        ConsistentHashingRouter(nrOfInstances, routees, resizer, virtualNodesFactor = vnodes)
       case fqn ⇒
-        val args = Seq(classOf[Config] -> deployment)
-        dynamicAccess.createInstanceFor[RouterConfig](fqn, args) match {
-          case Right(router) ⇒ router
-          case Left(exception) ⇒
-            throw new IllegalArgumentException(
-              ("Cannot instantiate router [%s], defined in [%s], " +
-                "make sure it extends [akka.routing.RouterConfig] and has constructor with " +
-                "[com.typesafe.config.Config] parameter")
-                .format(fqn, key), exception)
-        }
+        val args = List(classOf[Config] -> deployment)
+        dynamicAccess.createInstanceFor[RouterConfig](fqn, args).recover({
+          case exception ⇒ throw new IllegalArgumentException(
+            ("Cannot instantiate router [%s], defined in [%s], " +
+              "make sure it extends [akka.routing.RouterConfig] and has constructor with " +
+              "[com.typesafe.config.Config] parameter")
+              .format(fqn, key), exception)
+        }).get
     }
-
-    Some(Deploy(key, deployment, router, NoScopeGiven))
   }
 
 }

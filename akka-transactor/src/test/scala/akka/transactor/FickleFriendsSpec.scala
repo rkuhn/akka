@@ -1,25 +1,29 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.transactor
 
+import language.postfixOps
+
 import org.scalatest.BeforeAndAfterAll
 
+import scala.concurrent.Await
+import scala.concurrent.duration._
+import scala.concurrent.stm._
+import scala.collection.immutable
+import scala.util.Random.{ nextInt ⇒ random }
+import scala.util.control.NonFatal
 import akka.actor._
-import akka.dispatch.Await
-import akka.util.duration._
-import akka.util.Timeout
 import akka.testkit._
 import akka.testkit.TestEvent.Mute
-import scala.concurrent.stm._
-import scala.util.Random.{ nextInt ⇒ random }
 import java.util.concurrent.CountDownLatch
-import akka.pattern.ask
+import akka.pattern.{ AskTimeoutException, ask }
+import akka.util.Timeout
 
 object FickleFriends {
-  case class FriendlyIncrement(friends: Seq[ActorRef], timeout: Timeout, latch: CountDownLatch)
-  case class Increment(friends: Seq[ActorRef])
+  case class FriendlyIncrement(friends: immutable.Seq[ActorRef], timeout: Timeout, latch: CountDownLatch)
+  case class Increment(friends: immutable.Seq[ActorRef])
   case object GetCount
 
   /**
@@ -49,7 +53,7 @@ object FickleFriends {
               }
             }
           } catch {
-            case _ ⇒ () // swallow exceptions
+            case NonFatal(_) ⇒ () // swallow exceptions
           }
         }
       }
@@ -117,10 +121,10 @@ class FickleFriendsSpec extends AkkaSpec with BeforeAndAfterAll {
 
   "Coordinated fickle friends" should {
     "eventually succeed to increment all counters by one" in {
-      val ignoreExceptions = Seq(
+      val ignoreExceptions = immutable.Seq(
         EventFilter[ExpectedFailureException](),
         EventFilter[CoordinatedTransactionException](),
-        EventFilter[ActorTimeoutException]())
+        EventFilter[AskTimeoutException]())
       system.eventStream.publish(Mute(ignoreExceptions))
       val (counters, coordinator) = actorOfs
       val latch = new CountDownLatch(1)

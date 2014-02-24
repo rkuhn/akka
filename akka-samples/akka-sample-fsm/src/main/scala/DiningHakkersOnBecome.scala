@@ -1,13 +1,15 @@
 /**
- * Copyright (C) 2009-2010 Typesafe Inc. <http://www.typesafe.com>.
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>.
  */
 package sample.fsm.dining.become
+
+import language.postfixOps
 
 //Akka adaptation of
 //http://www.dalnefre.com/wp/2010/08/dining-philosophers-in-humus/
 
 import akka.actor._
-import akka.util.duration._
+import scala.concurrent.duration._
 
 /*
 * First we define our messages, they basically speak for themselves
@@ -131,17 +133,15 @@ class Hakker(name: String, left: ActorRef, right: ActorRef) extends Actor {
 object DiningHakkers {
   val system = ActorSystem()
 
-  def main(args: Array[String]): Unit = {
-    run
-  }
+  def main(args: Array[String]): Unit = run
 
   def run {
     //Create 5 chopsticks
-    val chopsticks = for (i ← 1 to 5) yield system.actorOf(Props[Chopstick], "Chopstick " + i)
+    val chopsticks = for (i ← 1 to 5) yield system.actorOf(Props[Chopstick], "Chopstick" + i)
 
     //Create 5 awesome hakkers and assign them their left and right chopstick
     val hakkers = for {
-      (name, i) ← List("Ghosh", "Bonér", "Klang", "Krasser", "Manie").zipWithIndex
+      (name, i) ← List("Ghosh", "Boner", "Klang", "Krasser", "Manie").zipWithIndex
     } yield system.actorOf(Props(new Hakker(name, chopsticks(i), chopsticks((i + 1) % 5))))
 
     //Signal all hakkers that they should start thinking, and watch the show

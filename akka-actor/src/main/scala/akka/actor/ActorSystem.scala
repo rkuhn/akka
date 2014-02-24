@@ -1,41 +1,41 @@
 /**
- *  Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
 
-import akka.config.ConfigurationException
+import java.io.Closeable
+import java.util.concurrent.{ ConcurrentHashMap, ThreadFactory, CountDownLatch, TimeoutException, RejectedExecutionException }
+import java.util.concurrent.TimeUnit.MILLISECONDS
+import com.typesafe.config.{ Config, ConfigFactory }
 import akka.event._
 import akka.dispatch._
-import akka.pattern.ask
-import org.jboss.netty.akka.util.HashedWheelTimer
-import java.util.concurrent.TimeUnit.MILLISECONDS
-import com.typesafe.config.Config
-import com.typesafe.config.ConfigFactory
-import scala.annotation.tailrec
-import org.jboss.netty.akka.util.internal.ConcurrentIdentityHashMap
-import java.io.Closeable
-import akka.dispatch.Await.Awaitable
-import akka.dispatch.Await.CanAwait
+import akka.dispatch.sysmsg.{ SystemMessageList, EarliestFirstSystemMessageList, LatestFirstSystemMessageList, SystemMessage }
+import akka.japi.Util.immutableSeq
+import akka.actor.dungeon.ChildrenContainer
 import akka.util._
-import collection.immutable.Stack
-import java.util.concurrent.{ ThreadFactory, CountDownLatch, TimeoutException, RejectedExecutionException }
+import scala.annotation.tailrec
+import scala.collection.immutable
+import scala.concurrent.duration.{ FiniteDuration, Duration }
+import scala.concurrent.{ Await, Awaitable, CanAwait, Future, ExecutionContext }
+import scala.util.{ Failure, Success }
+import scala.util.control.{ NonFatal, ControlThrowable }
 
 object ActorSystem {
 
-  val Version = "2.1-SNAPSHOT"
+  val Version: String = "2.2-SNAPSHOT"
 
-  val EnvHome = System.getenv("AKKA_HOME") match {
+  val EnvHome: Option[String] = System.getenv("AKKA_HOME") match {
     case null | "" | "." ⇒ None
     case value           ⇒ Some(value)
   }
 
-  val SystemHome = System.getProperty("akka.home") match {
+  val SystemHome: Option[String] = System.getProperty("akka.home") match {
     case null | "" ⇒ None
     case value     ⇒ Some(value)
   }
 
-  val GlobalHome = SystemHome orElse EnvHome
+  val GlobalHome: Option[String] = SystemHome orElse EnvHome
 
   /**
    * Creates a new ActorSystem with the name "default",
@@ -60,11 +60,15 @@ object ActorSystem {
    * obtains the current ClassLoader by first inspecting the current threads' getContextClassLoader,
    * then tries to walk the stack to find the callers class loader, then falls back to the ClassLoader
    * associated with the ActorSystem class.
+   *
+   * @see <a href="http://typesafehub.github.com/config/v0.4.1/" target="_blank">The Typesafe Config Library API Documentation</a>
    */
   def create(name: String, config: Config): ActorSystem = apply(name, config)
 
   /**
    * Creates a new ActorSystem with the name "default", the specified Config, and specified ClassLoader
+   *
+   * @see <a href="http://typesafehub.github.com/config/v0.4.1/" target="_blank">The Typesafe Config Library API Documentation</a>
    */
   def create(name: String, config: Config, classLoader: ClassLoader): ActorSystem = apply(name, config, classLoader)
 
@@ -94,16 +98,32 @@ object ActorSystem {
    * obtains the current ClassLoader by first inspecting the current threads' getContextClassLoader,
    * then tries to walk the stack to find the callers class loader, then falls back to the ClassLoader
    * associated with the ActorSystem class.
+   *
+   * @see <a href="http://typesafehub.github.com/config/v0.4.1/" target="_blank">The Typesafe Config Library API Documentation</a>
    */
   def apply(name: String, config: Config): ActorSystem = apply(name, config, findClassLoader())
 
   /**
    * Creates a new ActorSystem with the name "default", the specified Config, and specified ClassLoader
+   *
+   * @see <a href="http://typesafehub.github.com/config/v0.4.1/" target="_blank">The Typesafe Config Library API Documentation</a>
    */
   def apply(name: String, config: Config, classLoader: ClassLoader): ActorSystem = new ActorSystemImpl(name, config, classLoader).start()
 
+  /**
+   * Settings are the overall ActorSystem Settings which also provides a convenient access to the Config object.
+   *
+   * For more detailed information about the different possible configuration options, look in the Akka Documentation under "Configuration"
+   *
+   * @see <a href="http://typesafehub.github.com/config/v0.4.1/" target="_blank">The Typesafe Config Library API Documentation</a>
+   */
   class Settings(classLoader: ClassLoader, cfg: Config, final val name: String) {
 
+    /**
+     * The backing Config of this ActorSystem's Settings
+     *
+     * @see <a href="http://typesafehub.github.com/config/v0.4.1/" target="_blank">The Typesafe Config Library API Documentation</a>
+     */
     final val config: Config = {
       val config = cfg.withFallback(ConfigFactory.defaultReference(classLoader))
       config.checkValid(ConfigFactory.defaultReference(classLoader), "akka")
@@ -113,46 +133,55 @@ object ActorSystem {
     import scala.collection.JavaConverters._
     import config._
 
-    final val ConfigVersion = getString("akka.version")
+    final val ConfigVersion: String = getString("akka.version")
+    final val ProviderClass: String = getString("akka.actor.provider")
+    final val SupervisorStrategyClass: String = getString("akka.actor.guardian-supervisor-strategy")
+    final val CreationTimeout: Timeout = Timeout(Duration(getMilliseconds("akka.actor.creation-timeout"), MILLISECONDS))
+    final val UnstartedPushTimeout: Timeout = Timeout(Duration(getMilliseconds("akka.actor.unstarted-push-timeout"), MILLISECONDS))
 
-    final val ProviderClass = getString("akka.actor.provider")
+    final val SerializeAllMessages: Boolean = getBoolean("akka.actor.serialize-messages")
+    final val SerializeAllCreators: Boolean = getBoolean("akka.actor.serialize-creators")
 
-    final val CreationTimeout = Timeout(Duration(getMilliseconds("akka.actor.creation-timeout"), MILLISECONDS))
-    final val ReaperInterval = Duration(getMilliseconds("akka.actor.reaper-interval"), MILLISECONDS)
-    final val SerializeAllMessages = getBoolean("akka.actor.serialize-messages")
-    final val SerializeAllCreators = getBoolean("akka.actor.serialize-creators")
+    final val LogLevel: String = getString("akka.loglevel")
+    final val StdoutLogLevel: String = getString("akka.stdout-loglevel")
+    final val Loggers: immutable.Seq[String] = immutableSeq(getStringList("akka.loggers"))
+    final val LoggerStartTimeout: Timeout = Timeout(Duration(getMilliseconds("akka.logger-startup-timeout"), MILLISECONDS))
+    @deprecated("use Loggers)", "2.2")
+    final val EventHandlers: immutable.Seq[String] = immutableSeq(getStringList("akka.event-handlers"))
+    @deprecated("use LoggerStartTimeout)", "2.2")
+    final val EventHandlerStartTimeout: Timeout = Timeout(Duration(getMilliseconds("akka.event-handler-startup-timeout"), MILLISECONDS))
+    final val LogConfigOnStart: Boolean = config.getBoolean("akka.log-config-on-start")
 
-    final val LogLevel = getString("akka.loglevel")
-    final val StdoutLogLevel = getString("akka.stdout-loglevel")
-    final val EventHandlers: Seq[String] = getStringList("akka.event-handlers").asScala
-    final val EventHandlerStartTimeout = Timeout(Duration(getMilliseconds("akka.event-handler-startup-timeout"), MILLISECONDS))
-    final val LogConfigOnStart = config.getBoolean("akka.log-config-on-start")
+    final val AddLoggingReceive: Boolean = getBoolean("akka.actor.debug.receive")
+    final val DebugAutoReceive: Boolean = getBoolean("akka.actor.debug.autoreceive")
+    final val DebugLifecycle: Boolean = getBoolean("akka.actor.debug.lifecycle")
+    final val FsmDebugEvent: Boolean = getBoolean("akka.actor.debug.fsm")
+    final val DebugEventStream: Boolean = getBoolean("akka.actor.debug.event-stream")
+    final val DebugUnhandledMessage: Boolean = getBoolean("akka.actor.debug.unhandled")
+    final val DebugRouterMisconfiguration: Boolean = getBoolean("akka.actor.debug.router-misconfiguration")
 
-    final val AddLoggingReceive = getBoolean("akka.actor.debug.receive")
-    final val DebugAutoReceive = getBoolean("akka.actor.debug.autoreceive")
-    final val DebugLifecycle = getBoolean("akka.actor.debug.lifecycle")
-    final val FsmDebugEvent = getBoolean("akka.actor.debug.fsm")
-    final val DebugEventStream = getBoolean("akka.actor.debug.event-stream")
-    final val DebugUnhandledMessage = getBoolean("akka.actor.debug.unhandled")
-
-    final val Home = config.getString("akka.home") match {
+    final val Home: Option[String] = config.getString("akka.home") match {
       case "" ⇒ None
       case x  ⇒ Some(x)
     }
 
-    final val SchedulerTickDuration = Duration(getMilliseconds("akka.scheduler.tick-duration"), MILLISECONDS)
-    final val SchedulerTicksPerWheel = getInt("akka.scheduler.ticks-per-wheel")
-    final val Daemonicity = getBoolean("akka.daemonic")
-    final val JvmExitOnFatalError = getBoolean("akka.jvm-exit-on-fatal-error")
+    final val SchedulerClass: String = getString("akka.scheduler.implementation")
+    final val Daemonicity: Boolean = getBoolean("akka.daemonic")
+    final val JvmExitOnFatalError: Boolean = getBoolean("akka.jvm-exit-on-fatal-error")
+
+    final val DefaultVirtualNodesFactor: Int = getInt("akka.actor.deployment.default.virtual-nodes-factor")
 
     if (ConfigVersion != Version)
-      throw new ConfigurationException("Akka JAR version [" + Version + "] does not match the provided config version [" + ConfigVersion + "]")
+      throw new akka.ConfigurationException("Akka JAR version [" + Version + "] does not match the provided config version [" + ConfigVersion + "]")
 
+    /**
+     * Returns the String representation of the Config that this Settings is backed by
+     */
     override def toString: String = config.root.render
   }
 
   /**
-   * INTERNAL
+   * INTERNAL API
    */
   private[akka] def findClassLoader(): ClassLoader = {
     def findCaller(get: Int ⇒ Class[_]): ClassLoader =
@@ -235,7 +264,7 @@ abstract class ActorSystem extends ActorRefFactory {
   def /(name: String): ActorPath
 
   /**
-   * ''Java API'': Create a new child actor path.
+   * Java API: Create a new child actor path.
    */
   def child(child: String): ActorPath = /(child)
 
@@ -245,12 +274,9 @@ abstract class ActorSystem extends ActorRefFactory {
   def /(name: Iterable[String]): ActorPath
 
   /**
-   * ''Java API'': Recursively create a descendant’s path by appending all child names.
+   * Java API: Recursively create a descendant’s path by appending all child names.
    */
-  def descendant(names: java.lang.Iterable[String]): ActorPath = {
-    import scala.collection.JavaConverters._
-    /(names.asScala)
-  }
+  def descendant(names: java.lang.Iterable[String]): ActorPath = /(immutableSeq(names))
 
   /**
    * Start-up time in milliseconds since the epoch.
@@ -295,12 +321,14 @@ abstract class ActorSystem extends ActorRefFactory {
    * Default dispatcher as configured. This dispatcher is used for all actors
    * in the actor system which do not have a different dispatcher configured
    * explicitly.
+   * Importing this member will place the default MessageDispatcher in scope.
    */
-  def dispatcher: MessageDispatcher
+  implicit def dispatcher: ExecutionContext
 
   /**
-   * Register a block of code (callback) to run after all actors in this actor system have
-   * been stopped. Multiple code blocks may be registered by calling this method multiple times.
+   * Register a block of code (callback) to run after ActorSystem.shutdown has been issued and
+   * all actors in this actor system have been stopped.
+   * Multiple code blocks may be registered by calling this method multiple times.
    * The callbacks will be run sequentially in reverse order of registration, i.e.
    * last registration is run first.
    *
@@ -311,14 +339,13 @@ abstract class ActorSystem extends ActorRefFactory {
   def registerOnTermination[T](code: ⇒ T): Unit
 
   /**
-   * Register a block of code (callback) to run after all actors in this actor system have
-   * been stopped. Multiple code blocks may be registered by calling this method multiple times.
+   * Java API: Register a block of code (callback) to run after ActorSystem.shutdown has been issued and
+   * all actors in this actor system have been stopped.
+   * Multiple code blocks may be registered by calling this method multiple times.
    * The callbacks will be run sequentially in reverse order of registration, i.e.
    * last registration is run first.
    *
    * @throws a RejectedExecutionException if the System has already shut down or if shutdown has been initiated.
-   *
-   * Java API
    */
   def registerOnTermination(code: Runnable): Unit
 
@@ -352,7 +379,7 @@ abstract class ActorSystem extends ActorRefFactory {
    * returns `false`, the status is actually unknown, since it might have
    * changed since you queried it.
    */
-  def isTerminated(): Boolean
+  def isTerminated: Boolean
 
   /**
    * Registers the provided extension and creates its payload, if this extension isn't already registered
@@ -403,11 +430,6 @@ abstract class ExtendedActorSystem extends ActorSystem {
   def systemGuardian: InternalActorRef
 
   /**
-   * Implementation of the mechanism which is used for watch()/unwatch().
-   */
-  def deathWatch: DeathWatch
-
-  /**
    * A ThreadFactory that can be used if the transport needs to create any Threads
    */
   def threadFactory: ThreadFactory
@@ -420,14 +442,21 @@ abstract class ExtendedActorSystem extends ActorSystem {
    * creation.
    */
   def dynamicAccess: DynamicAccess
+
+  /**
+   * For debugging: traverse actor hierarchy and make string representation.
+   * Careful, this may OOM on large actor systems, and it is only meant for
+   * helping debugging in case something already went terminally wrong.
+   */
+  private[akka] def printTree: String
 }
 
-class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Config, classLoader: ClassLoader) extends ExtendedActorSystem {
+private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config, classLoader: ClassLoader) extends ExtendedActorSystem {
 
   if (!name.matches("""^[a-zA-Z0-9][a-zA-Z0-9-]*$"""))
     throw new IllegalArgumentException(
       "invalid ActorSystem name [" + name +
-        "], must contain only word characters (i.e. [a-zA-Z_0-9] plus non-leading '-')")
+        "], must contain only word characters (i.e. [a-zA-Z0-9] plus non-leading '-')")
 
   import ActorSystem._
 
@@ -436,11 +465,27 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
   protected def uncaughtExceptionHandler: Thread.UncaughtExceptionHandler =
     new Thread.UncaughtExceptionHandler() {
       def uncaughtException(thread: Thread, cause: Throwable): Unit = {
-        log.error(cause, "Uncaught error from thread [{}]", thread.getName)
         cause match {
-          case NonFatal(_) | _: InterruptedException ⇒
-          case _ if settings.JvmExitOnFatalError     ⇒ System.exit(-1)
-          case _                                     ⇒ shutdown()
+          case NonFatal(_) | _: InterruptedException | _: NotImplementedError | _: ControlThrowable ⇒ log.error(cause, "Uncaught error from thread [{}]", thread.getName)
+          case _ ⇒
+            if (settings.JvmExitOnFatalError) {
+              try {
+                log.error(cause, "Uncaught error from thread [{}] shutting down JVM since 'akka.jvm-exit-on-fatal-error' is enabled", thread.getName)
+                import System.err
+                err.print("Uncaught error from thread [")
+                err.print(thread.getName)
+                err.print("] shutting down JVM since 'akka.jvm-exit-on-fatal-error' is enabled for ActorSystem[")
+                err.print(name)
+                err.println("]")
+                cause.printStackTrace(System.err)
+                System.err.flush()
+              } finally {
+                System.exit(-1)
+              }
+            } else {
+              log.error(cause, "Uncaught fatal error from thread [{}] shutting down ActorSystem [{}]", thread.getName, name)
+              shutdown()
+            }
         }
       }
     }
@@ -459,40 +504,21 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
 
   def logConfiguration(): Unit = log.info(settings.toString)
 
-  protected def systemImpl = this
+  protected def systemImpl: ActorSystemImpl = this
 
-  private[akka] def systemActorOf(props: Props, name: String): ActorRef = {
-    implicit val timeout = settings.CreationTimeout
-    Await.result(systemGuardian ? CreateChild(props, name), timeout.duration) match {
-      case ref: ActorRef ⇒ ref
-      case ex: Exception ⇒ throw ex
-    }
-  }
+  private[akka] def systemActorOf(props: Props, name: String): ActorRef = systemGuardian.underlying.attachChild(props, name, systemService = true)
 
-  def actorOf(props: Props, name: String): ActorRef = {
-    implicit val timeout = settings.CreationTimeout
-    Await.result(guardian ? CreateChild(props, name), timeout.duration) match {
-      case ref: ActorRef ⇒ ref
-      case ex: Exception ⇒ throw ex
-    }
-  }
+  def actorOf(props: Props, name: String): ActorRef = guardian.underlying.attachChild(props, name, systemService = false)
 
-  def actorOf(props: Props): ActorRef = {
-    implicit val timeout = settings.CreationTimeout
-    Await.result(guardian ? CreateRandomNameChild(props), timeout.duration) match {
-      case ref: ActorRef ⇒ ref
-      case ex: Exception ⇒ throw ex
-    }
-  }
+  def actorOf(props: Props): ActorRef = guardian.underlying.attachChild(props, systemService = false)
 
   def stop(actor: ActorRef): Unit = {
-    implicit val timeout = settings.CreationTimeout
     val path = actor.path
     val guard = guardian.path
     val sys = systemGuardian.path
     path.parent match {
-      case `guard` ⇒ Await.result(guardian ? StopChild(actor), timeout.duration)
-      case `sys`   ⇒ Await.result(systemGuardian ? StopChild(actor), timeout.duration)
+      case `guard` ⇒ guardian ! StopChild(actor)
+      case `sys`   ⇒ systemGuardian ! StopChild(actor)
       case _       ⇒ actor.asInstanceOf[InternalActorRef].stop()
     }
   }
@@ -508,46 +534,45 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
   val scheduler: Scheduler = createScheduler()
 
   val provider: ActorRefProvider = {
-    val arguments = Seq(
+    val arguments = Vector(
       classOf[String] -> name,
       classOf[Settings] -> settings,
       classOf[EventStream] -> eventStream,
       classOf[Scheduler] -> scheduler,
       classOf[DynamicAccess] -> dynamicAccess)
 
-    dynamicAccess.createInstanceFor[ActorRefProvider](ProviderClass, arguments) match {
-      case Left(e)  ⇒ throw e
-      case Right(p) ⇒ p
-    }
+    dynamicAccess.createInstanceFor[ActorRefProvider](ProviderClass, arguments).get
   }
 
   def deadLetters: ActorRef = provider.deadLetters
 
+  //FIXME Why do we need this at all?
   val deadLetterQueue: MessageQueue = new MessageQueue {
-    def enqueue(receiver: ActorRef, envelope: Envelope) { deadLetters ! DeadLetter(envelope.message, envelope.sender, receiver) }
+    def enqueue(receiver: ActorRef, envelope: Envelope): Unit =
+      deadLetters.tell(DeadLetter(envelope.message, envelope.sender, receiver), envelope.sender)
     def dequeue() = null
     def hasMessages = false
     def numberOfMessages = 0
-    def cleanUp(owner: ActorContext, deadLetters: MessageQueue): Unit = ()
+    def cleanUp(owner: ActorRef, deadLetters: MessageQueue): Unit = ()
   }
-
-  val deadLetterMailbox: Mailbox = new Mailbox(null, deadLetterQueue) {
+  //FIXME Why do we need this at all?
+  val deadLetterMailbox: Mailbox = new Mailbox(deadLetterQueue) {
     becomeClosed()
-    def systemEnqueue(receiver: ActorRef, handle: SystemMessage): Unit = deadLetters ! DeadLetter(handle, receiver, receiver)
-    def systemDrain(): SystemMessage = null
+    def systemEnqueue(receiver: ActorRef, handle: SystemMessage): Unit =
+      deadLetters ! DeadLetter(handle, receiver, receiver)
+    def systemDrain(newContents: LatestFirstSystemMessageList): EarliestFirstSystemMessageList = SystemMessageList.ENil
     def hasSystemMessages = false
   }
 
   val dispatchers: Dispatchers = new Dispatchers(settings, DefaultDispatcherPrerequisites(
     threadFactory, eventStream, deadLetterMailbox, scheduler, dynamicAccess, settings))
 
-  val dispatcher: MessageDispatcher = dispatchers.defaultGlobalDispatcher
+  val dispatcher: ExecutionContext = dispatchers.defaultGlobalDispatcher
 
   def terminationFuture: Future[Unit] = provider.terminationFuture
   def lookupRoot: InternalActorRef = provider.rootGuardian
-  def guardian: InternalActorRef = provider.guardian
-  def systemGuardian: InternalActorRef = provider.systemGuardian
-  def deathWatch: DeathWatch = provider.deathWatch
+  def guardian: LocalActorRef = provider.guardian
+  def systemGuardian: LocalActorRef = provider.systemGuardian
 
   def /(actorName: String): ActorPath = guardian.path / actorName
   def /(path: Iterable[String]): ActorPath = guardian.path / path
@@ -564,6 +589,7 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
   def start(): this.type = _start
 
   private lazy val terminationCallbacks = {
+    implicit val d = dispatcher
     val callbacks = new TerminationCallbacks
     terminationFuture onComplete (_ ⇒ callbacks.run)
     callbacks
@@ -572,10 +598,11 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
   def registerOnTermination(code: Runnable) { terminationCallbacks.add(code) }
   def awaitTermination(timeout: Duration) { Await.ready(terminationCallbacks, timeout) }
   def awaitTermination() = awaitTermination(Duration.Inf)
-  def isTerminated() = terminationCallbacks.isTerminated
+  def isTerminated = terminationCallbacks.isTerminated
 
   def shutdown(): Unit = guardian.stop()
 
+  //#create-scheduler
   /**
    * Create the scheduler service. This one needs one special behavior: if
    * Closeable, it MUST execute all outstanding tasks upon .close() in order
@@ -585,22 +612,12 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
    * cannot schedule a task. Once scheduled, the task MUST be executed. If
    * executed upon close(), the task may execute before its timeout.
    */
-  protected def createScheduler(): Scheduler = {
-    val hwt = new HashedWheelTimer(log,
-      threadFactory.copy(threadFactory.name + "-scheduler"),
-      settings.SchedulerTickDuration,
-      settings.SchedulerTicksPerWheel)
-    // note that dispatcher is by-name parameter in DefaultScheduler constructor,
-    // because dispatcher is not initialized when the scheduler is created
-    def safeDispatcher = dispatcher match {
-      case null ⇒
-        val exc = new IllegalStateException("Scheduler is using dispatcher before it has been initialized")
-        log.error(exc, exc.getMessage)
-        throw exc
-      case dispatcher ⇒ dispatcher
-    }
-    new DefaultScheduler(hwt, log, safeDispatcher)
-  }
+  protected def createScheduler(): Scheduler =
+    dynamicAccess.createInstanceFor[Scheduler](settings.SchedulerClass, immutable.Seq(
+      classOf[Config] -> settings.config,
+      classOf[LoggingAdapter] -> log,
+      classOf[ThreadFactory] -> threadFactory.withName(threadFactory.name + "-scheduler"))).get
+  //#create-scheduler
 
   /*
    * This is called after the last actor has signaled its termination, i.e.
@@ -612,15 +629,17 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
     case _            ⇒
   }
 
-  private val extensions = new ConcurrentIdentityHashMap[ExtensionId[_], AnyRef]
+  private val extensions = new ConcurrentHashMap[ExtensionId[_], AnyRef]
 
   /**
    * Returns any extension registered to the specified Extension or returns null if not registered
    */
   @tailrec
   private def findExtension[T <: Extension](ext: ExtensionId[T]): T = extensions.get(ext) match {
-    case c: CountDownLatch ⇒ c.await(); findExtension(ext) //Registration in process, await completion and retry
-    case other             ⇒ other.asInstanceOf[T] //could be a T or null, in which case we return the null as T
+    case c: CountDownLatch ⇒
+      c.await(); findExtension(ext) //Registration in process, await completion and retry
+    case other ⇒
+      other.asInstanceOf[T] //could be a T or null, in which case we return the null as T
   }
 
   @tailrec
@@ -637,7 +656,7 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
                 instance //Profit!
             }
           } catch {
-            case t ⇒
+            case t: Throwable ⇒
               extensions.remove(ext, inProcessOfRegistration) //In case shit hits the fan, remove the inProcess signal
               throw t //Escalate to caller
           } finally {
@@ -657,24 +676,58 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
   def hasExtension(ext: ExtensionId[_ <: Extension]): Boolean = findExtension(ext) != null
 
   private def loadExtensions() {
-    import scala.collection.JavaConversions._
-    settings.config.getStringList("akka.extensions") foreach { fqcn ⇒
-      dynamicAccess.getObjectFor[AnyRef](fqcn).fold(_ ⇒ dynamicAccess.createInstanceFor[AnyRef](fqcn, Seq()), Right(_)) match {
-        case Right(p: ExtensionIdProvider) ⇒ registerExtension(p.lookup());
-        case Right(p: ExtensionId[_])      ⇒ registerExtension(p);
-        case Right(other)                  ⇒ log.error("[{}] is not an 'ExtensionIdProvider' or 'ExtensionId', skipping...", fqcn)
-        case Left(problem)                 ⇒ log.error(problem, "While trying to load extension [{}], skipping...", fqcn)
+    immutableSeq(settings.config.getStringList("akka.extensions")) foreach { fqcn ⇒
+      dynamicAccess.getObjectFor[AnyRef](fqcn) recoverWith { case _ ⇒ dynamicAccess.createInstanceFor[AnyRef](fqcn, Nil) } match {
+        case Success(p: ExtensionIdProvider) ⇒ registerExtension(p.lookup())
+        case Success(p: ExtensionId[_])      ⇒ registerExtension(p)
+        case Success(other)                  ⇒ log.error("[{}] is not an 'ExtensionIdProvider' or 'ExtensionId', skipping...", fqcn)
+        case Failure(problem)                ⇒ log.error(problem, "While trying to load extension [{}], skipping...", fqcn)
       }
-
     }
   }
 
   override def toString: String = lookupRoot.path.root.address.toString
 
+  override def printTree: String = {
+    def printNode(node: ActorRef, indent: String): String = {
+      node match {
+        case wc: ActorRefWithCell ⇒
+          val cell = wc.underlying
+          (if (indent.isEmpty) "-> " else indent.dropRight(1) + "⌊-> ") +
+            node.path.name + " " + Logging.simpleName(node) + " " +
+            (cell match {
+              case real: ActorCell ⇒ if (real.actor ne null) real.actor.getClass else "null"
+              case _               ⇒ Logging.simpleName(cell)
+            }) +
+            (cell match {
+              case real: ActorCell ⇒ " status=" + real.mailbox.status
+              case _               ⇒ ""
+            }) +
+            " " + (cell.childrenRefs match {
+              case ChildrenContainer.TerminatingChildrenContainer(_, toDie, reason) ⇒
+                "Terminating(" + reason + ")" +
+                  (toDie.toSeq.sorted mkString ("\n" + indent + "   |    toDie: ", "\n" + indent + "   |           ", ""))
+              case x @ (ChildrenContainer.TerminatedChildrenContainer | ChildrenContainer.EmptyChildrenContainer) ⇒ x.toString
+              case n: ChildrenContainer.NormalChildrenContainer ⇒ n.c.size + " children"
+              case x ⇒ Logging.simpleName(x)
+            }) +
+            (if (cell.childrenRefs.children.isEmpty) "" else "\n") +
+            ({
+              val children = cell.childrenRefs.children.toSeq.sorted
+              val bulk = children.dropRight(1) map (printNode(_, indent + "   |"))
+              bulk ++ (children.lastOption map (printNode(_, indent + "    ")))
+            } mkString ("\n"))
+        case _ ⇒
+          indent + node.path.name + " " + Logging.simpleName(node)
+      }
+    }
+    printNode(actorFor("/"), "")
+  }
+
   final class TerminationCallbacks extends Runnable with Awaitable[Unit] {
     private val lock = new ReentrantGuard
-    private var callbacks: Stack[Runnable] = _ //non-volatile since guarded by the lock
-    lock withGuard { callbacks = Stack.empty[Runnable] }
+    private var callbacks: List[Runnable] = _ //non-volatile since guarded by the lock
+    lock withGuard { callbacks = Nil }
 
     private val latch = new CountDownLatch(1)
 
@@ -683,17 +736,17 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
         case 0 ⇒ throw new RejectedExecutionException("Must be called prior to system shutdown.")
         case _ ⇒ lock withGuard {
           if (latch.getCount == 0) throw new RejectedExecutionException("Must be called prior to system shutdown.")
-          else callbacks = callbacks.push(callback)
+          else callbacks ::= callback
         }
       }
     }
 
     final def run(): Unit = lock withGuard {
-      @tailrec def runNext(c: Stack[Runnable]): Stack[Runnable] = c.headOption match {
-        case None ⇒ Stack.empty[Runnable]
-        case Some(callback) ⇒
-          try callback.run() catch { case e ⇒ log.error(e, "Failed to run termination callback, due to [{}]", e.getMessage) }
-          runNext(c.pop)
+      @tailrec def runNext(c: List[Runnable]): List[Runnable] = c match {
+        case Nil ⇒ Nil
+        case callback :: rest ⇒
+          try callback.run() catch { case NonFatal(e) ⇒ log.error(e, "Failed to run termination callback, due to [{}]", e.getMessage) }
+          runNext(rest)
       }
       try { callbacks = runNext(callbacks) } finally latch.countDown()
     }
@@ -709,6 +762,6 @@ class ActorSystemImpl protected[akka] (val name: String, applicationConfig: Conf
 
     final def result(atMost: Duration)(implicit permit: CanAwait): Unit = ready(atMost)
 
-    final def isTerminated(): Boolean = latch.getCount == 0
+    final def isTerminated: Boolean = latch.getCount == 0
   }
 }

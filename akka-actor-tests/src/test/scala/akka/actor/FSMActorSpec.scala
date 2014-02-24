@@ -1,17 +1,21 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
 
+import language.postfixOps
 import org.scalatest.{ BeforeAndAfterAll, BeforeAndAfterEach }
 import akka.testkit._
 import TestEvent.Mute
-import akka.util.duration._
+import scala.concurrent.duration._
 import akka.event._
 import com.typesafe.config.ConfigFactory
-import akka.dispatch.Await
-import akka.util.{ Timeout, Duration }
+import scala.concurrent.Await
+import akka.util.Timeout
+import org.scalatest.matchers.Matcher
+import org.scalatest.matchers.HavePropertyMatcher
+import org.scalatest.matchers.HavePropertyMatchResult
 
 object FSMActorSpec {
   val timeout = Timeout(2 seconds)
@@ -30,7 +34,7 @@ object FSMActorSpec {
   case object Locked extends LockState
   case object Open extends LockState
 
-  class Lock(code: String, timeout: Duration, latches: Latches) extends Actor with FSM[LockState, CodeState] {
+  class Lock(code: String, timeout: FiniteDuration, latches: Latches) extends Actor with FSM[LockState, CodeState] {
 
     import latches._
 
@@ -147,7 +151,7 @@ class FSMActorSpec extends AkkaSpec(Map("akka.actor.debug.fsm" -> true)) with Im
       object Hello
       object Bye
       val tester = system.actorOf(Props(new Actor {
-        protected def receive = {
+        def receive = {
           case Hello   ⇒ lock ! "hello"
           case "world" ⇒ answerLatch.open
           case Bye     ⇒ lock ! "bye"
@@ -180,6 +184,10 @@ class FSMActorSpec extends AkkaSpec(Map("akka.actor.debug.fsm" -> true)) with Im
 
     "run onTermination upon ActorRef.stop()" in {
       val started = TestLatch(1)
+      /*
+       * This lazy val trick is beyond evil: KIDS, DON'T TRY THIS AT HOME!
+       * It is necessary here because of the path-dependent type fsm.StopEvent.
+       */
       lazy val fsm = new Actor with FSM[Int, Null] {
         override def preStart = { started.countDown }
         startWith(1, null)
@@ -192,6 +200,60 @@ class FSMActorSpec extends AkkaSpec(Map("akka.actor.debug.fsm" -> true)) with Im
       Await.ready(started, timeout.duration)
       system.stop(ref)
       expectMsg(1 second, fsm.StopEvent(FSM.Shutdown, 1, null))
+    }
+
+    "run onTermination with updated state upon stop(reason, stateData)" in {
+      val expected = "pigdog"
+      val actor = system.actorOf(Props(new Actor with FSM[Int, String] {
+        startWith(1, null)
+        when(1) {
+          case Event(2, null) ⇒ stop(FSM.Normal, expected)
+        }
+        onTermination {
+          case StopEvent(FSM.Normal, 1, `expected`) ⇒ testActor ! "green"
+        }
+      }))
+      actor ! 2
+      expectMsg("green")
+    }
+
+    "cancel all timers when terminated" in {
+      val timerNames = List("timer-1", "timer-2", "timer-3")
+
+      // Lazy so fsmref can refer to checkTimersActive
+      lazy val fsmref = TestFSMRef(new Actor with FSM[String, Null] {
+        startWith("not-started", null)
+        when("not-started") {
+          case Event("start", _) ⇒ goto("started") replying "starting"
+        }
+        when("started", stateTimeout = 10 seconds) {
+          case Event("stop", _) ⇒ stop()
+        }
+        onTransition {
+          case "not-started" -> "started" ⇒
+            for (timerName ← timerNames) setTimer(timerName, (), 10 seconds, false)
+        }
+        onTermination {
+          case _ ⇒ {
+            checkTimersActive(false)
+            testActor ! "stopped"
+          }
+        }
+      })
+
+      def checkTimersActive(active: Boolean) {
+        for (timer ← timerNames) fsmref.isTimerActive(timer) must be(active)
+        fsmref.isStateTimerActive must be(active)
+      }
+
+      checkTimersActive(false)
+
+      fsmref ! "start"
+      expectMsg(1 second, "starting")
+      checkTimersActive(true)
+
+      fsmref ! "stop"
+      expectMsg(1 second, "stopped")
     }
 
     "log events and transitions if asked to do so" in {
@@ -260,6 +322,25 @@ class FSMActorSpec extends AkkaSpec(Map("akka.actor.debug.fsm" -> true)) with Im
       fsmref ! "count"
       fsmref ! "log"
       expectMsg(1 second, IndexedSeq(LogEntry(1, 1, "log"), LogEntry(1, 1, "count"), LogEntry(1, 2, "log")))
+    }
+
+    "allow transforming of state results" in {
+      import akka.actor.FSM._
+      val fsmref = system.actorOf(Props(new Actor with FSM[Int, Int] {
+        startWith(0, 0)
+        when(0)(transform {
+          case Event("go", _) ⇒ stay
+        } using {
+          case x ⇒ goto(1)
+        })
+        when(1) {
+          case _ ⇒ stay
+        }
+      }))
+      fsmref ! SubscribeTransitionCallBack(testActor)
+      fsmref ! "go"
+      expectMsg(CurrentState(fsmref, 0))
+      expectMsg(Transition(fsmref, 0, 1))
     }
 
   }

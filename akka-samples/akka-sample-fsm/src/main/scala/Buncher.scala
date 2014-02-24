@@ -1,12 +1,13 @@
 /**
- * Copyright (C) 2009-2010 Typesafe Inc. <http://www.typesafe.com>.
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>.
  */
 package sample.fsm.buncher
 
 import akka.actor.ActorRefFactory
-import scala.reflect.ClassManifest
-import akka.util.Duration
+import scala.reflect.ClassTag
+import scala.concurrent.duration.Duration
 import akka.actor.{ FSM, Actor, ActorRef }
+import scala.concurrent.duration.FiniteDuration
 
 /*
 * generic typed object buncher.
@@ -26,18 +27,16 @@ object GenericBuncher {
   case object Flush // send out current queue immediately
   case object Stop // poison pill
 
-  class MsgExtractor[A: Manifest] {
-    def unapply(m: AnyRef): Option[A] = {
-      if (ClassManifest.fromClass(m.getClass) <:< manifest[A]) {
+  class MsgExtractor[A: ClassTag] {
+    def unapply(m: AnyRef): Option[A] =
+      if (implicitly[ClassTag[A]].runtimeClass isAssignableFrom m.getClass)
         Some(m.asInstanceOf[A])
-      } else {
+      else
         None
-      }
-    }
   }
 }
 
-abstract class GenericBuncher[A: Manifest, B](val singleTimeout: Duration, val multiTimeout: Duration)
+abstract class GenericBuncher[A: ClassTag, B](val singleTimeout: FiniteDuration, val multiTimeout: FiniteDuration)
   extends Actor with FSM[GenericBuncher.State, B] {
   import GenericBuncher._
   import FSM._
@@ -87,7 +86,7 @@ object Buncher {
   val Flush = GenericBuncher.Flush
 }
 
-class Buncher[A: Manifest](singleTimeout: Duration, multiTimeout: Duration)
+class Buncher[A: ClassTag](singleTimeout: FiniteDuration, multiTimeout: FiniteDuration)
   extends GenericBuncher[A, List[A]](singleTimeout, multiTimeout) {
 
   import Buncher._

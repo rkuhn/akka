@@ -1,41 +1,56 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.camel;
 
+import scala.concurrent.duration.Duration;
+import scala.concurrent.duration.FiniteDuration;
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Props;
-import akka.util.FiniteDuration;
+import akka.testkit.JavaTestKit;
+import akka.util.Timeout;
+import scala.concurrent.Await;
+import scala.concurrent.ExecutionContext;
 import org.junit.AfterClass;
 import org.junit.Test;
-
 import java.util.concurrent.TimeUnit;
-
-import static org.junit.Assert.assertEquals;
-
-
+import akka.testkit.AkkaSpec;
+import static org.junit.Assert.*;
 /**
- * @author Martin Krasser
+ *
  */
 public class ConsumerJavaTestBase {
 
-    static ActorSystem system = ActorSystem.create("test");
-    static Camel camel = (Camel) CamelExtension.get(system);
+  static ActorSystem system = ActorSystem.create("test", AkkaSpec.testConf());
 
-
-    @AfterClass
-    public static void tearDownAfterClass() {
-        system.shutdown();
-    }
+  @AfterClass
+  public static void tearDownAfterClass() {
+    system.shutdown();
+  }
 
     @Test
-    public void shouldHandleExceptionThrownByActorAndGenerateCustomResponse() {
-        ActorRef ref = system.actorOf(new Props().withCreator(SampleErrorHandlingConsumer.class));
-        camel.awaitActivation(ref, new FiniteDuration(1, TimeUnit.SECONDS));
-
-        String result = camel.template().requestBody("direct:error-handler-test-java", "hello", String.class);
-        assertEquals("error: hello", result);
+    public void shouldHandleExceptionThrownByActorAndGenerateCustomResponse() throws Exception {
+        new JavaTestKit(system) {{
+            String result = new EventFilter<String>(Exception.class) {
+                protected String run() {
+                    FiniteDuration duration = Duration.create(1, TimeUnit.SECONDS);
+                    Timeout timeout = new Timeout(duration);
+                    Camel camel = CamelExtension.get(system);
+                    ExecutionContext executionContext = system.dispatcher();
+                    try {
+                        Await.result(
+                                camel.activationFutureFor(system.actorOf(new Props(SampleErrorHandlingConsumer.class), "sample-error-handling-consumer"), timeout, executionContext),
+                                duration);
+                        return camel.template().requestBody("direct:error-handler-test-java", "hello", String.class);
+                    }
+                    catch (Exception e) {
+                        return e.getMessage();
+                    }
+                }
+            }.occurrences(1).exec();
+            assertEquals("error: hello", result);
+        }};
     }
 }

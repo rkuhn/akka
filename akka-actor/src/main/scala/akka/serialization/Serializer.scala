@@ -1,14 +1,15 @@
 package akka.serialization
 
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 import java.io.{ ObjectOutputStream, ByteArrayOutputStream, ObjectInputStream, ByteArrayInputStream }
+import java.util.concurrent.Callable
 import akka.util.ClassLoaderObjectInputStream
-import akka.actor.DynamicAccess
 import akka.actor.ExtendedActorSystem
 import scala.util.DynamicVariable
+import akka.serialization.JavaSerializer.CurrentSystem
 
 /**
  * A Serializer represents a bimap between an object and an array of bytes representing that object.
@@ -94,9 +95,23 @@ object JavaSerializer {
    * currentSystem.withValue(system) {
    *   ...code...
    * }
+   *
+   * or
+   *
+   * currentSystem.withValue(system, callable)
    */
-  val currentSystem = new DynamicVariable[ExtendedActorSystem](null)
-
+  val currentSystem = new CurrentSystem
+  final class CurrentSystem extends DynamicVariable[ExtendedActorSystem](null) {
+    /**
+     * Java API: invoke the callable with the current system being set to the given value for this thread.
+     *
+     * @param value - the current value under the call to callable.call()
+     * @param callable - the operation to be performed
+     * @tparam S - the return type
+     * @return the result of callable.call()
+     */
+    def withValue[S](value: ExtendedActorSystem, callable: Callable[S]): S = super.withValue[S](value)(callable.call)
+  }
 }
 
 /**
@@ -133,4 +148,19 @@ class NullSerializer extends Serializer {
   def identifier = 0
   def toBinary(o: AnyRef) = nullAsBytes
   def fromBinary(bytes: Array[Byte], clazz: Option[Class[_]]): AnyRef = null
+}
+
+/**
+ * This is a special Serializer that Serializes and deserializes byte arrays only,
+ * (just returns the byte array unchanged/uncopied)
+ */
+class ByteArraySerializer extends Serializer {
+  def includeManifest: Boolean = false
+  def identifier = 4
+  def toBinary(o: AnyRef) = o match {
+    case null           ⇒ null
+    case o: Array[Byte] ⇒ o
+    case other          ⇒ throw new IllegalArgumentException("ByteArraySerializer only serializes byte arrays, not [" + other + "]")
+  }
+  def fromBinary(bytes: Array[Byte], clazz: Option[Class[_]]): AnyRef = bytes
 }

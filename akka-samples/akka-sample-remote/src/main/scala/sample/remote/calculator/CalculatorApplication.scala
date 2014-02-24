@@ -1,5 +1,5 @@
 /**
- *  Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package sample.remote.calculator
 
@@ -26,7 +26,8 @@ class SimpleCalculatorActor extends Actor {
 
 class CalculatorApplication extends Bootable {
   //#setup
-  val system = ActorSystem("CalculatorApplication", ConfigFactory.load.getConfig("calculator"))
+  val system = ActorSystem("CalculatorApplication",
+    ConfigFactory.load.getConfig("calculator"))
   val actor = system.actorOf(Props[SimpleCalculatorActor], "simpleCalculator")
   //#setup
 

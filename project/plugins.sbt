@@ -1,14 +1,17 @@
 
 resolvers += Classpaths.typesafeResolver
 
-addSbtPlugin("com.typesafe.sbtmultijvm" % "sbt-multi-jvm" % "0.1.9")
+// these comment markers are for including code into the docs
+//#sbt-multi-jvm
+addSbtPlugin("com.typesafe.sbt" % "sbt-multi-jvm" % "0.3.5")
+//#sbt-multi-jvm
 
-addSbtPlugin("com.typesafe.schoir" % "schoir" % "0.1.2")
+addSbtPlugin("com.typesafe.sbt" % "sbt-scalariform" % "1.0.0")
 
-addSbtPlugin("com.typesafe.sbtscalariform" % "sbtscalariform" % "0.3.1")
+addSbtPlugin("com.typesafe.sbt" % "sbt-site" % "0.6.2")
 
-resolvers ++= Seq(
-  "less is" at "http://repo.lessis.me",
-  "coda" at "http://repo.codahale.com")
+addSbtPlugin("com.typesafe.sbtosgi" % "sbtosgi" % "0.3.0")
 
-addSbtPlugin("me.lessis" % "ls-sbt" % "0.1.1")
+addSbtPlugin("com.typesafe" % "sbt-mima-plugin" % "0.1.3")
+
+addSbtPlugin("me.lessis" % "ls-sbt" % "0.1.2")

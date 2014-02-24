@@ -1,14 +1,14 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.testkit
 
 import akka.actor._
-import akka.util.Duration
 import java.util.concurrent.atomic.AtomicLong
-import scala.collection.immutable.Stack
 import akka.dispatch._
+import scala.concurrent.Await
+import scala.reflect.ClassTag
 import akka.pattern.ask
 
 /**
@@ -16,7 +16,6 @@ import akka.pattern.ask
  * overrides the dispatcher to CallingThreadDispatcher and sets the receiveTimeout to None. Otherwise,
  * it acts just like a normal ActorRef. You may retrieve a reference to the underlying actor to test internal logic.
  *
- * @author Roland Kuhn
  * @since 1.1
  */
 class TestActorRef[T <: Actor](
@@ -25,24 +24,31 @@ class TestActorRef[T <: Actor](
   _props: Props,
   _supervisor: InternalActorRef,
   name: String)
-  extends LocalActorRef(
+  extends {
+    private val disregard = _supervisor match {
+      case l: LocalActorRef ⇒ l.underlying.reserveChild(name)
+      case r: RepointableActorRef ⇒ r.underlying match {
+        case u: UnstartedCell ⇒ throw new IllegalStateException("cannot attach a TestActor to an unstarted top-level actor, ensure that it is started by sending a message and observing the reply")
+        case c: ActorCell     ⇒ c.reserveChild(name)
+        case o                ⇒ _system.log.error("trying to attach child {} to unknown type of supervisor cell {}, this is not going to end well", name, o.getClass)
+      }
+      case s ⇒ _system.log.error("trying to attach child {} to unknown type of supervisor {}, this is not going to end well", name, s.getClass)
+    }
+  } with LocalActorRef(
     _system,
     _props.withDispatcher(
       if (_props.dispatcher == Dispatchers.DefaultDispatcherId) CallingThreadDispatcher.Id
       else _props.dispatcher),
     _supervisor,
-    _supervisor.path / name,
-    false) {
+    _supervisor.path / name) {
+
+  // we need to start ourselves since the creation of an actor has been split into initialization and starting
+  underlying.start()
 
   import TestActorRef.InternalGetActor
 
-  override def newActorCell(
-    system: ActorSystemImpl,
-    ref: InternalActorRef,
-    props: Props,
-    supervisor: InternalActorRef,
-    receiveTimeout: Option[Duration]): ActorCell =
-    new ActorCell(system, ref, props, supervisor, receiveTimeout) {
+  override def newActorCell(system: ActorSystemImpl, ref: InternalActorRef, props: Props, supervisor: InternalActorRef): ActorCell =
+    new ActorCell(system, ref, props, supervisor) {
       override def autoReceiveMessage(msg: Envelope) {
         msg.message match {
           case InternalGetActor ⇒ sender ! actor
@@ -56,7 +62,17 @@ class TestActorRef[T <: Actor](
    * thrown will be available to you, while still being able to use
    * become/unbecome.
    */
-  def receive(o: Any) { underlyingActor.apply(o) }
+  def receive(o: Any): Unit = receive(o, underlying.system.deadLetters)
+
+  /**
+   * Directly inject messages into actor receive behavior. Any exceptions
+   * thrown will be available to you, while still being able to use
+   * become/unbecome.
+   */
+  def receive(o: Any, sender: ActorRef): Unit = try {
+    underlying.currentMessage = Envelope(o, if (sender eq null) underlying.system.deadLetters else sender, underlying.system)
+    underlying.receiveMessage(o)
+  } finally underlying.currentMessage = null
 
   /**
    * Retrieve reference to the underlying actor, where the static type matches the factory used inside the
@@ -65,7 +81,7 @@ class TestActorRef[T <: Actor](
    */
   def underlyingActor: T = {
     // volatile mailbox read to bring in actor field
-    if (isTerminated()) throw new IllegalActorStateException("underlying actor is terminated")
+    if (isTerminated) throw new IllegalActorStateException("underlying actor is terminated")
     underlying.actor.asInstanceOf[T] match {
       case null ⇒
         val t = TestKitExtension(_system).DefaultTimeout
@@ -98,7 +114,7 @@ class TestActorRef[T <: Actor](
 
 object TestActorRef {
 
-  private case object InternalGetActor extends AutoReceivedMessage
+  private case object InternalGetActor extends AutoReceivedMessage with PossiblyHarmful
 
   private val number = new AtomicLong
   private[testkit] def randomName: String = {
@@ -115,19 +131,24 @@ object TestActorRef {
   def apply[T <: Actor](props: Props, name: String)(implicit system: ActorSystem): TestActorRef[T] =
     apply[T](props, system.asInstanceOf[ActorSystemImpl].guardian, name)
 
-  def apply[T <: Actor](props: Props, supervisor: ActorRef, name: String)(implicit system: ActorSystem): TestActorRef[T] =
+  def apply[T <: Actor](props: Props, supervisor: ActorRef, name: String)(implicit system: ActorSystem): TestActorRef[T] = {
     new TestActorRef(system.asInstanceOf[ActorSystemImpl], system.dispatchers.prerequisites, props, supervisor.asInstanceOf[InternalActorRef], name)
+  }
 
-  def apply[T <: Actor](implicit m: Manifest[T], system: ActorSystem): TestActorRef[T] = apply[T](randomName)
+  def apply[T <: Actor](implicit t: ClassTag[T], system: ActorSystem): TestActorRef[T] = apply[T](randomName)
 
-  def apply[T <: Actor](name: String)(implicit m: Manifest[T], system: ActorSystem): TestActorRef[T] = apply[T](Props({
-    system.asInstanceOf[ExtendedActorSystem].dynamicAccess.createInstanceFor[T](m.erasure, Seq()) match {
-      case Right(value) ⇒ value
-      case Left(exception) ⇒ throw new ActorInitializationException(null,
+  def apply[T <: Actor](name: String)(implicit t: ClassTag[T], system: ActorSystem): TestActorRef[T] = apply[T](Props({
+    system.asInstanceOf[ExtendedActorSystem].dynamicAccess.createInstanceFor[T](t.runtimeClass, Nil).recover({
+      case exception ⇒ throw ActorInitializationException(null,
         "Could not instantiate Actor" +
           "\nMake sure Actor is NOT defined inside a class/trait," +
           "\nif so put it outside the class/trait, f.e. in a companion object," +
           "\nOR try to change: 'actorOf(Props[MyActor]' to 'actorOf(Props(new MyActor)'.", exception)
-    }
+    }).get
   }), name)
+
+  /**
+   * Java API: create a TestActorRef in the given system for the given props
+   */
+  def create[T <: Actor](system: ActorSystem, props: Props, name: String): TestActorRef[T] = apply(props, name)(system)
 }

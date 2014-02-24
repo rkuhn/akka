@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2010 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.kernel
@@ -9,6 +9,7 @@ import java.io.File
 import java.lang.Boolean.getBoolean
 import java.net.URLClassLoader
 import java.util.jar.JarFile
+import scala.collection.immutable
 import scala.collection.JavaConverters._
 
 /**
@@ -59,9 +60,9 @@ trait Bootable {
  * Main class for running the microkernel.
  */
 object Main {
-  val quiet = getBoolean("akka.kernel.quiet")
+  private val quiet = getBoolean("akka.kernel.quiet")
 
-  def log(s: String) = if (!quiet) println(s)
+  private def log(s: String) = if (!quiet) println(s)
 
   def main(args: Array[String]) = {
     if (args.isEmpty) {
@@ -77,8 +78,8 @@ object Main {
 
     Thread.currentThread.setContextClassLoader(classLoader)
 
-    val bootClasses: Seq[String] = args.toSeq
-    val bootables: Seq[Bootable] = bootClasses map { c ⇒ classLoader.loadClass(c).newInstance.asInstanceOf[Bootable] }
+    val bootClasses: immutable.Seq[String] = args.to[immutable.Seq]
+    val bootables: immutable.Seq[Bootable] = bootClasses map { c ⇒ classLoader.loadClass(c).newInstance.asInstanceOf[Bootable] }
 
     for (bootable ← bootables) {
       log("Starting up " + bootable.getClass.getName)
@@ -90,7 +91,7 @@ object Main {
     log("Successfully started Akka")
   }
 
-  def createClassLoader(): ClassLoader = {
+  private def createClassLoader(): ClassLoader = {
     if (ActorSystem.GlobalHome.isDefined) {
       val home = ActorSystem.GlobalHome.get
       val deploy = new File(home, "deploy")
@@ -106,7 +107,7 @@ object Main {
     }
   }
 
-  def loadDeployJars(deploy: File): ClassLoader = {
+  private def loadDeployJars(deploy: File): ClassLoader = {
     val jars = deploy.listFiles.filter(_.getName.endsWith(".jar"))
 
     val nestedJars = jars flatMap { jar ⇒
@@ -122,7 +123,7 @@ object Main {
     new URLClassLoader(urls, Thread.currentThread.getContextClassLoader)
   }
 
-  def addShutdownHook(bootables: Seq[Bootable]): Unit = {
+  private def addShutdownHook(bootables: immutable.Seq[Bootable]): Unit = {
     Runtime.getRuntime.addShutdownHook(new Thread(new Runnable {
       def run = {
         log("")
@@ -138,7 +139,7 @@ object Main {
     }))
   }
 
-  def banner = """
+  private def banner = """
 ==============================================================================
 
                                                    ZZ:

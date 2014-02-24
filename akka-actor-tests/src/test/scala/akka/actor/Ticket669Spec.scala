@@ -1,7 +1,9 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.actor
+
+import language.postfixOps
 
 import java.util.concurrent.{ CountDownLatch, TimeUnit }
 import akka.actor._
@@ -10,9 +12,9 @@ import akka.testkit.{ TestKit, filterEvents, EventFilter }
 import akka.testkit.AkkaSpec
 import akka.testkit.ImplicitSender
 import akka.testkit.DefaultTimeout
-import akka.dispatch.Await
+import scala.concurrent.Await
 import akka.pattern.ask
-import akka.util.duration._
+import scala.concurrent.duration._
 
 @org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class Ticket669Spec extends AkkaSpec with BeforeAndAfterAll with ImplicitSender with DefaultTimeout {
@@ -57,11 +59,11 @@ object Ticket669Spec {
     }
 
     override def preRestart(reason: scala.Throwable, msg: Option[Any]) {
-      sender.tell("failure1")
+      sender ! "failure1"
     }
 
     override def postStop() {
-      sender.tell("failure2")
+      sender ! "failure2"
     }
   }
 }

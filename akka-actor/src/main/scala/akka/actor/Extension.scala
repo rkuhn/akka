@@ -1,7 +1,9 @@
 /**
- *  Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.actor
+
+import scala.reflect.ClassTag
 
 /**
  * The basic ActorSystem covers all that is needed for locally running actors,
@@ -50,6 +52,9 @@ trait ExtensionId[T <: Extension] {
    * internal use only.
    */
   def createExtension(system: ExtendedActorSystem): T
+
+  override final def hashCode: Int = System.identityHashCode(this)
+  override final def equals(other: Any): Boolean = this eq other.asInstanceOf[AnyRef]
 }
 
 /**
@@ -90,15 +95,12 @@ trait ExtensionIdProvider {
  *   public MyExt(ExtendedActorSystem system) {
  *     ...
  *   }
+ * }
  * }}}
  */
-abstract class ExtensionKey[T <: Extension](implicit m: ClassManifest[T]) extends ExtensionId[T] with ExtensionIdProvider {
-  def this(clazz: Class[T]) = this()(ClassManifest.fromClass(clazz))
+abstract class ExtensionKey[T <: Extension](implicit m: ClassTag[T]) extends ExtensionId[T] with ExtensionIdProvider {
+  def this(clazz: Class[T]) = this()(ClassTag(clazz))
 
   override def lookup(): ExtensionId[T] = this
-  def createExtension(system: ExtendedActorSystem): T =
-    system.dynamicAccess.createInstanceFor[T](m.erasure, Seq(classOf[ExtendedActorSystem] -> system)) match {
-      case Left(ex) ⇒ throw ex
-      case Right(r) ⇒ r
-    }
+  def createExtension(system: ExtendedActorSystem): T = system.dynamicAccess.createInstanceFor[T](m.runtimeClass, List(classOf[ExtendedActorSystem] -> system)).get
 }

@@ -1,24 +1,43 @@
+/**
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.actor
 
-/**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
- */
+import language.existentials
 
+import scala.util.control.NonFatal
+import scala.util.{ Try, Success, Failure }
+import scala.collection.immutable
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.duration.Duration
+import scala.reflect.ClassTag
+import scala.concurrent.{ Await, Future }
 import akka.japi.{ Creator, Option ⇒ JOption }
-import java.lang.reflect.{ InvocationTargetException, Method, InvocationHandler, Proxy }
-import akka.util.{ Timeout, NonFatal }
-import java.util.concurrent.atomic.{ AtomicReference ⇒ AtomVar }
-import akka.serialization.{ Serialization, SerializationExtension }
+import akka.japi.Util.{ immutableSeq, immutableSingletonSeq }
+import akka.util.Timeout
+import akka.util.Reflect.instantiator
+import akka.serialization.{ JavaSerializer, SerializationExtension }
 import akka.dispatch._
+import java.util.concurrent.atomic.{ AtomicReference ⇒ AtomVar }
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.TimeUnit.MILLISECONDS
-import java.lang.IllegalStateException
-import akka.util.Duration
+import java.io.ObjectStreamException
+import java.lang.reflect.{ InvocationTargetException, Method, InvocationHandler, Proxy }
+import akka.pattern.AskTimeoutException
 
+/**
+ * A TypedActorFactory is something that can created TypedActor instances.
+ */
 trait TypedActorFactory {
 
+  /**
+   * Underlying dependency is to be able to create normal Actors
+   */
   protected def actorFactory: ActorRefFactory
 
+  /**
+   * Underlying dependency to a TypedActorExtension, which can either be contextual or ActorSystem "global"
+   */
   protected def typedActor: TypedActorExtension
 
   /**
@@ -78,6 +97,9 @@ trait TypedActorFactory {
 
 }
 
+/**
+ * This represents the TypedActor Akka Extension, access to the functionality is done through a given ActorSystem.
+ */
 object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvider {
   override def get(system: ActorSystem): TypedActorExtension = super.get(system)
 
@@ -107,9 +129,13 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
   case class MethodCall(method: Method, parameters: Array[AnyRef]) {
 
     def isOneWay = method.getReturnType == java.lang.Void.TYPE
-    def returnsFuture_? = classOf[Future[_]].isAssignableFrom(method.getReturnType)
-    def returnsJOption_? = classOf[akka.japi.Option[_]].isAssignableFrom(method.getReturnType)
-    def returnsOption_? = classOf[scala.Option[_]].isAssignableFrom(method.getReturnType)
+    def returnsFuture = classOf[Future[_]] isAssignableFrom method.getReturnType
+    def returnsJOption = classOf[akka.japi.Option[_]] isAssignableFrom method.getReturnType
+    def returnsOption = classOf[scala.Option[_]] isAssignableFrom method.getReturnType
+
+    @deprecated("use returnsFuture instead", "2.2") def returnsFuture_? = returnsFuture
+    @deprecated("use returnsJOption instead", "2.2") def returnsJOption_? = returnsJOption
+    @deprecated("use returnsOption instead", "2.2") def returnsOption_? = returnsOption
 
     /**
      * Invokes the Method on the supplied instance
@@ -124,7 +150,7 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
       }
     } catch { case i: InvocationTargetException ⇒ throw i.getTargetException }
 
-    private def writeReplace(): AnyRef = parameters match {
+    @throws(classOf[ObjectStreamException]) private def writeReplace(): AnyRef = parameters match {
       case null                 ⇒ SerializedMethodCall(method.getDeclaringClass, method.getName, method.getParameterTypes, null)
       case ps if ps.length == 0 ⇒ SerializedMethodCall(method.getDeclaringClass, method.getName, method.getParameterTypes, Array())
       case ps ⇒
@@ -142,13 +168,15 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
   }
 
   /**
+   * INTERNAL API
+   *
    * Represents the serialized form of a MethodCall, uses readResolve and writeReplace to marshall the call
    */
-  case class SerializedMethodCall(ownerType: Class[_], methodName: String, parameterTypes: Array[Class[_]], serializedParameters: Array[(Int, Class[_], Array[Byte])]) {
+  private[akka] case class SerializedMethodCall(ownerType: Class[_], methodName: String, parameterTypes: Array[Class[_]], serializedParameters: Array[(Int, Class[_], Array[Byte])]) {
 
     //TODO implement writeObject and readObject to serialize
     //TODO Possible optimization is to special encode the parameter-types to conserve space
-    private def readResolve(): AnyRef = {
+    @throws(classOf[ObjectStreamException]) private def readResolve(): AnyRef = {
       val system = akka.serialization.JavaSerializer.currentSystem.value
       if (system eq null) throw new IllegalStateException(
         "Trying to deserialize a SerializedMethodCall without an ActorSystem in scope." +
@@ -172,6 +200,9 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
 
   private val selfReference = new ThreadLocal[AnyRef]
   private val currentContext = new ThreadLocal[ActorContext]
+
+  @SerialVersionUID(1L)
+  private case object NullResponse
 
   /**
    * Returns the reference to the proxy when called inside a method call in a TypedActor
@@ -210,17 +241,12 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
   implicit def dispatcher = context.dispatcher
 
   /**
+   * INTERNAL API
+   *
    * Implementation of TypedActor as an Actor
    */
   private[akka] class TypedActor[R <: AnyRef, T <: R](val proxyVar: AtomVar[R], createInstance: ⇒ T) extends Actor {
-    val me = try {
-      TypedActor.selfReference set proxyVar.get
-      TypedActor.currentContext set context
-      createInstance
-    } finally {
-      TypedActor.selfReference set null
-      TypedActor.currentContext set null
-    }
+    val me = withContext[T](createInstance)
 
     override def supervisorStrategy(): SupervisorStrategy = me match {
       case l: Supervisor ⇒ l.supervisorStrategy
@@ -253,7 +279,7 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
     override def preRestart(reason: Throwable, message: Option[Any]): Unit = withContext {
       me match {
         case l: PreRestart ⇒ l.preRestart(reason, message)
-        case _             ⇒ super.preRestart(reason, message)
+        case _             ⇒ context.children foreach context.stop //Can't be super.preRestart(reason, message) since that would invoke postStop which would set the actorVar to DL and proxyVar to null
       }
     }
 
@@ -278,14 +304,17 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
         if (m.isOneWay) m(me)
         else {
           try {
-            if (m.returnsFuture_?) {
-              val s = sender
-              m(me).asInstanceOf[Future[Any]] onComplete {
-                case Left(f)  ⇒ s ! Status.Failure(f)
-                case Right(r) ⇒ s ! r
-              }
-            } else {
-              sender ! m(me)
+            val s = sender
+            m(me) match {
+              case f: Future[_] if m.returnsFuture ⇒
+                implicit val dispatcher = context.dispatcher
+                f onComplete {
+                  case Success(null)   ⇒ s ! NullResponse
+                  case Success(result) ⇒ s ! result
+                  case Failure(f)      ⇒ s ! Status.Failure(f)
+                }
+              case null   ⇒ s ! NullResponse
+              case result ⇒ s ! result
             }
           } catch {
             case NonFatal(e) ⇒
@@ -369,29 +398,55 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
     def postRestart(reason: Throwable): Unit
   }
 
-  private[akka] class TypedActorInvocationHandler(val extension: TypedActorExtension, val actorVar: AtomVar[ActorRef], val timeout: Timeout) extends InvocationHandler {
-    def actor = actorVar.get
+  /**
+   * INTERNAL API
+   */
+  private[akka] class TypedActorInvocationHandler(@transient val extension: TypedActorExtension, @transient val actorVar: AtomVar[ActorRef], @transient val timeout: Timeout) extends InvocationHandler with Serializable {
 
+    def actor = actorVar.get
     @throws(classOf[Throwable])
     def invoke(proxy: AnyRef, method: Method, args: Array[AnyRef]): AnyRef = method.getName match {
       case "toString" ⇒ actor.toString
       case "equals"   ⇒ (args.length == 1 && (proxy eq args(0)) || actor == extension.getActorRefFor(args(0))).asInstanceOf[AnyRef] //Force boxing of the boolean
       case "hashCode" ⇒ actor.hashCode.asInstanceOf[AnyRef]
       case _ ⇒
+        implicit val dispatcher = extension.system.dispatcher
         import akka.pattern.ask
         MethodCall(method, args) match {
-          case m if m.isOneWay        ⇒ actor ! m; null //Null return value
-          case m if m.returnsFuture_? ⇒ ask(actor, m)(timeout)
-          case m if m.returnsJOption_? || m.returnsOption_? ⇒
+          case m if m.isOneWay ⇒
+            actor ! m; null //Null return value
+          case m if m.returnsFuture ⇒ ask(actor, m)(timeout) map {
+            case NullResponse ⇒ null
+            case other        ⇒ other
+          }
+          case m if m.returnsJOption || m.returnsOption ⇒
             val f = ask(actor, m)(timeout)
             (try { Await.ready(f, timeout.duration).value } catch { case _: TimeoutException ⇒ None }) match {
-              case None | Some(Right(null))     ⇒ if (m.returnsJOption_?) JOption.none[Any] else None
-              case Some(Right(joption: AnyRef)) ⇒ joption
-              case Some(Left(ex))               ⇒ throw ex
+              case None | Some(Success(NullResponse)) | Some(Failure(_: AskTimeoutException)) ⇒
+                if (m.returnsJOption) JOption.none[Any] else None
+              case Some(t: Try[_]) ⇒
+                t.get.asInstanceOf[AnyRef]
             }
-          case m ⇒ Await.result(ask(actor, m)(timeout), timeout.duration).asInstanceOf[AnyRef]
+          case m ⇒ Await.result(ask(actor, m)(timeout), timeout.duration) match {
+            case NullResponse ⇒ null
+            case other        ⇒ other.asInstanceOf[AnyRef]
+          }
         }
     }
+    @throws(classOf[ObjectStreamException]) private def writeReplace(): AnyRef = SerializedTypedActorInvocationHandler(actor, timeout.duration)
+  }
+
+  /**
+   * INTERNAL API
+   */
+  private[akka] case class SerializedTypedActorInvocationHandler(val actor: ActorRef, val timeout: FiniteDuration) {
+    @throws(classOf[ObjectStreamException]) private def readResolve(): AnyRef = JavaSerializer.currentSystem.value match {
+      case null ⇒ throw new IllegalStateException("SerializedTypedActorInvocationHandler.readResolve requires that JavaSerializer.currentSystem.value is set to a non-null value")
+      case some ⇒ toTypedActorInvocationHandler(some)
+    }
+
+    def toTypedActorInvocationHandler(system: ActorSystem): TypedActorInvocationHandler =
+      new TypedActorInvocationHandler(TypedActor(system), new AtomVar[ActorRef](actor), new Timeout(timeout))
   }
 }
 
@@ -409,8 +464,8 @@ object TypedProps {
    * @return a sequence of interfaces that the specified class implements,
    * or a sequence containing only itself, if itself is an interface.
    */
-  def extractInterfaces(clazz: Class[_]): Seq[Class[_]] =
-    if (clazz.isInterface) Seq[Class[_]](clazz) else clazz.getInterfaces.toList
+  def extractInterfaces(clazz: Class[_]): immutable.Seq[Class[_]] =
+    if (clazz.isInterface) immutableSingletonSeq(clazz) else immutableSeq(clazz.getInterfaces)
 
   /**
    * Uses the supplied class as the factory for the TypedActor implementation,
@@ -430,7 +485,7 @@ object TypedProps {
    * Scala API
    */
   def apply[T <: AnyRef](interface: Class[_ >: T], implementation: Class[T]): TypedProps[T] =
-    new TypedProps[T](extractInterfaces(interface), () ⇒ implementation.newInstance())
+    new TypedProps[T](extractInterfaces(interface), instantiator(implementation))
 
   /**
    * Uses the supplied thunk as the factory for the TypedActor implementation,
@@ -449,17 +504,17 @@ object TypedProps {
    *
    * Scala API
    */
-  def apply[T <: AnyRef: ClassManifest](): TypedProps[T] =
-    new TypedProps[T](implicitly[ClassManifest[T]].erasure.asInstanceOf[Class[T]])
+  def apply[T <: AnyRef: ClassTag](): TypedProps[T] =
+    new TypedProps[T](implicitly[ClassTag[T]].runtimeClass.asInstanceOf[Class[T]])
 }
 
 /**
  * TypedProps is a TypedActor configuration object, that is thread safe and fully sharable.
  * It's used in TypedActorFactory.typedActorOf to configure a TypedActor instance.
  */
-//TODO add @SerialVersionUID(1L) when SI-4804 is fixed
+@SerialVersionUID(1L)
 case class TypedProps[T <: AnyRef] protected[TypedProps] (
-  interfaces: Seq[Class[_]],
+  interfaces: immutable.Seq[Class[_]],
   creator: () ⇒ T,
   dispatcher: String = TypedProps.defaultDispatcherId,
   deploy: Deploy = Props.defaultDeploy,
@@ -474,31 +529,27 @@ case class TypedProps[T <: AnyRef] protected[TypedProps] (
    */
   def this(implementation: Class[T]) =
     this(interfaces = TypedProps.extractInterfaces(implementation),
-      creator = () ⇒ implementation.newInstance())
+      creator = instantiator(implementation))
 
   /**
-   * Uses the supplied Creator as the factory for the TypedActor implementation,
+   * Java API: Uses the supplied Creator as the factory for the TypedActor implementation,
    * and that has the specified interface,
    * or if the interface class is not an interface, all the interfaces it implements,
    * appended in the sequence of interfaces.
-   *
-   * Java API.
    */
   def this(interface: Class[_ >: T], implementation: Creator[T]) =
     this(interfaces = TypedProps.extractInterfaces(interface),
-      creator = () ⇒ implementation.create())
+      creator = implementation.create _)
 
   /**
-   * Uses the supplied class as the factory for the TypedActor implementation,
+   * Java API: Uses the supplied class as the factory for the TypedActor implementation,
    * and that has the specified interface,
    * or if the interface class is not an interface, all the interfaces it implements,
    * appended in the sequence of interfaces.
-   *
-   * Java API.
    */
   def this(interface: Class[_ >: T], implementation: Class[T]) =
     this(interfaces = TypedProps.extractInterfaces(interface),
-      creator = () ⇒ implementation.newInstance())
+      creator = instantiator(implementation))
 
   /**
    * Returns a new TypedProps with the specified dispatcher set.
@@ -511,15 +562,13 @@ case class TypedProps[T <: AnyRef] protected[TypedProps] (
   def withDeploy(d: Deploy): TypedProps[T] = copy(deploy = d)
 
   /**
-   * @return a new TypedProps that will use the specified ClassLoader to create its proxy class in
+   * Java API: return a new TypedProps that will use the specified ClassLoader to create its proxy class in
    * If loader is null, it will use the bootstrap classloader.
-   *
-   * Java API
    */
   def withLoader(loader: ClassLoader): TypedProps[T] = withLoader(Option(loader))
 
   /**
-   * @return a new TypedProps that will use the specified ClassLoader to create its proxy class in
+   * Scala API: return a new TypedProps that will use the specified ClassLoader to create its proxy class in
    * If loader is null, it will use the bootstrap classloader.
    *
    * Scala API
@@ -527,18 +576,16 @@ case class TypedProps[T <: AnyRef] protected[TypedProps] (
   def withLoader(loader: Option[ClassLoader]): TypedProps[T] = this.copy(loader = loader)
 
   /**
-   * @return a new TypedProps that will use the specified Timeout for its non-void-returning methods,
+   * Java API: return a new TypedProps that will use the specified Timeout for its non-void-returning methods,
    * if null is specified, it will use the default timeout as specified in the configuration.
-   *
-   * Java API
    */
   def withTimeout(timeout: Timeout): TypedProps[T] = this.copy(timeout = Option(timeout))
 
   /**
-   * @return a new TypedProps that will use the specified Timeout for its non-void-returning methods,
+   * Scala API: return a new TypedProps that will use the specified Timeout for its non-void-returning methods,
    * if None is specified, it will use the default timeout as specified in the configuration.
    *
-   * Scala API
+   *
    */
   def withTimeout(timeout: Option[Timeout]): TypedProps[T] = this.copy(timeout = timeout)
 
@@ -557,24 +604,27 @@ case class TypedProps[T <: AnyRef] protected[TypedProps] (
   def withoutInterface(interface: Class[_ >: T]): TypedProps[T] =
     this.copy(interfaces = interfaces diff TypedProps.extractInterfaces(interface))
 
-  import akka.actor.{ Props ⇒ ActorProps }
-  def actorProps(): ActorProps =
-    if (dispatcher == ActorProps().dispatcher) ActorProps()
-    else ActorProps(dispatcher = dispatcher)
+  /**
+   * Returns the akka.actor.Props representation of this TypedProps
+   */
+  def actorProps(): Props = if (dispatcher == Props.default.dispatcher) Props.default else Props(dispatcher = dispatcher)
 }
 
+/**
+ * ContextualTypedActorFactory allows TypedActors to create children, effectively forming the same Actor Supervision Hierarchies
+ * as normal Actors can.
+ */
 case class ContextualTypedActorFactory(typedActor: TypedActorExtension, actorFactory: ActorContext) extends TypedActorFactory {
   override def getActorRefFor(proxy: AnyRef): ActorRef = typedActor.getActorRefFor(proxy)
   override def isTypedActor(proxyOrNot: AnyRef): Boolean = typedActor.isTypedActor(proxyOrNot)
 }
 
-class TypedActorExtension(system: ExtendedActorSystem) extends TypedActorFactory with Extension {
+class TypedActorExtension(val system: ExtendedActorSystem) extends TypedActorFactory with Extension {
   import TypedActor._ //Import the goodies from the companion object
   protected def actorFactory: ActorRefFactory = system
   protected def typedActor = this
 
-  val serialization = SerializationExtension(system)
-  val settings = system.settings
+  import system.settings
 
   /**
    * Default timeout for typed actor methods with non-void return type
@@ -595,32 +645,32 @@ class TypedActorExtension(system: ExtendedActorSystem) extends TypedActorFactory
   def isTypedActor(proxyOrNot: AnyRef): Boolean = invocationHandlerFor(proxyOrNot) ne null
 
   // Private API
-
+  /**
+   * INTERNAL API
+   */
   private[akka] def createActorRefProxy[R <: AnyRef, T <: R](props: TypedProps[T], proxyVar: AtomVar[R], actorRef: ⇒ ActorRef): R = {
     //Warning, do not change order of the following statements, it's some elaborate chicken-n-egg handling
     val actorVar = new AtomVar[ActorRef](null)
-    val classLoader: ClassLoader = if (props.loader.nonEmpty) props.loader.get else props.interfaces.headOption.map(_.getClassLoader).orNull //If we have no loader, we arbitrarily take the loader of the first interface
     val proxy = Proxy.newProxyInstance(
-      classLoader,
+      (props.loader orElse props.interfaces.collectFirst { case any ⇒ any.getClassLoader }).orNull, //If we have no loader, we arbitrarily take the loader of the first interface
       props.interfaces.toArray,
-      new TypedActorInvocationHandler(
-        this,
-        actorVar,
-        if (props.timeout.isDefined) props.timeout.get else DefaultReturnTimeout)).asInstanceOf[R]
+      new TypedActorInvocationHandler(this, actorVar, props.timeout getOrElse DefaultReturnTimeout)).asInstanceOf[R]
 
-    proxyVar match {
-      case null ⇒
-        actorVar.set(actorRef)
-        proxy
-      case _ ⇒
-        proxyVar.set(proxy) // Chicken and egg situation we needed to solve, set the proxy so that we can set the self-reference inside each receive
-        actorVar.set(actorRef) //Make sure the InvocationHandler gets ahold of the actor reference, this is not a problem since the proxy hasn't escaped this method yet
-        proxyVar.get
+    if (proxyVar eq null) {
+      actorVar set actorRef
+      proxy
+    } else {
+      proxyVar set proxy // Chicken and egg situation we needed to solve, set the proxy so that we can set the self-reference inside each receive
+      actorVar set actorRef //Make sure the InvocationHandler gets ahold of the actor reference, this is not a problem since the proxy hasn't escaped this method yet
+      proxyVar.get
     }
   }
 
-  private[akka] def invocationHandlerFor(typedActor_? : AnyRef): TypedActorInvocationHandler =
-    if ((typedActor_? ne null) && Proxy.isProxyClass(typedActor_?.getClass)) typedActor_? match {
+  /**
+   * INTERNAL API
+   */
+  private[akka] def invocationHandlerFor(@deprecatedName('typedActor_?) typedActor: AnyRef): TypedActorInvocationHandler =
+    if ((typedActor ne null) && classOf[Proxy].isAssignableFrom(typedActor.getClass) && Proxy.isProxyClass(typedActor.getClass)) typedActor match {
       case null ⇒ null
       case other ⇒ Proxy.getInvocationHandler(other) match {
         case null                                 ⇒ null

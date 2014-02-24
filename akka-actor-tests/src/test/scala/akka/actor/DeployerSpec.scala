@@ -1,14 +1,16 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
+
+import language.postfixOps
 
 import akka.testkit.AkkaSpec
 import com.typesafe.config.ConfigFactory
 import com.typesafe.config.ConfigParseOptions
 import akka.routing._
-import akka.util.duration._
+import scala.concurrent.duration._
 
 object DeployerSpec {
   val deployerConf = ConfigFactory.parseString("""
@@ -20,7 +22,7 @@ object DeployerSpec {
         }
         /service-direct2 {
           router = from-code
-          # nr-of-instances ignored when router = direct
+          # nr-of-instances ignored when router = from-code
           nr-of-instances = 2
         }
         /service-round-robin {
@@ -32,6 +34,9 @@ object DeployerSpec {
         /service-scatter-gather {
           router = scatter-gather
           within = 2 seconds
+        }
+        /service-consistent-hashing {
+          router = consistent-hashing
         }
         /service-resizer {
           router = round-robin
@@ -96,11 +101,11 @@ class DeployerSpec extends AkkaSpec(DeployerSpec.deployerConf) {
       }
     }
 
-    "be able to parse 'akka.actor.deployment._' with direct router" in {
+    "be able to parse 'akka.actor.deployment._' with from-code router" in {
       assertRouting("/service-direct", NoRouter, "/service-direct")
     }
 
-    "ignore nr-of-instances with direct router" in {
+    "ignore nr-of-instances with from-code router" in {
       assertRouting("/service-direct2", NoRouter, "/service-direct2")
     }
 
@@ -114,6 +119,10 @@ class DeployerSpec extends AkkaSpec(DeployerSpec.deployerConf) {
 
     "be able to parse 'akka.actor.deployment._' with scatter-gather router" in {
       assertRouting("/service-scatter-gather", ScatterGatherFirstCompletedRouter(nrOfInstances = 1, within = 2 seconds), "/service-scatter-gather")
+    }
+
+    "be able to parse 'akka.actor.deployment._' with consistent-hashing router" in {
+      assertRouting("/service-consistent-hashing", ConsistentHashingRouter(1), "/service-consistent-hashing")
     }
 
     "be able to parse 'akka.actor.deployment._' with router resizer" in {

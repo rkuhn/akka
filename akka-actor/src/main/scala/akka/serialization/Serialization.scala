@@ -1,20 +1,17 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.serialization
 
-import akka.AkkaException
-import scala.util.DynamicVariable
 import com.typesafe.config.Config
-import akka.actor.{ Extension, ExtendedActorSystem, Address, DynamicAccess }
+import akka.actor.{ Extension, ExtendedActorSystem, Address }
 import akka.event.Logging
 import java.util.concurrent.ConcurrentHashMap
-import akka.util.NonFatal
 import scala.collection.mutable.ArrayBuffer
 import java.io.NotSerializableException
-
-case class NoSerializerFoundException(m: String) extends AkkaException(m)
+import scala.util.{ Try, DynamicVariable }
+import scala.collection.immutable
 
 object Serialization {
 
@@ -30,17 +27,13 @@ object Serialization {
   val currentTransportAddress = new DynamicVariable[Address](null)
 
   class Settings(val config: Config) {
+    val Serializers: Map[String, String] = configToMap("akka.actor.serializers")
+    val SerializationBindings: Map[String, String] = configToMap("akka.actor.serialization-bindings")
 
-    import scala.collection.JavaConverters._
-    import config._
-
-    val Serializers: Map[String, String] = configToMap(getConfig("akka.actor.serializers"))
-
-    val SerializationBindings: Map[String, String] = configToMap(getConfig("akka.actor.serialization-bindings"))
-
-    private def configToMap(cfg: Config): Map[String, String] =
-      cfg.root.unwrapped.asScala.toMap.map { case (k, v) ⇒ (k, v.toString) }
-
+    private final def configToMap(path: String): Map[String, String] = {
+      import scala.collection.JavaConverters._
+      config.getConfig(path).root.unwrapped.asScala.toMap map { case (k, v) ⇒ (k -> v.toString) }
+    }
   }
 }
 
@@ -58,34 +51,28 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
    * Serializes the given AnyRef/java.lang.Object according to the Serialization configuration
    * to either an Array of Bytes or an Exception if one was thrown.
    */
-  def serialize(o: AnyRef): Either[Throwable, Array[Byte]] =
-    try Right(findSerializerFor(o).toBinary(o))
-    catch { case NonFatal(e) ⇒ Left(e) }
+  def serialize(o: AnyRef): Try[Array[Byte]] = Try(findSerializerFor(o).toBinary(o))
 
   /**
    * Deserializes the given array of bytes using the specified serializer id,
    * using the optional type hint to the Serializer and the optional ClassLoader ot load it into.
    * Returns either the resulting object or an Exception if one was thrown.
    */
-  def deserialize(bytes: Array[Byte],
-                  serializerId: Int,
-                  clazz: Option[Class[_]]): Either[Throwable, AnyRef] =
-    try Right(serializerByIdentity(serializerId).fromBinary(bytes, clazz))
-    catch { case NonFatal(e) ⇒ Left(e) }
+  def deserialize[T](bytes: Array[Byte], serializerId: Int, clazz: Option[Class[_ <: T]]): Try[T] =
+    Try(serializerByIdentity(serializerId).fromBinary(bytes, clazz).asInstanceOf[T])
 
   /**
    * Deserializes the given array of bytes using the specified type to look up what Serializer should be used.
    * You can specify an optional ClassLoader to load the object into.
    * Returns either the resulting object or an Exception if one was thrown.
    */
-  def deserialize(bytes: Array[Byte], clazz: Class[_]): Either[Throwable, AnyRef] =
-    try Right(serializerFor(clazz).fromBinary(bytes, Some(clazz)))
-    catch { case NonFatal(e) ⇒ Left(e) }
+  def deserialize[T](bytes: Array[Byte], clazz: Class[T]): Try[T] =
+    Try(serializerFor(clazz).fromBinary(bytes, Some(clazz)).asInstanceOf[T])
 
   /**
    * Returns the Serializer configured for the given object, returns the NullSerializer if it's null.
    *
-   * @throws akka.config.ConfigurationException if no `serialization-bindings` is configured for the
+   * @throws akka.ConfigurationException if no `serialization-bindings` is configured for the
    *   class of the object
    */
   def findSerializerFor(o: AnyRef): Serializer = o match {
@@ -104,12 +91,11 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
    */
   def serializerFor(clazz: Class[_]): Serializer =
     serializerMap.get(clazz) match {
-      case null ⇒
-        // bindings are ordered from most specific to least specific
-        def unique(possibilities: Seq[(Class[_], Serializer)]): Boolean =
+      case null ⇒ // bindings are ordered from most specific to least specific
+        def unique(possibilities: immutable.Seq[(Class[_], Serializer)]): Boolean =
           possibilities.size == 1 ||
-            (possibilities map (_._1) forall (_ isAssignableFrom possibilities(0)._1)) ||
-            (possibilities map (_._2) forall (_ == possibilities(0)._2))
+            (possibilities forall (_._1 isAssignableFrom possibilities(0)._1)) ||
+            (possibilities forall (_._2 == possibilities(0)._2))
 
         val ser = bindings filter { _._1 isAssignableFrom clazz } match {
           case Seq() ⇒
@@ -120,9 +106,7 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
             possibilities(0)._2
         }
         serializerMap.putIfAbsent(clazz, ser) match {
-          case null ⇒
-            log.debug("Using serializer[{}] for message [{}]", ser.getClass.getName, clazz.getName)
-            ser
+          case null ⇒ log.debug("Using serializer[{}] for message [{}]", ser.getClass.getName, clazz.getName); ser
           case some ⇒ some
         }
       case ser ⇒ ser
@@ -132,53 +116,44 @@ class Serialization(val system: ExtendedActorSystem) extends Extension {
    * Tries to load the specified Serializer by the fully-qualified name; the actual
    * loading is performed by the system’s [[akka.actor.DynamicAccess]].
    */
-  def serializerOf(serializerFQN: String): Either[Throwable, Serializer] =
-    system.dynamicAccess.createInstanceFor[Serializer](serializerFQN, Seq(classOf[ExtendedActorSystem] -> system)).fold(_ ⇒
-      system.dynamicAccess.createInstanceFor[Serializer](serializerFQN, Seq()), Right(_))
+  def serializerOf(serializerFQN: String): Try[Serializer] =
+    system.dynamicAccess.createInstanceFor[Serializer](serializerFQN, List(classOf[ExtendedActorSystem] -> system)) recoverWith {
+      case _ ⇒ system.dynamicAccess.createInstanceFor[Serializer](serializerFQN, Nil)
+    }
 
   /**
    * A Map of serializer from alias to implementation (class implementing akka.serialization.Serializer)
    * By default always contains the following mapping: "java" -> akka.serialization.JavaSerializer
    */
-  private val serializers: Map[String, Serializer] = {
-    for ((k: String, v: String) ← settings.Serializers)
-      yield k -> serializerOf(v).fold(throw _, identity)
-  }
+  private val serializers: Map[String, Serializer] =
+    for ((k: String, v: String) ← settings.Serializers) yield k -> serializerOf(v).get
 
   /**
    *  bindings is a Seq of tuple representing the mapping from Class to Serializer.
    *  It is primarily ordered by the most specific classes first, and secondly in the configured order.
    */
-  private[akka] val bindings: Seq[ClassSerializer] = {
-    val configuredBindings = for ((k: String, v: String) ← settings.SerializationBindings if v != "none") yield {
-      val c = system.dynamicAccess.getClassFor(k).fold(throw _, identity[Class[_]])
-      (c, serializers(v))
-    }
-    sort(configuredBindings)
-  }
+  private[akka] val bindings: immutable.Seq[ClassSerializer] =
+    sort(for ((k: String, v: String) ← settings.SerializationBindings if v != "none") yield (system.dynamicAccess.getClassFor[Any](k).get, serializers(v))).to[immutable.Seq]
 
   /**
    * Sort so that subtypes always precede their supertypes, but without
    * obeying any order between unrelated subtypes (insert sort).
    */
-  private def sort(in: Iterable[ClassSerializer]): Seq[ClassSerializer] =
-    (new ArrayBuffer[ClassSerializer](in.size) /: in) { (buf, ca) ⇒
+  private def sort(in: Iterable[ClassSerializer]): immutable.Seq[ClassSerializer] =
+    ((new ArrayBuffer[ClassSerializer](in.size) /: in) { (buf, ca) ⇒
       buf.indexWhere(_._1 isAssignableFrom ca._1) match {
         case -1 ⇒ buf append ca
         case x  ⇒ buf insert (x, ca)
       }
       buf
-    }
+    }).to[immutable.Seq]
 
   /**
    * serializerMap is a Map whose keys is the class that is serializable and values is the serializer
    * to be used for that class.
    */
-  private val serializerMap: ConcurrentHashMap[Class[_], Serializer] = {
-    val serializerMap = new ConcurrentHashMap[Class[_], Serializer]
-    for ((c, s) ← bindings) serializerMap.put(c, s)
-    serializerMap
-  }
+  private val serializerMap: ConcurrentHashMap[Class[_], Serializer] =
+    (new ConcurrentHashMap[Class[_], Serializer] /: bindings) { case (map, (c, s)) ⇒ map.put(c, s); map }
 
   /**
    * Maps from a Serializer Identity (Int) to a Serializer instance (optimization)

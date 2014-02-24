@@ -1,13 +1,13 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
 
 import akka.testkit._
 import org.scalatest.BeforeAndAfterEach
-import akka.util.duration._
-import akka.dispatch.Await
+import scala.concurrent.duration._
+import scala.concurrent.Await
 import akka.pattern.ask
 
 object ActorFireForgetRequestReplySpec {
@@ -84,11 +84,11 @@ class ActorFireForgetRequestReplySpec extends AkkaSpec with BeforeAndAfterEach w
         val supervisor = system.actorOf(Props(new Supervisor(
           OneForOneStrategy(maxNrOfRetries = 0)(List(classOf[Exception])))))
         val actor = Await.result((supervisor ? Props[CrashingActor]).mapTo[ActorRef], timeout.duration)
-        actor.isTerminated() must be(false)
+        actor.isTerminated must be(false)
         actor ! "Die"
         state.finished.await
-        1.second.dilated.sleep()
-        actor.isTerminated() must be(true)
+        Thread.sleep(1.second.dilated.toMillis)
+        actor.isTerminated must be(true)
         system.stop(supervisor)
       }
     }

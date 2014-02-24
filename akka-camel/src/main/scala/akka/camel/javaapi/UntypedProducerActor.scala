@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.camel.javaapi
@@ -7,11 +7,12 @@ package akka.camel.javaapi
 import akka.actor.UntypedActor
 import akka.camel._
 import org.apache.camel.{ CamelContext, ProducerTemplate }
+import org.apache.camel.impl.DefaultCamelContext
 
 /**
  * Subclass this abstract class to create an untyped producer actor. This class is meant to be used from Java.
  *
- * @author Martin Krasser
+ *
  */
 abstract class UntypedProducerActor extends UntypedActor with ProducerSupport {
   /**
@@ -40,16 +41,14 @@ abstract class UntypedProducerActor extends UntypedActor with ProducerSupport {
   final override def transformResponse(msg: Any): AnyRef = onTransformResponse(msg.asInstanceOf[AnyRef])
   final override def routeResponse(msg: Any): Unit = onRouteResponse(msg.asInstanceOf[AnyRef])
 
-  final override def endpointUri = getEndpointUri
+  final override def endpointUri: String = getEndpointUri
 
-  final override def oneway = isOneway
+  final override def oneway: Boolean = isOneway
 
   /**
    * Default implementation of UntypedActor.onReceive
    */
-  def onReceive(message: Any) {
-    produce(message)
-  }
+  final def onReceive(message: Any): Unit = produce(message)
 
   /**
    * Returns the Camel endpoint URI to produce messages to.
@@ -61,15 +60,22 @@ abstract class UntypedProducerActor extends UntypedActor with ProducerSupport {
    * If set to true, this producer communicates with the Camel endpoint with an in-only message
    * exchange pattern (fire and forget).
    */
-  def isOneway() = super.oneway
+  def isOneway(): Boolean = super.oneway
 
   /**
    * Returns the <code>CamelContext</code>.
    */
-  def getCamelContext(): CamelContext = camel.context
+  def getCamelContext(): DefaultCamelContext = camel.context
 
   /**
    * Returns the <code>ProducerTemplate</code>.
    */
   def getProducerTemplate(): ProducerTemplate = camel.template
+
+  /**
+   * ''Java API'': Returns the [[akka.camel.Activation]] interface
+   * that can be used to wait on activation or de-activation of Camel endpoints.
+   * @return the Activation interface
+   */
+  def getActivation(): Activation = camel
 }

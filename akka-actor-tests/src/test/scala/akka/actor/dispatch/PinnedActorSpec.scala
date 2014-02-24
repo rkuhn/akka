@@ -6,7 +6,8 @@ import akka.testkit._
 import akka.actor.{ Props, Actor }
 import akka.testkit.AkkaSpec
 import org.scalatest.BeforeAndAfterEach
-import akka.dispatch.{ Await, PinnedDispatcher, Dispatchers }
+import akka.dispatch.{ PinnedDispatcher, Dispatchers }
+import scala.concurrent.Await
 import akka.pattern.ask
 
 object PinnedActorSpec {
@@ -35,7 +36,7 @@ class PinnedActorSpec extends AkkaSpec(PinnedActorSpec.config) with BeforeAndAft
 
     "support tell" in {
       var oneWay = new CountDownLatch(1)
-      val actor = system.actorOf(Props(self ⇒ { case "OneWay" ⇒ oneWay.countDown() }).withDispatcher("pinned-dispatcher"))
+      val actor = system.actorOf(Props(new Actor { def receive = { case "OneWay" ⇒ oneWay.countDown() } }).withDispatcher("pinned-dispatcher"))
       val result = actor ! "OneWay"
       assert(oneWay.await(1, TimeUnit.SECONDS))
       system.stop(actor)

@@ -1,12 +1,13 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.camel
 
-import internal.component.ActorEndpointPath
 import akka.actor.ActorRef
+import akka.camel.internal.component.CamelPath
 import org.apache.camel.model.ProcessorDefinition
+import scala.concurrent.duration.Duration
 
 /**
  * Wraps a [[org.apache.camel.model.ProcessorDefinition]].
@@ -23,20 +24,25 @@ import org.apache.camel.model.ProcessorDefinition
  * }}}
  * @param definition the processor definition
  */
-class ActorRouteDefinition(definition: ProcessorDefinition[_]) {
+class ActorRouteDefinition[T <: ProcessorDefinition[T]](definition: ProcessorDefinition[T]) {
   /**
    * Sends the message to an ActorRef endpoint.
-   * @param actorRef the consumer with a default configuration.
+   * @param actorRef the actorRef to the actor.
    * @return the path to the actor, as a camel uri String
    */
-  def to(actorRef: ActorRef) = definition.to(ActorEndpointPath(actorRef).toCamelPath())
+  def to(actorRef: ActorRef): T = definition.to(CamelPath.toUri(actorRef))
 
   /**
    * Sends the message to an ActorRef endpoint
    * @param actorRef the consumer
-   * @param consumerConfig the configuration for the consumer
+   * @param autoAck Determines whether one-way communications between an endpoint and this consumer actor
+   * should be auto-acknowledged or application-acknowledged.
+   * This flag has only effect when exchange is in-only.
+   * @param replyTimeout When endpoint is out-capable (can produce responses) replyTimeout is the maximum time
+   * the endpoint can take to send the response before the message exchange fails. It defaults to 1 minute.
+   * This setting is used for out-capable, in-only, manually acknowledged communication.
    * @return the path to the actor, as a camel uri String
    */
-  def to(actorRef: ActorRef, consumerConfig: ConsumerConfig) = definition.to(ActorEndpointPath(actorRef).toCamelPath(consumerConfig))
+  def to(actorRef: ActorRef, autoAck: Boolean, replyTimeout: Duration): T = definition.to(CamelPath.toUri(actorRef, autoAck, replyTimeout))
 }
 

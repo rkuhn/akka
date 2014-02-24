@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.transactor;
@@ -16,8 +16,8 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.actor.UntypedActor;
 import akka.actor.UntypedActorFactory;
-import akka.dispatch.Await;
-import akka.dispatch.Future;
+import scala.concurrent.Await;
+import scala.concurrent.Future;
 import static akka.pattern.Patterns.ask;
 import akka.testkit.AkkaSpec;
 import akka.testkit.EventFilter;
@@ -25,14 +25,14 @@ import akka.testkit.ErrorFilter;
 import akka.testkit.TestEvent;
 import akka.util.Timeout;
 
-import java.util.Arrays;
+import static akka.japi.Util.immutableSeq;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
 import scala.collection.JavaConverters;
-import scala.collection.Seq;
+import scala.collection.immutable.Seq;
 
 public class UntypedCoordinatedIncrementTest {
   private static ActorSystem system;
@@ -57,7 +57,7 @@ public class UntypedCoordinatedIncrementTest {
   Timeout timeout = new Timeout(timeoutSeconds, TimeUnit.SECONDS);
 
   @Before
-  public void initialise() {
+  public void initialize() {
     counters = new ArrayList<ActorRef>();
     for (int i = 1; i <= numCounters; i++) {
       final String name = "counter" + i;
@@ -75,7 +75,7 @@ public class UntypedCoordinatedIncrementTest {
   public void incrementAllCountersWithSuccessfulTransaction() throws Exception {
     CountDownLatch incrementLatch = new CountDownLatch(numCounters);
     Increment message = new Increment(counters.subList(1, counters.size()), incrementLatch);
-    counters.get(0).tell(new Coordinated(message, timeout));
+    counters.get(0).tell(new Coordinated(message, timeout), null);
     try {
       incrementLatch.await(timeoutSeconds, TimeUnit.SECONDS);
     } catch (InterruptedException exception) {
@@ -97,7 +97,7 @@ public class UntypedCoordinatedIncrementTest {
     List<ActorRef> actors = new ArrayList<ActorRef>(counters);
     actors.add(failer);
     Increment message = new Increment(actors.subList(1, actors.size()), incrementLatch);
-    actors.get(0).tell(new Coordinated(message, timeout));
+    actors.get(0).tell(new Coordinated(message, timeout), null);
     try {
       incrementLatch.await(timeoutSeconds, TimeUnit.SECONDS);
     } catch (InterruptedException exception) {
@@ -110,6 +110,6 @@ public class UntypedCoordinatedIncrementTest {
   }
 
   public <A> Seq<A> seq(A... args) {
-    return JavaConverters.collectionAsScalaIterableConverter(Arrays.asList(args)).asScala().toSeq();
+    return immutableSeq(args);
   }
 }

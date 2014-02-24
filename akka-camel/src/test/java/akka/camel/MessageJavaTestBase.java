@@ -1,12 +1,14 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.camel;
 
 import akka.actor.ActorSystem;
+import akka.dispatch.Mapper;
 import akka.japi.Function;
 import org.apache.camel.NoTypeConversionAvailableException;
+import org.apache.camel.converter.stream.InputStreamCache;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -17,7 +19,7 @@ import java.util.*;
 import static org.junit.Assert.assertEquals;
 
 /**
- * @author Martin Krasser
+ *
  */
 public class MessageJavaTestBase {
     static Camel camel;
@@ -46,12 +48,6 @@ public class MessageJavaTestBase {
     @Test(expected=NoTypeConversionAvailableException.class)
     public void shouldThrowExceptionWhenConvertingDoubleBodyToInputStream() {
         message(1.4).getBodyAs(InputStream.class,camel.context());
-    }
-
-
-    @Test public void shouldReturnDoubleHeader() {
-        CamelMessage message = message("test" , createMap("test", 1.4));
-        assertEquals(1.4, message.getHeader("test"));
     }
 
     @Test public void shouldConvertDoubleHeaderToString() {
@@ -105,22 +101,12 @@ public class MessageJavaTestBase {
             message("test1" , createMap("A", "1")).withHeaders(createMap("C", "3")));
     }
 
-    @Test public void shouldAddHeaderAndPreserveBodyAndHeaders() {
-        assertEquals(
-            message("test1" , createMap("A", "1", "B", "2")),
-            message("test1" , createMap("A", "1")).addHeader("B", "2"));
-    }
-
-    @Test public void shouldAddHeadersAndPreserveBodyAndHeaders() {
-        assertEquals(
-            message("test1" , createMap("A", "1", "B", "2")),
-            message("test1" , createMap("A", "1")).addHeaders(createMap("B", "2")));
-    }
-
-    @Test public void shouldRemoveHeadersAndPreserveBodyAndRemainingHeaders() {
-        assertEquals(
-            message("test1" , createMap("A", "1")),
-            message("test1" , createMap("A", "1", "B", "2")).withoutHeader("B"));
+    @Test
+    public void shouldBeAbleToReReadStreamCacheBody() throws Exception {
+      CamelMessage msg = new CamelMessage(new InputStreamCache("test1".getBytes("utf-8")), empty);
+      assertEquals("test1", msg.getBodyAs(String.class, camel.context()));
+      // re-read
+      assertEquals("test1", msg.getBodyAs(String.class, camel.context()));
     }
 
     private static Set<String> createSet(String... entries) {
@@ -137,7 +123,8 @@ public class MessageJavaTestBase {
         return map;
     }
 
-    private static class TestTransformer implements Function<String, String> {
+    private static class TestTransformer extends Mapper<String, String> {
+        @Override
         public String apply(String param) {
             return param + "b";
         }

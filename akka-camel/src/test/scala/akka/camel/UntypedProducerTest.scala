@@ -1,8 +1,10 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.camel
+
+import language.postfixOps
 
 import org.apache.camel.{ Exchange, Processor }
 import org.apache.camel.builder.RouteBuilder
@@ -11,11 +13,13 @@ import org.apache.camel.component.mock.MockEndpoint
 import akka.camel.TestSupport.SharedCamelSystem
 import akka.actor.Props
 import akka.pattern._
-import akka.dispatch.Await
-import akka.util.duration._
+import scala.concurrent.Await
+import scala.concurrent.duration._
 import org.scalatest._
+import akka.testkit._
+import matchers.MustMatchers
 
-class UntypedProducerTest extends WordSpec with BeforeAndAfterAll with BeforeAndAfterEach with SharedCamelSystem with GivenWhenThen {
+class UntypedProducerTest extends WordSpec with MustMatchers with BeforeAndAfterAll with BeforeAndAfterEach with SharedCamelSystem with GivenWhenThen {
   import UntypedProducerTest._
   val timeout = 1 second
   override protected def beforeAll = {
@@ -29,53 +33,43 @@ class UntypedProducerTest extends WordSpec with BeforeAndAfterAll with BeforeAnd
   "An UntypedProducer producing a message to a sync Camel route" must {
 
     "produce a message and receive a normal response" in {
-      given("a registered two-way producer")
-      val producer = system.actorOf(Props[SampleUntypedReplyingProducer])
+      val producer = system.actorOf(Props[SampleUntypedReplyingProducer], name = "sample-untyped-replying-producer")
 
-      when("a test message is sent to the producer with ask")
       val message = CamelMessage("test", Map(CamelMessage.MessageExchangeId -> "123"))
       val future = producer.ask(message)(timeout)
-      then("a normal response should have been returned by the producer")
+
       val expected = CamelMessage("received test", Map(CamelMessage.MessageExchangeId -> "123"))
       Await.result(future, timeout) match {
-        case result: CamelMessage ⇒ assert(result === expected)
+        case result: CamelMessage ⇒ result must be(expected)
         case unexpected           ⇒ fail("Actor responded with unexpected message:" + unexpected)
       }
 
     }
 
     "produce a message and receive a failure response" in {
-      given("a registered two-way producer")
-      val producer = system.actorOf(Props[SampleUntypedReplyingProducer])
+      val producer = system.actorOf(Props[SampleUntypedReplyingProducer], name = "sample-untyped-replying-producer-failure")
 
-      when("a test message causing an exception is sent to the producer with ask")
       val message = CamelMessage("fail", Map(CamelMessage.MessageExchangeId -> "123"))
-      val future = producer.ask(message)(timeout)
-      then("a failure response should have been returned by the producer")
-      Await.result(future, timeout) match {
-        case result: Failure ⇒ {
-          val expectedFailureText = result.cause.getMessage
-          val expectedHeaders = result.headers
-          assert(expectedFailureText === "failure")
-          assert(expectedHeaders === Map(CamelMessage.MessageExchangeId -> "123"))
+      filterEvents(EventFilter[AkkaCamelException](occurrences = 1)) {
+        val future = producer.ask(message)(timeout).failed
+
+        Await.result(future, timeout) match {
+          case e: AkkaCamelException ⇒
+            e.getMessage must be("failure")
+            e.headers must be(Map(CamelMessage.MessageExchangeId -> "123"))
+          case unexpected ⇒ fail("Actor responded with unexpected message:" + unexpected)
         }
-        case unexpected ⇒ fail("Actor responded with unexpected message:" + unexpected)
       }
     }
-
   }
 
   "An UntypedProducer producing a message to a sync Camel route and then forwarding the response" must {
 
     "produce a message and send a normal response to direct:forward-test-1" in {
-      given("a registered one-way producer configured with a forward target")
-      val producer = system.actorOf(Props[SampleUntypedForwardingProducer])
+      val producer = system.actorOf(Props[SampleUntypedForwardingProducer], name = "sample-untyped-forwarding-producer")
 
-      when("a test message is sent to the producer with !")
       mockEndpoint.expectedBodiesReceived("received test")
-      val result = producer.tell(CamelMessage("test", Map[String, Any]()), producer)
-
-      then("a normal response should have been sent")
+      producer.tell(CamelMessage("test", Map[String, Any]()), producer)
       mockEndpoint.assertIsSatisfied
     }
 

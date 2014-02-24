@@ -1,150 +1,25 @@
 /**
- * Copyright (C) 2009-2010 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.remote
 
-import scala.reflect.BeanProperty
-import akka.dispatch.SystemMessage
-import akka.event.{ LoggingAdapter, Logging }
 import akka.AkkaException
-import akka.serialization.Serialization
-import akka.remote.RemoteProtocol._
-import akka.dispatch.ChildTerminated
 import akka.actor._
+import akka.event.LoggingAdapter
+import scala.collection.immutable
+import scala.concurrent.Future
 
 /**
- * Remote life-cycle events.
+ * RemoteTransportException represents a general failure within a RemoteTransport,
+ * such as inability to start, wrong configuration etc.
  */
-sealed trait RemoteLifeCycleEvent extends Serializable {
-  def logLevel: Logging.LogLevel
-}
-
-/**
- * Life-cycle events for RemoteClient.
- */
-trait RemoteClientLifeCycleEvent extends RemoteLifeCycleEvent {
-  def remoteAddress: Address
-}
-
-case class RemoteClientError(
-  @BeanProperty cause: Throwable,
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty remoteAddress: Address) extends RemoteClientLifeCycleEvent {
-  override def logLevel = Logging.ErrorLevel
-  override def toString =
-    "RemoteClientError@" + remoteAddress + ": Error[" + cause + "]"
-}
-
-case class RemoteClientDisconnected(
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty remoteAddress: Address) extends RemoteClientLifeCycleEvent {
-  override def logLevel = Logging.DebugLevel
-  override def toString =
-    "RemoteClientDisconnected@" + remoteAddress
-}
-
-case class RemoteClientConnected(
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty remoteAddress: Address) extends RemoteClientLifeCycleEvent {
-  override def logLevel = Logging.DebugLevel
-  override def toString =
-    "RemoteClientConnected@" + remoteAddress
-}
-
-case class RemoteClientStarted(
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty remoteAddress: Address) extends RemoteClientLifeCycleEvent {
-  override def logLevel = Logging.InfoLevel
-  override def toString =
-    "RemoteClientStarted@" + remoteAddress
-}
-
-case class RemoteClientShutdown(
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty remoteAddress: Address) extends RemoteClientLifeCycleEvent {
-  override def logLevel = Logging.InfoLevel
-  override def toString =
-    "RemoteClientShutdown@" + remoteAddress
-}
-
-case class RemoteClientWriteFailed(
-  @BeanProperty request: AnyRef,
-  @BeanProperty cause: Throwable,
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty remoteAddress: Address) extends RemoteClientLifeCycleEvent {
-  override def logLevel = Logging.WarningLevel
-  override def toString =
-    "RemoteClientWriteFailed@" + remoteAddress +
-      ": MessageClass[" + (if (request ne null) request.getClass.getName else "no message") +
-      "] Error[" + cause + "]"
-}
-
-/**
- *  Life-cycle events for RemoteServer.
- */
-trait RemoteServerLifeCycleEvent extends RemoteLifeCycleEvent
-
-case class RemoteServerStarted(
-  @transient @BeanProperty remote: RemoteTransport) extends RemoteServerLifeCycleEvent {
-  override def logLevel = Logging.InfoLevel
-  override def toString =
-    "RemoteServerStarted@" + remote
-}
-
-case class RemoteServerShutdown(
-  @transient @BeanProperty remote: RemoteTransport) extends RemoteServerLifeCycleEvent {
-  override def logLevel = Logging.InfoLevel
-  override def toString =
-    "RemoteServerShutdown@" + remote
-}
-
-case class RemoteServerError(
-  @BeanProperty val cause: Throwable,
-  @transient @BeanProperty remote: RemoteTransport) extends RemoteServerLifeCycleEvent {
-  override def logLevel = Logging.ErrorLevel
-  override def toString =
-    "RemoteServerError@" + remote + "] Error[" + cause + "]"
-}
-
-case class RemoteServerClientConnected(
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty val clientAddress: Option[Address]) extends RemoteServerLifeCycleEvent {
-  override def logLevel = Logging.DebugLevel
-  override def toString =
-    "RemoteServerClientConnected@" + remote +
-      ": Client[" + clientAddress.getOrElse("no address") + "]"
-}
-
-case class RemoteServerClientDisconnected(
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty val clientAddress: Option[Address]) extends RemoteServerLifeCycleEvent {
-  override def logLevel = Logging.DebugLevel
-  override def toString =
-    "RemoteServerClientDisconnected@" + remote +
-      ": Client[" + clientAddress.getOrElse("no address") + "]"
-}
-
-case class RemoteServerClientClosed(
-  @transient @BeanProperty remote: RemoteTransport,
-  @BeanProperty val clientAddress: Option[Address]) extends RemoteServerLifeCycleEvent {
-  override def logLevel = Logging.DebugLevel
-  override def toString =
-    "RemoteServerClientClosed@" + remote +
-      ": Client[" + clientAddress.getOrElse("no address") + "]"
-}
-
-/**
- * Thrown for example when trying to send a message using a RemoteClient that is either not started or shut down.
- */
-class RemoteClientException private[akka] (
-  message: String,
-  @transient @BeanProperty val client: RemoteTransport,
-  val remoteAddress: Address, cause: Throwable = null) extends AkkaException(message, cause)
-
+@SerialVersionUID(1L)
 class RemoteTransportException(message: String, cause: Throwable) extends AkkaException(message, cause)
 
 /**
+ * INTERNAL API
+ *
  * The remote transport is responsible for sending and receiving messages.
  * Each transport has an address, which it should provide in
  * Serialization.currentTransportAddress (thread-local) while serializing
@@ -152,16 +27,29 @@ class RemoteTransportException(message: String, cause: Throwable) extends AkkaEx
  * be available (i.e. fully initialized) by the time the first message is
  * received or when the start() method returns, whatever happens first.
  */
-abstract class RemoteTransport(val system: ExtendedActorSystem, val provider: RemoteActorRefProvider) {
+private[akka] abstract class RemoteTransport(val system: ExtendedActorSystem, val provider: RemoteActorRefProvider) {
   /**
    * Shuts down the remoting
    */
-  def shutdown(): Unit
+  def shutdown(): Future[Unit]
 
   /**
    * Address to be used in RootActorPath of refs generated for this transport.
    */
-  def address: Address
+  def addresses: immutable.Set[Address]
+
+  /**
+   * The default transport address of the actorsystem
+   * @return The listen address of the default transport
+   */
+  def defaultAddress: Address
+
+  /**
+   * Resolves the correct local address to be used for contacting the given remote address
+   * @param remote the remote address
+   * @return the local address to be used for the given remote address
+   */
+  def localAddressForRemote(remote: Address): Address
 
   /**
    * Start up the transport, i.e. enable incoming connections.
@@ -169,123 +57,31 @@ abstract class RemoteTransport(val system: ExtendedActorSystem, val provider: Re
   def start(): Unit
 
   /**
-   * Shuts down a specific client connected to the supplied remote address returns true if successful
+   * Sends the given message to the recipient supplying the sender if any
    */
-  def shutdownClientConnection(address: Address): Boolean
+  def send(message: Any, senderOption: Option[ActorRef], recipient: RemoteActorRef): Unit
 
   /**
-   * Restarts a specific client connected to the supplied remote address, but only if the client is not shut down
+   * Sends a management command to the underlying transport stack. The call returns with a Future that indicates
+   * if the command was handled successfully or dropped.
+   * @param cmd Command message to send to the transports.
+   * @return A Future that indicates when the message was successfully handled or dropped.
    */
-  def restartClientConnection(address: Address): Boolean
+  def managementCommand(cmd: Any): Future[Boolean] = { Future.successful(false) }
 
-  /** Methods that needs to be implemented by a transport **/
-
-  def send(message: Any,
-           senderOption: Option[ActorRef],
-           recipient: RemoteActorRef): Unit
-
-  def notifyListeners(message: RemoteLifeCycleEvent): Unit = {
-    system.eventStream.publish(message)
-    system.log.log(message.logLevel, "{}", message)
-  }
-
-  override def toString = address.toString
-}
-
-class RemoteMessage(input: RemoteMessageProtocol, system: ExtendedActorSystem) {
-
-  def originalReceiver = input.getRecipient.getPath
-
-  lazy val sender: ActorRef =
-    if (input.hasSender) system.provider.actorFor(system.provider.rootGuardian, input.getSender.getPath)
-    else system.deadLetters
-
-  lazy val recipient: InternalActorRef = system.provider.actorFor(system.provider.rootGuardian, originalReceiver)
-
-  lazy val payload: AnyRef = MessageSerializer.deserialize(system, input.getMessage)
-
-  override def toString = "RemoteMessage: " + payload + " to " + recipient + "<+{" + originalReceiver + "} from " + sender
-}
-
-trait RemoteMarshallingOps {
-
+  /**
+   * A Logger that can be used to log issues that may occur
+   */
   def log: LoggingAdapter
 
-  def system: ExtendedActorSystem
-
-  def provider: RemoteActorRefProvider
-
-  def address: Address
-
+  /**
+   * When this method returns true, some functionality will be turned off for security purposes.
+   */
   protected def useUntrustedMode: Boolean
 
-  def createMessageSendEnvelope(rmp: RemoteMessageProtocol): AkkaRemoteProtocol = {
-    val arp = AkkaRemoteProtocol.newBuilder
-    arp.setMessage(rmp)
-    arp.build
-  }
-
-  def createControlEnvelope(rcp: RemoteControlProtocol): AkkaRemoteProtocol = {
-    val arp = AkkaRemoteProtocol.newBuilder
-    arp.setInstruction(rcp)
-    arp.build
-  }
-
   /**
-   * Serializes the ActorRef instance into a Protocol Buffers (protobuf) Message.
+   * When this method returns true, RemoteLifeCycleEvents will be logged as well as be put onto the eventStream.
    */
-  def toRemoteActorRefProtocol(actor: ActorRef): ActorRefProtocol = {
-    ActorRefProtocol.newBuilder.setPath(actor.path.toStringWithAddress(address)).build
-  }
+  protected def logRemoteLifeCycleEvents: Boolean
 
-  def createRemoteMessageProtocolBuilder(
-    recipient: ActorRef,
-    message: Any,
-    senderOption: Option[ActorRef]): RemoteMessageProtocol.Builder = {
-
-    val messageBuilder = RemoteMessageProtocol.newBuilder.setRecipient(toRemoteActorRefProtocol(recipient))
-    if (senderOption.isDefined) messageBuilder.setSender(toRemoteActorRefProtocol(senderOption.get))
-
-    Serialization.currentTransportAddress.withValue(address) {
-      messageBuilder.setMessage(MessageSerializer.serialize(system, message.asInstanceOf[AnyRef]))
-    }
-
-    messageBuilder
-  }
-
-  def receiveMessage(remoteMessage: RemoteMessage) {
-    val remoteDaemon = provider.remoteDaemon
-
-    remoteMessage.recipient match {
-      case `remoteDaemon` ⇒
-        if (provider.remoteSettings.LogReceive) log.debug("received daemon message {}", remoteMessage)
-        remoteMessage.payload match {
-          case m @ (_: DaemonMsg | _: Terminated) ⇒
-            try remoteDaemon ! m catch {
-              case e: Exception ⇒ log.error(e, "exception while processing remote command {} from {}", m, remoteMessage.sender)
-            }
-          case x ⇒ log.warning("remoteDaemon received illegal message {} from {}", x, remoteMessage.sender)
-        }
-      case l: LocalRef ⇒
-        if (provider.remoteSettings.LogReceive) log.debug("received local message {}", remoteMessage)
-        remoteMessage.payload match {
-          case msg: SystemMessage ⇒
-            if (useUntrustedMode)
-              throw new SecurityException("RemoteModule server is operating is untrusted mode, can not send system message")
-            else l.sendSystemMessage(msg)
-          case _: AutoReceivedMessage if (useUntrustedMode) ⇒
-            throw new SecurityException("RemoteModule server is operating is untrusted mode, can not pass on a AutoReceivedMessage to the remote actor")
-          case m ⇒ l.!(m)(remoteMessage.sender)
-        }
-      case r: RemoteRef ⇒
-        if (provider.remoteSettings.LogReceive) log.debug("received remote-destined message {}", remoteMessage)
-        remoteMessage.originalReceiver match {
-          case AddressFromURIString(address) if address == provider.transport.address ⇒
-            // if it was originally addressed to us but is in fact remote from our point of view (i.e. remote-deployed)
-            r.!(remoteMessage.payload)(remoteMessage.sender)
-          case r ⇒ log.error("dropping message {} for non-local recipient {} arriving at {} inbound address is {}", remoteMessage.payload, r, address, provider.transport.address)
-        }
-      case r ⇒ log.error("dropping message {} for non-local recipient {} arriving at {} inbound address is {}", remoteMessage.payload, r, address, provider.transport.address)
-    }
-  }
 }

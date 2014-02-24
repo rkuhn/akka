@@ -1,14 +1,16 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.actor
+
+import language.postfixOps
 
 import akka.testkit._
 import akka.testkit.DefaultTimeout
 import akka.testkit.TestEvent._
-import akka.dispatch.Await
+import scala.concurrent.Await
 import akka.pattern.ask
-import akka.util.duration._
+import scala.concurrent.duration._
 import com.typesafe.config.{ Config, ConfigFactory }
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.junit.JUnitSuite
@@ -131,7 +133,7 @@ class ActorWithStashSpec extends AkkaSpec(ActorWithStashSpec.testConf) with Defa
       val hasMsgLatch = new TestLatch
 
       val slaveProps = myProps(new Actor with Stash {
-        protected def receive = {
+        def receive = {
           case "crash" ⇒
             throw new Exception("Crashing...")
 

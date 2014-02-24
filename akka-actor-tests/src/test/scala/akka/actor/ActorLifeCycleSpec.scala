@@ -1,18 +1,21 @@
 /**
- * Copyright (C) 2009-2011 Scalable Solutions AB <http://scalablesolutions.se>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
+
+import language.postfixOps
 
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.matchers.MustMatchers
 
 import akka.actor.Actor._
 import akka.testkit._
-import akka.util.duration._
+import scala.concurrent.duration._
 import java.util.concurrent.atomic._
-import akka.dispatch.Await
+import scala.concurrent.Await
 import akka.pattern.ask
+import java.util.UUID.{ randomUUID ⇒ newUuid }
 
 object ActorLifeCycleSpec {
 
@@ -35,7 +38,7 @@ class ActorLifeCycleSpec extends AkkaSpec with BeforeAndAfterEach with ImplicitS
 
     "invoke preRestart, preStart, postRestart when using OneForOneStrategy" in {
       filterException[ActorKilledException] {
-        val id = newUuid().toString
+        val id = newUuid.toString
         val supervisor = system.actorOf(Props(new Supervisor(
           OneForOneStrategy(maxNrOfRetries = 3)(List(classOf[Exception])))))
         val gen = new AtomicInteger(0)
@@ -114,6 +117,40 @@ class ActorLifeCycleSpec extends AkkaSpec with BeforeAndAfterEach with ImplicitS
       expectMsg(("postStop", id, 0))
       expectNoMsg(1 seconds)
       system.stop(supervisor)
+    }
+
+    "log failues in postStop" in {
+      val a = system.actorOf(Props(new Actor {
+        def receive = Actor.emptyBehavior
+        override def postStop { throw new Exception("hurrah") }
+      }))
+      EventFilter[Exception]("hurrah", occurrences = 1) intercept {
+        a ! PoisonPill
+      }
+    }
+
+    "clear the behavior stack upon restart" in {
+      case class Become(recv: ActorContext ⇒ Receive)
+      val a = system.actorOf(Props(new Actor {
+        def receive = {
+          case Become(beh) ⇒ context.become(beh(context), discardOld = false); sender ! "ok"
+          case x           ⇒ sender ! 42
+        }
+      }))
+      a ! "hello"
+      expectMsg(42)
+      a ! Become(ctx ⇒ {
+        case "fail" ⇒ throw new RuntimeException("buh")
+        case x      ⇒ ctx.sender ! 43
+      })
+      expectMsg("ok")
+      a ! "hello"
+      expectMsg(43)
+      EventFilter[RuntimeException]("buh", occurrences = 1) intercept {
+        a ! "fail"
+      }
+      a ! "hello"
+      expectMsg(42)
     }
   }
 

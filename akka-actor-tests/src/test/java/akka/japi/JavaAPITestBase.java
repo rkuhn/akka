@@ -1,6 +1,11 @@
 package akka.japi;
 
+import akka.actor.ExtendedActorSystem;
+import akka.event.LoggingAdapter;
+import akka.event.NoLogging;
+import akka.serialization.JavaSerializer;
 import org.junit.Test;
+import java.util.concurrent.Callable;
 
 import static org.junit.Assert.*;
 
@@ -45,5 +50,20 @@ public class JavaAPITestBase {
   @Test
   public void shouldBeSingleton() {
     assertSame(Option.none(), Option.none());
+  }
+
+  @Test
+  public void mustBeAbleToGetNoLogging() {
+      LoggingAdapter a = NoLogging.getInstance();
+      assertNotNull(a);
+  }
+    
+  @Test
+  public void mustBeAbleToUseCurrentSystem() {
+      assertNull(JavaSerializer.currentSystem().withValue(null, new Callable<ExtendedActorSystem>() {
+          public ExtendedActorSystem call() {
+              return JavaSerializer.currentSystem().value();
+          }
+      }));
   }
 }

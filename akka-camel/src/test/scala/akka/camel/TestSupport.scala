@@ -1,22 +1,29 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.camel
 
-import akka.actor.{ Props, ActorSystem, Actor }
-import akka.util.duration._
+import language.postfixOps
+import language.implicitConversions
+
+import scala.concurrent.duration._
 import java.util.concurrent.{ TimeoutException, ExecutionException, TimeUnit }
 import org.scalatest.{ BeforeAndAfterEach, BeforeAndAfterAll, Suite }
 import org.scalatest.matchers.{ BePropertyMatcher, BePropertyMatchResult }
-import akka.util.{ FiniteDuration, Duration }
+import scala.reflect.ClassTag
+import akka.actor.{ ActorRef, Props, ActorSystem, Actor }
+import scala.concurrent.Await
+import akka.util.Timeout
+import akka.testkit.AkkaSpec
 
 private[camel] object TestSupport {
+  def start(actor: ⇒ Actor, name: String)(implicit system: ActorSystem, timeout: Timeout): ActorRef =
+    Await.result(CamelExtension(system).activationFutureFor(system.actorOf(Props(actor), name))(timeout, system.dispatcher), timeout.duration)
 
-  def start(actor: ⇒ Actor)(implicit system: ActorSystem) = {
-    val actorRef = system.actorOf(Props(actor))
-    CamelExtension(system).awaitActivation(actorRef, 1 second)
-    actorRef
+  def stop(actorRef: ActorRef)(implicit system: ActorSystem, timeout: Timeout) {
+    system.stop(actorRef)
+    Await.result(CamelExtension(system).deactivationFutureFor(actorRef)(timeout, system.dispatcher), timeout.duration)
   }
 
   private[camel] implicit def camelToTestWrapper(camel: Camel) = new CamelTestWrapper(camel)
@@ -32,21 +39,16 @@ private[camel] object TestSupport {
         camel.template.asyncRequestBody(to, msg).get(timeout.toNanos, TimeUnit.NANOSECONDS)
       } catch {
         case e: ExecutionException ⇒ throw e.getCause
-        case e: TimeoutException   ⇒ throw new AssertionError("Failed to get response to message [%s], send to endpoint [%s], within [%s]" format (msg, to, timeout), e)
+        case e: TimeoutException   ⇒ throw new AssertionError("Failed to get response to message [%s], send to endpoint [%s], within [%s]".format(msg, to, timeout))
       }
     }
 
     def routeCount = camel.context.getRoutes().size()
-  }
-
-  @deprecated
-  trait MessageSugar {
-    def Message(body: Any) = akka.camel.CamelMessage(body, Map.empty)
-    def Message(body: Any, headers: Map[String, Any]) = akka.camel.CamelMessage(body, headers)
+    def routes = camel.context.getRoutes
   }
 
   trait SharedCamelSystem extends BeforeAndAfterAll { this: Suite ⇒
-    implicit lazy val system = ActorSystem("test")
+    implicit lazy val system = ActorSystem("test", AkkaSpec.testConf)
     implicit lazy val camel = CamelExtension(system)
 
     abstract override protected def afterAll() {
@@ -61,7 +63,7 @@ private[camel] object TestSupport {
 
     override protected def beforeEach() {
       super.beforeEach()
-      system = ActorSystem("test")
+      system = ActorSystem("test", AkkaSpec.testConf)
       camel = CamelExtension(system)
     }
 
@@ -72,14 +74,14 @@ private[camel] object TestSupport {
 
   }
   def time[A](block: ⇒ A): FiniteDuration = {
-    val start = System.currentTimeMillis()
+    val start = System.nanoTime()
     block
-    val duration = System.currentTimeMillis() - start
-    duration millis
+    val duration = System.nanoTime() - start
+    duration nanos
   }
 
-  def anInstanceOf[T](implicit manifest: Manifest[T]) = {
-    val clazz = manifest.erasure.asInstanceOf[Class[T]]
+  def anInstanceOf[T](implicit tag: ClassTag[T]) = {
+    val clazz = tag.runtimeClass.asInstanceOf[Class[T]]
     new BePropertyMatcher[AnyRef] {
       def apply(left: AnyRef) = BePropertyMatchResult(
         clazz.isAssignableFrom(left.getClass),

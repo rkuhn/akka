@@ -1,11 +1,13 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.actor
 
+import language.postfixOps
+
 import akka.testkit._
-import akka.util.duration._
-import akka.dispatch.Await
+import scala.concurrent.duration._
+import scala.concurrent.Await
 import akka.pattern.ask
 import java.net.MalformedURLException
 
@@ -69,9 +71,31 @@ class ActorLookupSpec extends AkkaSpec with DefaultTimeout {
     }
 
     "find actors by looking up their string representation" in {
+      // this is only true for local actor references
       system.actorFor(c1.path.toString) must be === c1
       system.actorFor(c2.path.toString) must be === c2
       system.actorFor(c21.path.toString) must be === c21
+    }
+
+    "take actor incarnation into account when comparing actor references" in {
+      val name = "abcdefg"
+      val a1 = system.actorOf(p, name)
+      watch(a1)
+      a1 ! PoisonPill
+      expectMsgType[Terminated].actor must be === a1
+
+      // not equal because it's terminated
+      system.actorFor(a1.path.toString) must not be (a1)
+
+      val a2 = system.actorOf(p, name)
+      a2.path must be(a1.path)
+      a2.path.toString must be(a1.path.toString)
+      a2 must not be (a1)
+      a2.toString must not be (a1.toString)
+
+      watch(a2)
+      a2 ! PoisonPill
+      expectMsgType[Terminated].actor must be === a2
     }
 
     "find actors by looking up their root-anchored relative path" in {
@@ -132,14 +156,14 @@ class ActorLookupSpec extends AkkaSpec with DefaultTimeout {
       system.actorFor(a.path.toString) must be === a
       system.actorFor(a.path.elements) must be === a
       system.actorFor(a.path.toString + "/") must be === a
-      system.actorFor(a.path.toString + "/hallo").isTerminated() must be === true
-      f.isCompleted() must be === false
-      a.isTerminated() must be === false
+      system.actorFor(a.path.toString + "/hallo").isTerminated must be === true
+      f.isCompleted must be === false
+      a.isTerminated must be === false
       a ! 42
-      f.isCompleted() must be === true
+      f.isCompleted must be === true
       Await.result(f, timeout.duration) must be === 42
       // clean-up is run as onComplete callback, i.e. dispatched on another thread
-      awaitCond(system.actorFor(a.path).isTerminated(), 1 second)
+      awaitCond(system.actorFor(a.path).isTerminated, 1 second)
     }
 
   }
@@ -161,6 +185,9 @@ class ActorLookupSpec extends AkkaSpec with DefaultTimeout {
     "find actors by looking up their string representation" in {
       def check(looker: ActorRef, pathOf: ActorRef, result: ActorRef) {
         Await.result(looker ? LookupString(pathOf.path.toString), timeout.duration) must be === result
+        // with uid
+        Await.result(looker ? LookupString(pathOf.path.toSerializationFormat), timeout.duration) must be === result
+        // with trailing /
         Await.result(looker ? LookupString(pathOf.path.toString + "/"), timeout.duration) must be === result
       }
       for {
@@ -247,13 +274,13 @@ class ActorLookupSpec extends AkkaSpec with DefaultTimeout {
       Await.result(c2 ? LookupString("../../" + a.path.elements.mkString("/") + "/"), timeout.duration) must be === a
       Await.result(c2 ? LookupElems(Seq("..", "..") ++ a.path.elements), timeout.duration) must be === a
       Await.result(c2 ? LookupElems(Seq("..", "..") ++ a.path.elements :+ ""), timeout.duration) must be === a
-      f.isCompleted() must be === false
-      a.isTerminated() must be === false
+      f.isCompleted must be === false
+      a.isTerminated must be === false
       a ! 42
-      f.isCompleted() must be === true
+      f.isCompleted must be === true
       Await.result(f, timeout.duration) must be === 42
       // clean-up is run as onComplete callback, i.e. dispatched on another thread
-      awaitCond(Await.result(c2 ? LookupPath(a.path), timeout.duration).asInstanceOf[ActorRef].isTerminated(), 1 second)
+      awaitCond(Await.result(c2 ? LookupPath(a.path), timeout.duration).asInstanceOf[ActorRef].isTerminated, 1 second)
     }
 
   }

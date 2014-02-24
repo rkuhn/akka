@@ -1,13 +1,14 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.event
 
+import language.postfixOps
+
 import org.scalatest.{ BeforeAndAfterAll, BeforeAndAfterEach }
-import akka.util.duration._
+import scala.concurrent.duration._
 import akka.testkit._
 import org.scalatest.WordSpec
-import akka.util.Duration
 import com.typesafe.config.ConfigFactory
 import scala.collection.JavaConverters._
 import java.util.Properties
@@ -137,7 +138,7 @@ class LoggingReceiveSpec extends WordSpec with BeforeAndAfterEach with BeforeAnd
         expectMsgPF() {
           case Logging.Debug(`name`, _, msg: String) if msg startsWith "received AutoReceiveMessage Envelope(PoisonPill" ⇒ true
         }
-        awaitCond(actor.isTerminated(), 100 millis)
+        awaitCond(actor.isTerminated, 100 millis)
       }
     }
 
@@ -191,9 +192,9 @@ class LoggingReceiveSpec extends WordSpec with BeforeAndAfterEach with BeforeAnd
           EventFilter[ActorKilledException](occurrences = 1) intercept {
             actor ! Kill
             val set = receiveWhile(messages = 3) {
-              case Logging.Error(_: ActorKilledException, `aname`, `aclass`, "Kill") ⇒ 1
-              case Logging.Debug(`aname`, `aclass`, "restarting")                    ⇒ 2
-              case Logging.Debug(`aname`, `aclass`, "restarted")                     ⇒ 3
+              case Logging.Error(_: ActorKilledException, `aname`, _, "Kill") ⇒ 1
+              case Logging.Debug(`aname`, `aclass`, "restarting")             ⇒ 2
+              case Logging.Debug(`aname`, `aclass`, "restarted")              ⇒ 3
             }.toSet
             expectNoMsg(Duration.Zero)
             assert(set == Set(1, 2, 3), set + " was not Set(1, 2, 3)")

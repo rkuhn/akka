@@ -1,20 +1,21 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
 
+import language.postfixOps
+
 import java.lang.Thread.sleep
 import org.scalatest.BeforeAndAfterAll
-import akka.dispatch.Await
+import scala.concurrent.Await
 import akka.testkit.TestEvent._
 import akka.testkit.EventFilter
 import java.util.concurrent.{ TimeUnit, CountDownLatch }
 import akka.testkit.AkkaSpec
 import akka.testkit.DefaultTimeout
 import akka.testkit.TestLatch
-import akka.util.duration._
-import akka.util.Duration
+import scala.concurrent.duration._
 import akka.pattern.ask
 
 @org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
@@ -40,7 +41,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
 
       val slaveProps = Props(new Actor {
 
-        protected def receive = {
+        def receive = {
           case Ping  ⇒ countDownLatch.countDown()
           case Crash ⇒ throw new Exception("Crashing...")
         }
@@ -83,7 +84,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
 
       val slaveProps = Props(new Actor {
 
-        protected def receive = {
+        def receive = {
           case Crash ⇒ throw new Exception("Crashing...")
         }
 
@@ -95,7 +96,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
 
       (1 to 100) foreach { _ ⇒ slave ! Crash }
       Await.ready(countDownLatch, 2 minutes)
-      assert(!slave.isTerminated())
+      assert(!slave.isTerminated)
     }
 
     "ensure that slave restarts after number of crashes not within time range" in {
@@ -110,7 +111,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
 
       val slaveProps = Props(new Actor {
 
-        protected def receive = {
+        def receive = {
           case Ping ⇒
             if (!pingLatch.isOpen) pingLatch.open else secondPingLatch.open
           case Crash ⇒ throw new Exception("Crashing...")
@@ -153,7 +154,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
 
       Await.ready(thirdRestartLatch, 1 second)
 
-      assert(!slave.isTerminated())
+      assert(!slave.isTerminated)
     }
 
     "ensure that slave is not restarted after max retries" in {
@@ -166,7 +167,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
 
       val slaveProps = Props(new Actor {
 
-        protected def receive = {
+        def receive = {
           case Ping  ⇒ countDownLatch.countDown()
           case Crash ⇒ throw new Exception("Crashing...")
         }
@@ -190,7 +191,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
       // test restart and post restart ping
       Await.ready(restartLatch, 10 seconds)
 
-      assert(!slave.isTerminated())
+      assert(!slave.isTerminated)
 
       // now crash again... should not restart
       slave ! Crash
@@ -204,7 +205,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
       slave ! Crash
       Await.ready(stopLatch, 10 seconds)
       sleep(500L)
-      assert(slave.isTerminated())
+      assert(slave.isTerminated)
     }
 
     "ensure that slave is not restarted within time range" in {
@@ -221,7 +222,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
 
       val slaveProps = Props(new Actor {
 
-        protected def receive = {
+        def receive = {
           case Ping  ⇒ countDownLatch.countDown()
           case Crash ⇒ throw new Exception("Crashing...")
         }
@@ -243,7 +244,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
       // test restart and post restart ping
       Await.ready(restartLatch, 10 seconds)
 
-      assert(!slave.isTerminated())
+      assert(!slave.isTerminated)
 
       // now crash again... should not restart
       slave ! Crash
@@ -259,7 +260,7 @@ class RestartStrategySpec extends AkkaSpec with DefaultTimeout {
 
       Await.ready(maxNoOfRestartsLatch, 10 seconds)
       sleep(500L)
-      assert(slave.isTerminated())
+      assert(slave.isTerminated)
     }
   }
 }

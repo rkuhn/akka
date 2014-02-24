@@ -1,16 +1,18 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
 
+import language.postfixOps
+
 import org.scalatest.BeforeAndAfterEach
-import akka.util.duration._
+import scala.concurrent.duration._
 import akka.{ Die, Ping }
 import akka.testkit.TestEvent._
 import akka.testkit._
 import java.util.concurrent.atomic.AtomicInteger
-import akka.dispatch.Await
+import scala.concurrent.Await
 import akka.pattern.ask
 
 object SupervisorSpec {
@@ -169,7 +171,7 @@ class SupervisorSpec extends AkkaSpec with BeforeAndAfterEach with ImplicitSende
         override def preStart() { preStarts += 1; testActor ! ("preStart" + preStarts) }
         override def postStop() { postStops += 1; testActor ! ("postStop" + postStops) }
         def receive = {
-          case "crash" ⇒ testActor ! "crashed"; throw new RuntimeException("Expected")
+          case "crash" ⇒ { testActor ! "crashed"; throw new RuntimeException("Expected") }
           case "ping"  ⇒ sender ! "pong"
         }
       }
@@ -339,9 +341,12 @@ class SupervisorSpec extends AkkaSpec with BeforeAndAfterEach with ImplicitSende
         OneForOneStrategy(maxNrOfRetries = 3, withinTimeRange = 10 seconds)(classOf[Exception] :: Nil))))
 
       val dyingProps = Props(new Actor {
-        inits.incrementAndGet
+        val init = inits.getAndIncrement()
+        if (init % 3 == 1) throw new IllegalStateException("Don't wanna!")
 
-        if (inits.get % 2 == 0) throw new IllegalStateException("Don't wanna!")
+        override def preRestart(cause: Throwable, msg: Option[Any]) {
+          if (init % 3 == 0) throw new IllegalStateException("Don't wanna!")
+        }
 
         def receive = {
           case Ping ⇒ sender ! PongMessage
@@ -351,20 +356,62 @@ class SupervisorSpec extends AkkaSpec with BeforeAndAfterEach with ImplicitSende
             throw e
         }
       })
-      val dyingActor = Await.result((supervisor ? dyingProps).mapTo[ActorRef], timeout.duration)
+      supervisor ! dyingProps
+      val dyingActor = expectMsgType[ActorRef]
 
-      filterEvents(EventFilter[RuntimeException]("Expected", occurrences = 1),
-        EventFilter[IllegalStateException]("error while creating actor", occurrences = 1)) {
+      filterEvents(
+        EventFilter[RuntimeException]("Expected", occurrences = 1),
+        EventFilter[PreRestartException]("Don't wanna!", occurrences = 1),
+        EventFilter[PostRestartException]("Don't wanna!", occurrences = 1)) {
           intercept[RuntimeException] {
             Await.result(dyingActor.?(DieReply)(DilatedTimeout), DilatedTimeout)
           }
         }
 
-      Await.result(dyingActor.?(Ping)(DilatedTimeout), DilatedTimeout) must be === PongMessage
+      dyingActor ! Ping
+      expectMsg(PongMessage)
 
       inits.get must be(3)
 
       system.stop(supervisor)
+    }
+
+    "must not lose system messages when a NonFatal exception occurs when processing a system message" in {
+      val parent = system.actorOf(Props(new Actor {
+        override val supervisorStrategy = OneForOneStrategy()({
+          case e: IllegalStateException if e.getMessage == "OHNOES" ⇒ throw e
+          case _ ⇒ SupervisorStrategy.Restart
+        })
+        val child = context.watch(context.actorOf(Props(new Actor {
+          override def postRestart(reason: Throwable): Unit = testActor ! "child restarted"
+          def receive = {
+            case l: TestLatch ⇒ { Await.ready(l, 5 seconds); throw new IllegalStateException("OHNOES") }
+            case "test"       ⇒ sender ! "child green"
+          }
+        }), "child"))
+
+        override def postRestart(reason: Throwable): Unit = testActor ! "parent restarted"
+
+        def receive = {
+          case Terminated(a) if a.path == child.path ⇒ testActor ! "child terminated" // FIXME case t @ Terminated(`child`) ticket #3156
+          case l: TestLatch                          ⇒ child ! l
+          case "test"                                ⇒ sender ! "green"
+          case "testchild"                           ⇒ child forward "test"
+        }
+      }))
+
+      val latch = TestLatch()
+      parent ! latch
+      parent ! "testchild"
+      EventFilter[IllegalStateException]("OHNOES", occurrences = 1) intercept {
+        latch.countDown()
+      }
+      expectMsg("parent restarted")
+      expectMsg("child terminated")
+      parent ! "test"
+      expectMsg("green")
+      parent ! "testchild"
+      expectMsg("child green")
     }
   }
 }

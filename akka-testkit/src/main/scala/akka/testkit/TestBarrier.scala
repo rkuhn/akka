@@ -1,12 +1,13 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.testkit
 
-import akka.util.Duration
+import scala.concurrent.duration.Duration
 import java.util.concurrent.{ CyclicBarrier, TimeUnit, TimeoutException }
 import akka.actor.ActorSystem
+import scala.concurrent.duration.FiniteDuration
 
 class TestBarrierTimeoutException(message: String) extends RuntimeException(message)
 
@@ -27,7 +28,7 @@ class TestBarrier(count: Int) {
 
   def await()(implicit system: ActorSystem): Unit = await(TestBarrier.DefaultTimeout)
 
-  def await(timeout: Duration)(implicit system: ActorSystem) {
+  def await(timeout: FiniteDuration)(implicit system: ActorSystem) {
     try {
       barrier.await(timeout.dilated.toNanos, TimeUnit.NANOSECONDS)
     } catch {

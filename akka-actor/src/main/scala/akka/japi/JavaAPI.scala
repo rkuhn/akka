@@ -1,15 +1,23 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.japi
 
-import scala.Some
+import language.implicitConversions
+
+import scala.collection.immutable
+import scala.reflect.ClassTag
+import scala.util.control.NoStackTrace
+import scala.runtime.AbstractPartialFunction
+import akka.util.Collections.EmptyImmutableSeq
+import java.util.Collections.{ emptyList, singletonList }
 
 /**
  * A Function interface. Used to create first-class-functions is Java.
  */
 trait Function[T, R] {
+  @throws(classOf[Exception])
   def apply(param: T): R
 }
 
@@ -17,6 +25,7 @@ trait Function[T, R] {
  * A Function interface. Used to create 2-arg first-class-functions is Java.
  */
 trait Function2[T1, T2, R] {
+  @throws(classOf[Exception])
   def apply(arg1: T1, arg2: T2): R
 }
 
@@ -24,52 +33,93 @@ trait Function2[T1, T2, R] {
  * A Procedure is like a Function, but it doesn't produce a return value.
  */
 trait Procedure[T] {
-  def apply(param: T)
-}
-
-/**
- * A Procedure is like a Function, but it doesn't produce a return value.
- */
-trait Procedure2[T1, T2] {
-  def apply(param: T1, param2: T2)
-}
-
-/**
- * An executable piece of code that takes no parameters and doesn't return any value.
- */
-trait SideEffect {
-  def apply()
+  @throws(classOf[Exception])
+  def apply(param: T): Unit
 }
 
 /**
  * An executable piece of code that takes no parameters and doesn't return any value.
  */
 trait Effect {
-  def apply()
+  @throws(classOf[Exception])
+  def apply(): Unit
 }
 
 /**
  * A constructor/factory, takes no parameters but creates a new value of type T every call.
  */
 trait Creator[T] {
+  /**
+   * This method must return a different instance upon every call.
+   */
+  @throws(classOf[Exception])
   def create(): T
+}
+
+object JavaPartialFunction {
+  sealed abstract class NoMatchException extends RuntimeException with NoStackTrace
+  case object NoMatch extends NoMatchException
+  final def noMatch(): RuntimeException = NoMatch
+}
+
+/**
+ * Helper for implementing a *pure* partial function: it will possibly be
+ * invoked multiple times for a single “application”, because its only abstract
+ * method is used for both isDefinedAt() and apply(); the former is mapped to
+ * `isCheck == true` and the latter to `isCheck == false` for those cases where
+ * this is important to know.
+ *
+ * Failure to match is signaled by throwing `noMatch()`, i.e. not returning
+ * normally (the exception used in this case is pre-allocated, hence not
+ * <i>that</i> expensive).
+ *
+ * {{{
+ * new JavaPartialFunction<Object, String>() {
+ *   public String apply(Object in, boolean isCheck) {
+ *     if (in instanceof TheThing) {
+ *       if (isCheck) return null; // to spare the expensive or side-effecting code
+ *       return doSomethingWithTheThing((TheThing) in);
+ *     } else {
+ *       throw noMatch();
+ *     }
+ *   }
+ * }
+ * }}}
+ *
+ * The typical use of partial functions from Akka looks like the following:
+ *
+ * {{{
+ * if (pf.isDefinedAt(x)) {
+ *   pf.apply(x);
+ * }
+ * }}}
+ *
+ * i.e. it will first call `PurePartialFunction.apply(x, true)` and if that
+ * does not throw `noMatch()` it will continue with calling
+ * `PurePartialFunction.apply(x, false)`.
+ */
+abstract class JavaPartialFunction[A, B] extends AbstractPartialFunction[A, B] {
+  import JavaPartialFunction._
+
+  @throws(classOf[Exception])
+  def apply(x: A, isCheck: Boolean): B
+
+  final def isDefinedAt(x: A): Boolean = try { apply(x, true); true } catch { case NoMatch ⇒ false }
+  final override def apply(x: A): B = try apply(x, false) catch { case NoMatch ⇒ throw new MatchError(x) }
+  final override def applyOrElse[A1 <: A, B1 >: B](x: A1, default: A1 ⇒ B1): B1 = try apply(x, false) catch { case NoMatch ⇒ default(x) }
 }
 
 /**
  * This class represents optional values. Instances of <code>Option</code>
  * are either instances of case class <code>Some</code> or it is case
  * object <code>None</code>.
- * <p>
- * Java API
  */
 sealed abstract class Option[A] extends java.lang.Iterable[A] {
-  import scala.collection.JavaConversions._
-
   def get: A
   def isEmpty: Boolean
-  def isDefined = !isEmpty
+  def isDefined: Boolean = !isEmpty
   def asScala: scala.Option[A]
-  def iterator = if (isEmpty) Iterator.empty else Iterator.single(get)
+  def iterator: java.util.Iterator[A] = if (isEmpty) emptyList[A].iterator else singletonList(get).iterator
 }
 
 object Option {
@@ -102,18 +152,18 @@ object Option {
    * <code>A</code>.
    */
   final case class Some[A](v: A) extends Option[A] {
-    def get = v
-    def isEmpty = false
-    def asScala = scala.Some(v)
+    def get: A = v
+    def isEmpty: Boolean = false
+    def asScala: scala.Some[A] = scala.Some(v)
   }
 
   /**
    * This case object represents non-existent values.
    */
   private case object None extends Option[Nothing] {
-    def get = throw new NoSuchElementException("None.get")
-    def isEmpty = true
-    def asScala = scala.None
+    def get: Nothing = throw new NoSuchElementException("None.get")
+    def isEmpty: Boolean = true
+    def asScala: scala.None.type = scala.None
   }
 
   implicit def java2ScalaOption[A](o: Option[A]): scala.Option[A] = o.asScala
@@ -124,8 +174,39 @@ object Option {
  * This class hold common utilities for Java
  */
 object Util {
+
   /**
-   * Given a Class returns a Scala Manifest of that Class
+   * Returns a ClassTag describing the provided Class.
    */
-  def manifest[T](clazz: Class[T]): Manifest[T] = Manifest.classType(clazz)
+  def classTag[T](clazz: Class[T]): ClassTag[T] = ClassTag(clazz)
+
+  /**
+   * Returns an immutable.Seq representing the provided array of Classes,
+   * an overloading of the generic immutableSeq in Util, to accommodate for erasure.
+   */
+  def immutableSeq(arr: Array[Class[_]]): immutable.Seq[Class[_]] = immutableSeq[Class[_]](arr)
+
+  /**
+   * Turns an array into an immutable Scala sequence (by copying it).
+   */
+  def immutableSeq[T](arr: Array[T]): immutable.Seq[T] = if ((arr ne null) && arr.length > 0) Vector(arr: _*) else Nil
+
+  /**
+   * Turns an [[java.lang.Iterable]] into an immutable Scala sequence (by copying it).
+   */
+  def immutableSeq[T](iterable: java.lang.Iterable[T]): immutable.Seq[T] =
+    iterable match {
+      case imm: immutable.Seq[_] ⇒ imm.asInstanceOf[immutable.Seq[T]]
+      case other ⇒
+        val i = other.iterator()
+        if (i.hasNext) {
+          val builder = new immutable.VectorBuilder[T]
+
+          do { builder += i.next() } while (i.hasNext)
+
+          builder.result()
+        } else EmptyImmutableSeq
+    }
+
+  def immutableSingletonSeq[T](value: T): immutable.Seq[T] = value :: Nil
 }

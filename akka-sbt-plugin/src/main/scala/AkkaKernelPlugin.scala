@@ -19,6 +19,7 @@ object AkkaKernelPlugin extends Plugin {
     configSourceDirs: Seq[File],
     distJvmOptions: String,
     distMainClass: String,
+    distBootClass: String,
     libFilter: File ⇒ Boolean,
     additionalLibs: Seq[File])
 
@@ -30,8 +31,12 @@ object AkkaKernelPlugin extends Plugin {
   val configSourceDirs = TaskKey[Seq[File]]("config-source-directories",
     "Configuration files are copied from these directories")
 
-  val distJvmOptions = SettingKey[String]("kernel-jvm-options", "JVM parameters to use in start script")
-  val distMainClass = SettingKey[String]("kernel-main-class", "Kernel main class to use in start script")
+  val distJvmOptions = SettingKey[String]("kernel-jvm-options",
+    "JVM parameters to use in start script")
+  val distMainClass = SettingKey[String]("kernel-main-class",
+    "main class to use in start script, defaults to akka.kernel.Main to load an akka.kernel.Bootable")
+  val distBootClass = SettingKey[String]("kernel-boot-class",
+    "class implementing akka.kernel.Bootable, which gets loaded by the default 'distMainClass'")
 
   val libFilter = SettingKey[File ⇒ Boolean]("lib-filter", "Filter of dependency jar files")
   val additionalLibs = TaskKey[Seq[File]]("additional-libs", "Additional dependency jar files")
@@ -50,32 +55,35 @@ object AkkaKernelPlugin extends Plugin {
       configSourceDirs <<= defaultConfigSourceDirs,
       distJvmOptions := "-Xms1024M -Xmx1024M -Xss1M -XX:MaxPermSize=256M -XX:+UseParallelGC",
       distMainClass := "akka.kernel.Main",
+      distBootClass := "",
       libFilter := { f ⇒ true },
       additionalLibs <<= defaultAdditionalLibs,
-      distConfig <<= (outputDirectory, configSourceDirs, distJvmOptions, distMainClass, libFilter, additionalLibs) map DistConfig)) ++
+      distConfig <<= (outputDirectory, configSourceDirs, distJvmOptions, distMainClass, distBootClass, libFilter, additionalLibs) map DistConfig)) ++
       Seq(dist <<= (dist in Dist), distNeedsPackageBin)
 
   private def distTask: Initialize[Task[File]] =
-    (distConfig, sourceDirectory, crossTarget, dependencyClasspath, projectDependencies, allDependencies, buildStructure, state) map { (conf, src, tgt, cp, projDeps, allDeps, buildStruct, st) ⇒
+    (thisProject, distConfig, sourceDirectory, crossTarget, dependencyClasspath, allDependencies, buildStructure, state) map { (project, conf, src, tgt, cp, allDeps, buildStruct, st) ⇒
 
       if (isKernelProject(allDeps)) {
-        val log = logger(st)
+        val log = st.log
         val distBinPath = conf.outputDirectory / "bin"
         val distConfigPath = conf.outputDirectory / "config"
         val distDeployPath = conf.outputDirectory / "deploy"
         val distLibPath = conf.outputDirectory / "lib"
 
-        val subProjectDependencies: Set[SubProjectInfo] = allSubProjectDependencies(projDeps, buildStruct, st)
+        val subProjectDependencies: Set[SubProjectInfo] = allSubProjectDependencies(project, buildStruct, st)
 
         log.info("Creating distribution %s ..." format conf.outputDirectory)
         IO.createDirectory(conf.outputDirectory)
-        Scripts(conf.distJvmOptions, conf.distMainClass).writeScripts(distBinPath)
+        Scripts(conf.distJvmOptions, conf.distMainClass, conf.distBootClass).writeScripts(distBinPath)
         copyDirectories(conf.configSourceDirs, distConfigPath)
         copyJars(tgt, distDeployPath)
 
         copyFiles(libFiles(cp, conf.libFilter), distLibPath)
         copyFiles(conf.additionalLibs, distLibPath)
-        for (subTarget ← subProjectDependencies.map(_.target)) {
+        for (subProjectDependency ← subProjectDependencies) {
+          val subTarget = subProjectDependency.target
+          EvaluateTask(buildStruct, packageBin in Compile, st, subProjectDependency.projectRef)
           copyJars(subTarget, distLibPath)
         }
         log.info("Distribution created.")
@@ -95,7 +103,8 @@ object AkkaKernelPlugin extends Plugin {
 
   def isKernelProject(dependencies: Seq[ModuleID]): Boolean = {
     dependencies.exists { d ⇒
-      (d.organization == "com.typesafe.akka" || d.organization == "se.scalablesolutions.akka") && d.name == "akka-kernel"
+      (d.organization == "com.typesafe.akka" || d.organization == "se.scalablesolutions.akka") &&
+        (d.name == "akka-kernel" || d.name.startsWith("akka-kernel_"))
     }
   }
 
@@ -107,7 +116,7 @@ object AkkaKernelPlugin extends Plugin {
     Seq.empty[File]
   }
 
-  private case class Scripts(jvmOptions: String, mainClass: String) {
+  private case class Scripts(jvmOptions: String, mainClass: String, bootClass: String) {
 
     def writeScripts(to: File) = {
       scripts.map { script ⇒
@@ -129,8 +138,8 @@ object AkkaKernelPlugin extends Plugin {
     |AKKA_CLASSPATH="$AKKA_HOME/config:$AKKA_HOME/lib/*"
     |JAVA_OPTS="%s"
     |
-    |java $JAVA_OPTS -cp "$AKKA_CLASSPATH" -Dakka.home="$AKKA_HOME" %s "$@"
-    |""".stripMargin.format(jvmOptions, mainClass)
+    |java $JAVA_OPTS -cp "$AKKA_CLASSPATH" -Dakka.home="$AKKA_HOME" %s%s "$@"
+    |""".stripMargin.format(jvmOptions, mainClass, if (bootClass.nonEmpty) " " + bootClass else "")
 
     private def distBatScript =
       """|@echo off
@@ -138,8 +147,8 @@ object AkkaKernelPlugin extends Plugin {
     |set AKKA_CLASSPATH=%%AKKA_HOME%%\config;%%AKKA_HOME%%\lib\*
     |set JAVA_OPTS=%s
     |
-    |java %%JAVA_OPTS%% -cp "%%AKKA_CLASSPATH%%" -Dakka.home="%%AKKA_HOME%%" %s %%*
-    |""".stripMargin.format(jvmOptions, mainClass)
+    |java %%JAVA_OPTS%% -cp "%%AKKA_CLASSPATH%%" -Dakka.home="%%AKKA_HOME%%" %s%s %%*
+    |""".stripMargin.format(jvmOptions, mainClass, if (bootClass.nonEmpty) " " + bootClass else "")
 
     private def setExecutable(target: File, executable: Boolean): Option[String] = {
       val success = target.setExecutable(executable, false)
@@ -175,17 +184,22 @@ object AkkaKernelPlugin extends Plugin {
     libs.map(_.asFile).filter(libFilter)
   }
 
-  private def allSubProjectDependencies(projDeps: Seq[ModuleID], buildStruct: BuildStructure, state: State): Set[SubProjectInfo] = {
+  private def includeProject(project: ResolvedProject, parent: ResolvedProject): Boolean = {
+    parent.uses.exists {
+      case ProjectRef(uri, id) ⇒ id == project.id
+      case _                   ⇒ false
+    }
+  }
+
+  private def allSubProjectDependencies(project: ResolvedProject, buildStruct: BuildStructure, state: State): Set[SubProjectInfo] = {
     val buildUnit = buildStruct.units(buildStruct.root)
     val uri = buildStruct.root
     val allProjects = buildUnit.defined.map {
       case (id, proj) ⇒ (ProjectRef(uri, id) -> proj)
     }
 
-    val projDepsNames = projDeps.map(_.name)
-    def include(project: ResolvedProject): Boolean = projDepsNames.exists(_ == project.id)
     val subProjects: Seq[SubProjectInfo] = allProjects.collect {
-      case (projRef, project) if include(project) ⇒ projectInfo(projRef, project, buildStruct, state, allProjects)
+      case (projRef, proj) if includeProject(proj, project) ⇒ projectInfo(projRef, proj, buildStruct, state, allProjects)
     }.toList
 
     val allSubProjects = subProjects.map(_.recursiveSubProjects).flatten.toSet
@@ -199,31 +213,20 @@ object AkkaKernelPlugin extends Plugin {
 
     def setting[A](key: SettingKey[A], errorMessage: ⇒ String) = {
       optionalSetting(key) getOrElse {
-        logger(state).error(errorMessage);
+        state.log.error(errorMessage);
         throw new IllegalArgumentException()
       }
     }
 
-    def evaluateTask[T](taskKey: sbt.Project.ScopedKey[sbt.Task[T]]) = {
-      EvaluateTask(buildStruct, taskKey, state, projectRef).map(_._2)
-    }
-
-    val projDeps: Seq[ModuleID] = evaluateTask(Keys.projectDependencies) match {
-      case Some(Value(moduleIds)) ⇒ moduleIds
-      case _                      ⇒ Seq.empty
-    }
-
-    val projDepsNames = projDeps.map(_.name)
-    def include(project: ResolvedProject): Boolean = projDepsNames.exists(_ == project.id)
     val subProjects = allProjects.collect {
-      case (projRef, proj) if include(proj) ⇒ projectInfo(projRef, proj, buildStruct, state, allProjects)
+      case (projRef, proj) if includeProject(proj, project) ⇒ projectInfo(projRef, proj, buildStruct, state, allProjects)
     }.toList
 
     val target = setting(Keys.crossTarget, "Missing crossTarget directory")
-    SubProjectInfo(project.id, target, subProjects)
+    SubProjectInfo(projectRef, target, subProjects)
   }
 
-  private case class SubProjectInfo(id: String, target: File, subProjects: Seq[SubProjectInfo]) {
+  private case class SubProjectInfo(projectRef: ProjectRef, target: File, subProjects: Seq[SubProjectInfo]) {
 
     def recursiveSubProjects: Set[SubProjectInfo] = {
       val flatSubProjects = for {

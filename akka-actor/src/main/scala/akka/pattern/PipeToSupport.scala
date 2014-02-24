@@ -1,20 +1,25 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.pattern
 
-import akka.dispatch.Future
-import akka.actor.{ Status, ActorRef }
+import language.implicitConversions
+
+import scala.concurrent.{ Future, ExecutionContext }
+import scala.util.{ Failure, Success }
+import akka.actor.{ Status, ActorRef, Actor }
 
 trait PipeToSupport {
 
-  final class PipeableFuture[T](val future: Future[T]) {
-    def pipeTo(recipient: ActorRef)(implicit sender: ActorRef = null): Future[T] =
+  final class PipeableFuture[T](val future: Future[T])(implicit executionContext: ExecutionContext) {
+    def pipeTo(recipient: ActorRef)(implicit sender: ActorRef = Actor.noSender): Future[T] = {
       future onComplete {
-        case Right(r) ⇒ recipient ! r
-        case Left(f)  ⇒ recipient ! Status.Failure(f)
+        case Success(r) ⇒ recipient ! r
+        case Failure(f) ⇒ recipient ! Status.Failure(f)
       }
-    def to(recipient: ActorRef): PipeableFuture[T] = to(recipient, null)
+      future
+    }
+    def to(recipient: ActorRef): PipeableFuture[T] = to(recipient, Actor.noSender)
     def to(recipient: ActorRef, sender: ActorRef): PipeableFuture[T] = {
       pipeTo(recipient)(sender)
       this
@@ -22,7 +27,7 @@ trait PipeToSupport {
   }
 
   /**
-   * Import this implicit conversion to gain the `pipeTo` method on [[akka.dispatch.Future]]:
+   * Import this implicit conversion to gain the `pipeTo` method on [[scala.concurrent.Future]]:
    *
    * {{{
    * import akka.pattern.pipe
@@ -35,5 +40,5 @@ trait PipeToSupport {
    *
    * }}}
    */
-  implicit def pipe[T](future: Future[T]): PipeableFuture[T] = new PipeableFuture(future)
+  implicit def pipe[T](future: Future[T])(implicit executionContext: ExecutionContext): PipeableFuture[T] = new PipeableFuture(future)
 }

@@ -1,12 +1,13 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.testkit
 
 import akka.actor._
-import akka.util._
+import scala.concurrent.duration.Duration
 import akka.dispatch.DispatcherPrerequisites
+import scala.concurrent.duration.FiniteDuration
 
 /**
  * This is a specialised form of the TestActorRef with support for querying and
@@ -30,7 +31,6 @@ import akka.dispatch.DispatcherPrerequisites
  * assert (fsm.underlyingActor.getLog == IndexedSeq(FSMLogEntry(1, null, "hallo")))
  * </code></pre>
  *
- * @author Roland Kuhn
  * @since 1.2
  */
 class TestFSMRef[S, D, T <: Actor](
@@ -59,14 +59,14 @@ class TestFSMRef[S, D, T <: Actor](
    * corresponding transition initiated from within the FSM, including timeout
    * and stop handling.
    */
-  def setState(stateName: S = fsm.stateName, stateData: D = fsm.stateData, timeout: Duration = null, stopReason: Option[FSM.Reason] = None) {
+  def setState(stateName: S = fsm.stateName, stateData: D = fsm.stateData, timeout: FiniteDuration = null, stopReason: Option[FSM.Reason] = None) {
     fsm.applyState(FSM.State(stateName, stateData, Option(timeout), stopReason))
   }
 
   /**
    * Proxy for FSM.setTimer.
    */
-  def setTimer(name: String, msg: Any, timeout: Duration, repeat: Boolean) {
+  def setTimer(name: String, msg: Any, timeout: FiniteDuration, repeat: Boolean) {
     fsm.setTimer(name, msg, timeout, repeat)
   }
 
@@ -75,11 +75,18 @@ class TestFSMRef[S, D, T <: Actor](
    */
   def cancelTimer(name: String) { fsm.cancelTimer(name) }
 
+  @deprecated("Use isTimerActive", "2.2")
+  def timerActive_?(name: String): Boolean = isTimerActive(name)
+
+  /**
+   * Proxy for FSM.isTimerActive.
+   */
+  def isTimerActive(name: String) = fsm.isTimerActive(name)
+
   /**
    * Proxy for FSM.timerActive_?.
    */
-  def timerActive_?(name: String) = fsm.timerActive_?(name)
-
+  def isStateTimerActive = fsm.isStateTimerActive
 }
 
 object TestFSMRef {

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 option java_package = "akka.remote";
@@ -9,10 +9,12 @@ option optimize_for = SPEED;
   Compile with:
   cd ./akka-remote/src/main/protocol
   protoc RemoteProtocol.proto --java_out ../java
+  cd ../../../..
+  ./scripts/fix-protobuf.sh
 *******************************************/
 
 message AkkaRemoteProtocol {
-  optional RemoteMessageProtocol message = 1;
+  optional bytes payload = 1;
   optional RemoteControlProtocol instruction = 2;
 }
 
@@ -42,23 +44,6 @@ enum CommandType {
   CONNECT = 1;
   SHUTDOWN = 2;
   HEARTBEAT = 3;
-}
-
-/**
- * Defines the type of the ReplicationStorage
- */
-enum ReplicationStorageType {
-  TRANSIENT = 1;
-  TRANSACTION_LOG = 2;
-  DATA_GRID = 3;
-}
-
-/**
- * Defines the type of the ReplicationStrategy
- */
-enum ReplicationStrategyType {
-  WRITE_THROUGH = 1;
-  WRITE_BEHIND = 2;
 }
 
 /**
@@ -93,21 +78,36 @@ message AddressProtocol {
   required string system = 1;
   required string hostname = 2;
   required uint32 port = 3;
+  optional string protocol = 4;
 }
 
 /**
- * Defines an exception.
+ * Defines akka.remote.DaemonMsgCreate
  */
-message ExceptionProtocol {
-  required string classname  = 1;
-  required string message = 2;
+message DaemonMsgCreateProtocol {
+  required PropsProtocol props = 1;
+  required DeployProtocol deploy = 2;
+  required string path = 3;
+  required ActorRefProtocol supervisor = 4;
 }
 
 /**
- * Defines the durable mailbox message.
+ * Serialization of akka.actor.Props
  */
-message DurableMailboxMessageProtocol {
-  required ActorRefProtocol recipient= 1;
-  optional ActorRefProtocol sender = 2;
-  required bytes message = 3;
+message PropsProtocol {
+  required string dispatcher = 1;
+  required DeployProtocol deploy = 2;
+  optional string fromClassCreator = 3;
+  optional bytes creator = 4;
+  optional bytes routerConfig = 5;
+}
+
+/**
+ * Serialization of akka.actor.Deploy
+ */
+message DeployProtocol {
+  required string path = 1;
+  optional bytes config = 2;
+  optional bytes routerConfig = 3;
+  optional bytes scope = 4;
 }

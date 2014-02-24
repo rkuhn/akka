@@ -1,17 +1,20 @@
 /**
- *  Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.dataflow
 
+import language.postfixOps
+
 import akka.actor.{ Actor, Props }
-import akka.dispatch.{ Future, Await }
-import akka.util.duration._
-import akka.testkit.AkkaSpec
-import akka.testkit.DefaultTimeout
+import scala.concurrent.Future
+import scala.concurrent.Await
+import scala.concurrent.duration._
+import akka.testkit.{ AkkaSpec, DefaultTimeout }
 import akka.pattern.{ ask, pipe }
+import scala.concurrent.ExecutionException
 
 class Future2ActorSpec extends AkkaSpec with DefaultTimeout {
-
+  implicit val ec = system.dispatcher
   "The Future2Actor bridge" must {
 
     "support convenient sending to multiple destinations" in {
@@ -20,14 +23,14 @@ class Future2ActorSpec extends AkkaSpec with DefaultTimeout {
     }
 
     "support convenient sending to multiple destinations with implicit sender" in {
-      implicit val someActor = system.actorOf(Props(ctx ⇒ Actor.emptyBehavior))
+      implicit val someActor = system.actorOf(Props(new Actor { def receive = Actor.emptyBehavior }))
       Future(42) pipeTo testActor pipeTo testActor
       expectMsgAllOf(1 second, 42, 42)
       lastSender must be(someActor)
     }
 
     "support convenient sending with explicit sender" in {
-      val someActor = system.actorOf(Props(ctx ⇒ Actor.emptyBehavior))
+      val someActor = system.actorOf(Props(new Actor { def receive = Actor.emptyBehavior }))
       Future(42).to(testActor, someActor)
       expectMsgAllOf(1 second, 42)
       lastSender must be(someActor)
@@ -41,9 +44,9 @@ class Future2ActorSpec extends AkkaSpec with DefaultTimeout {
         }
       }))
       Await.result(actor ? "do", timeout.duration) must be(31)
-      intercept[AssertionError] {
+      intercept[ExecutionException] {
         Await.result(actor ? "ex", timeout.duration)
-      }
+      }.getCause.isInstanceOf[AssertionError] must be(true)
     }
   }
 }

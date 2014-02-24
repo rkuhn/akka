@@ -1,5 +1,5 @@
 /**
- *  Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.event
@@ -10,12 +10,13 @@ import java.util.concurrent.ConcurrentSkipListSet
 import java.util.Comparator
 import akka.util.{ Subclassification, SubclassifiedIndex }
 import scala.collection.immutable.TreeSet
+import scala.collection.immutable
 
 /**
  * Represents the base type for EventBuses
  * Internally has an Event type, a Classifier type and a Subscriber type
  *
- * For the Java API, @see akka.event.japi.*
+ * For the Java API, see akka.event.japi.*
  */
 trait EventBus {
   type Event
@@ -137,25 +138,20 @@ trait SubchannelClassification { this: EventBus ⇒
 
   def subscribe(subscriber: Subscriber, to: Classifier): Boolean = subscriptions.synchronized {
     val diff = subscriptions.addValue(to, subscriber)
-    if (diff.isEmpty) false
-    else {
-      cache = cache ++ diff
-      true
-    }
+    addToCache(diff)
+    diff.nonEmpty
   }
 
   def unsubscribe(subscriber: Subscriber, from: Classifier): Boolean = subscriptions.synchronized {
     val diff = subscriptions.removeValue(from, subscriber)
-    if (diff.isEmpty) false
-    else {
-      cache = cache ++ diff
-      true
-    }
+    // removeValue(K, V) does not return the diff to remove from or add to the cache
+    // but instead the whole set of keys and values that should be updated in the cache
+    cache ++= diff
+    diff.nonEmpty
   }
 
   def unsubscribe(subscriber: Subscriber): Unit = subscriptions.synchronized {
-    val diff = subscriptions.removeValue(subscriber)
-    if (diff.nonEmpty) cache = cache ++ diff
+    removeFromCache(subscriptions.removeValue(subscriber))
   }
 
   def publish(event: Event): Unit = {
@@ -165,13 +161,22 @@ trait SubchannelClassification { this: EventBus ⇒
       else subscriptions.synchronized {
         if (cache contains c) cache(c)
         else {
-          val diff = subscriptions.addKey(c)
-          cache = cache ++ diff
+          addToCache(subscriptions.addKey(c))
           cache(c)
         }
       }
     recv foreach (publish(event, _))
   }
+
+  private def removeFromCache(changes: immutable.Seq[(Classifier, Set[Subscriber])]): Unit =
+    cache = (cache /: changes) {
+      case (m, (c, cs)) ⇒ m.updated(c, m.getOrElse(c, Set.empty[Subscriber]) -- cs)
+    }
+
+  private def addToCache(changes: immutable.Seq[(Classifier, Set[Subscriber])]): Unit =
+    cache = (cache /: changes) {
+      case (m, (c, cs)) ⇒ m.updated(c, m.getOrElse(c, Set.empty[Subscriber]) ++ cs)
+    }
 }
 
 /**
@@ -182,10 +187,9 @@ trait SubchannelClassification { this: EventBus ⇒
  */
 trait ScanningClassification { self: EventBus ⇒
   protected final val subscribers = new ConcurrentSkipListSet[(Classifier, Subscriber)](new Comparator[(Classifier, Subscriber)] {
-    def compare(a: (Classifier, Subscriber), b: (Classifier, Subscriber)): Int = {
-      val cM = compareClassifiers(a._1, b._1)
-      if (cM != 0) cM
-      else compareSubscribers(a._2, b._2)
+    def compare(a: (Classifier, Subscriber), b: (Classifier, Subscriber)): Int = compareClassifiers(a._1, b._1) match {
+      case 0     ⇒ compareSubscribers(a._2, b._2)
+      case other ⇒ other
     }
   })
 
@@ -238,33 +242,33 @@ trait ActorClassification { this: ActorEventBus with ActorClassifier ⇒
   import java.util.concurrent.ConcurrentHashMap
   import scala.annotation.tailrec
   private val empty = TreeSet.empty[ActorRef]
-  protected val mappings = new ConcurrentHashMap[ActorRef, TreeSet[ActorRef]](mapSize)
+  private val mappings = new ConcurrentHashMap[ActorRef, TreeSet[ActorRef]](mapSize)
 
   @tailrec
   protected final def associate(monitored: ActorRef, monitor: ActorRef): Boolean = {
     val current = mappings get monitored
     current match {
       case null ⇒
-        if (monitored.isTerminated()) false
+        if (monitored.isTerminated) false
         else {
           if (mappings.putIfAbsent(monitored, empty + monitor) ne null) associate(monitored, monitor)
-          else if (monitored.isTerminated()) !dissociate(monitored, monitor) else true
+          else if (monitored.isTerminated) !dissociate(monitored, monitor) else true
         }
       case raw: TreeSet[_] ⇒
         val v = raw.asInstanceOf[TreeSet[ActorRef]]
-        if (monitored.isTerminated()) false
+        if (monitored.isTerminated) false
         if (v.contains(monitor)) true
         else {
           val added = v + monitor
           if (!mappings.replace(monitored, v, added)) associate(monitored, monitor)
-          else if (monitored.isTerminated()) !dissociate(monitored, monitor) else true
+          else if (monitored.isTerminated) !dissociate(monitored, monitor) else true
         }
     }
   }
 
-  protected final def dissociate(monitored: ActorRef): Iterable[ActorRef] = {
+  protected final def dissociate(monitored: ActorRef): immutable.Iterable[ActorRef] = {
     @tailrec
-    def dissociateAsMonitored(monitored: ActorRef): Iterable[ActorRef] = {
+    def dissociateAsMonitored(monitored: ActorRef): immutable.Iterable[ActorRef] = {
       val current = mappings get monitored
       current match {
         case null ⇒ empty
@@ -320,12 +324,22 @@ trait ActorClassification { this: ActorEventBus with ActorClassifier ⇒
    */
   protected def mapSize: Int
 
-  def publish(event: Event): Unit = {
-    val receivers = mappings.get(classify(event))
-    if (receivers ne null) receivers foreach { _ ! event }
+  def publish(event: Event): Unit = mappings.get(classify(event)) match {
+    case null ⇒ ()
+    case some ⇒ some foreach { _ ! event }
   }
 
-  def subscribe(subscriber: Subscriber, to: Classifier): Boolean = associate(to, subscriber)
-  def unsubscribe(subscriber: Subscriber, from: Classifier): Boolean = dissociate(from, subscriber)
-  def unsubscribe(subscriber: Subscriber): Unit = dissociate(subscriber)
+  def subscribe(subscriber: Subscriber, to: Classifier): Boolean =
+    if (subscriber eq null) throw new IllegalArgumentException("Subscriber is null")
+    else if (to eq null) throw new IllegalArgumentException("Classifier is null")
+    else associate(to, subscriber)
+
+  def unsubscribe(subscriber: Subscriber, from: Classifier): Boolean =
+    if (subscriber eq null) throw new IllegalArgumentException("Subscriber is null")
+    else if (from eq null) throw new IllegalArgumentException("Classifier is null")
+    else dissociate(from, subscriber)
+
+  def unsubscribe(subscriber: Subscriber): Unit =
+    if (subscriber eq null) throw new IllegalArgumentException("Subscriber is null")
+    else dissociate(subscriber)
 }

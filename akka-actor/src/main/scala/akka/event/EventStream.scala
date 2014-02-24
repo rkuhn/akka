@@ -1,9 +1,12 @@
 /**
- *  Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ *  Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.event
 
-import akka.actor.{ ActorRef, ActorSystem, simpleName }
+import language.implicitConversions
+
+import akka.actor.{ ActorRef, ActorSystem }
+import akka.event.Logging.simpleName
 import akka.util.Subclassification
 
 object EventStream {
@@ -33,22 +36,25 @@ class EventStream(private val debug: Boolean = false) extends LoggingBus with Su
   protected def classify(event: AnyRef): Class[_] = event.getClass
 
   protected def publish(event: AnyRef, subscriber: ActorRef) = {
-    if (subscriber.isTerminated()) unsubscribe(subscriber)
+    if (subscriber.isTerminated) unsubscribe(subscriber)
     else subscriber ! event
   }
 
   override def subscribe(subscriber: ActorRef, channel: Class[_]): Boolean = {
+    if (subscriber eq null) throw new IllegalArgumentException("subscriber is null")
     if (debug) publish(Logging.Debug(simpleName(this), this.getClass, "subscribing " + subscriber + " to channel " + channel))
     super.subscribe(subscriber, channel)
   }
 
   override def unsubscribe(subscriber: ActorRef, channel: Class[_]): Boolean = {
+    if (subscriber eq null) throw new IllegalArgumentException("subscriber is null")
     val ret = super.unsubscribe(subscriber, channel)
     if (debug) publish(Logging.Debug(simpleName(this), this.getClass, "unsubscribing " + subscriber + " from channel " + channel))
     ret
   }
 
   override def unsubscribe(subscriber: ActorRef) {
+    if (subscriber eq null) throw new IllegalArgumentException("subscriber is null")
     super.unsubscribe(subscriber)
     if (debug) publish(Logging.Debug(simpleName(this), this.getClass, "unsubscribing " + subscriber + " from all channels"))
   }

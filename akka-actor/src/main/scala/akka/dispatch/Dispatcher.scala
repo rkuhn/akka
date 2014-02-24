@@ -1,14 +1,19 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.dispatch
 
 import akka.event.Logging.Error
-import java.util.concurrent.atomic.AtomicReference
 import akka.actor.ActorCell
-import akka.util.Duration
-import java.util.concurrent._
+import akka.event.Logging
+import akka.dispatch.sysmsg.SystemMessage
+import java.util.concurrent.atomic.AtomicReference
+import java.util.concurrent.{ ExecutorService, RejectedExecutionException }
+import scala.concurrent.forkjoin.ForkJoinPool
+import scala.concurrent.duration.Duration
+import scala.concurrent.Awaitable
+import scala.concurrent.duration.FiniteDuration
 
 /**
  * The event-based ``Dispatcher`` binds a set of Actors to a thread pool backed up by a
@@ -29,34 +34,47 @@ class Dispatcher(
   val throughputDeadlineTime: Duration,
   val mailboxType: MailboxType,
   executorServiceFactoryProvider: ExecutorServiceFactoryProvider,
-  val shutdownTimeout: Duration)
+  val shutdownTimeout: FiniteDuration)
   extends MessageDispatcher(_prerequisites) {
 
-  protected val executorServiceFactory: ExecutorServiceFactory =
-    executorServiceFactoryProvider.createExecutorServiceFactory(id, prerequisites.threadFactory)
+  private class LazyExecutorServiceDelegate(factory: ExecutorServiceFactory) extends ExecutorServiceDelegate {
+    lazy val executor: ExecutorService = factory.createExecutorService
+    def copy(): LazyExecutorServiceDelegate = new LazyExecutorServiceDelegate(factory)
+  }
 
-  protected val executorService = new AtomicReference[ExecutorServiceDelegate](
-    new ExecutorServiceDelegate { lazy val executor = executorServiceFactory.createExecutorService })
+  @volatile private var executorServiceDelegate: LazyExecutorServiceDelegate =
+    new LazyExecutorServiceDelegate(executorServiceFactoryProvider.createExecutorServiceFactory(id, prerequisites.threadFactory))
 
-  protected[akka] def dispatch(receiver: ActorCell, invocation: Envelope) = {
+  protected final def executorService: ExecutorServiceDelegate = executorServiceDelegate
+
+  /**
+   * INTERNAL API
+   */
+  protected[akka] def dispatch(receiver: ActorCell, invocation: Envelope): Unit = {
     val mbox = receiver.mailbox
     mbox.enqueue(receiver.self, invocation)
     registerForExecution(mbox, true, false)
   }
 
-  protected[akka] def systemDispatch(receiver: ActorCell, invocation: SystemMessage) = {
+  /**
+   * INTERNAL API
+   */
+  protected[akka] def systemDispatch(receiver: ActorCell, invocation: SystemMessage): Unit = {
     val mbox = receiver.mailbox
     mbox.systemEnqueue(receiver.self, invocation)
     registerForExecution(mbox, false, true)
   }
 
+  /**
+   * INTERNAL API
+   */
   protected[akka] def executeTask(invocation: TaskInvocation) {
     try {
-      executorService.get() execute invocation
+      executorService execute invocation
     } catch {
       case e: RejectedExecutionException ⇒
         try {
-          executorService.get() execute invocation
+          executorService execute invocation
         } catch {
           case e2: RejectedExecutionException ⇒
             prerequisites.eventStream.publish(Error(e, getClass.getName, getClass, "executeTask was rejected twice!"))
@@ -65,26 +83,40 @@ class Dispatcher(
     }
   }
 
-  protected[akka] def createMailbox(actor: ActorCell): Mailbox = new Mailbox(actor, mailboxType.create(Some(actor))) with DefaultSystemMessageQueue
+  /**
+   * INTERNAL API
+   */
+  protected[akka] def createMailbox(actor: akka.actor.Cell): Mailbox =
+    new Mailbox(mailboxType.create(Some(actor.self), Some(actor.system))) with DefaultSystemMessageQueue
 
-  protected[akka] def shutdown: Unit =
-    Option(executorService.getAndSet(new ExecutorServiceDelegate {
-      lazy val executor = executorServiceFactory.createExecutorService
-    })) foreach { _.shutdown() }
+  /**
+   * INTERNAL API
+   */
+  protected[akka] def shutdown: Unit = {
+    val newDelegate = executorServiceDelegate.copy() // Doesn't matter which one we copy
+    val es = synchronized {
+      val service = executorServiceDelegate
+      executorServiceDelegate = newDelegate // just a quick getAndSet
+      service
+    }
+    es.shutdown()
+  }
 
   /**
    * Returns if it was registered
+   *
+   * INTERNAL API
    */
   protected[akka] override def registerForExecution(mbox: Mailbox, hasMessageHint: Boolean, hasSystemMessageHint: Boolean): Boolean = {
     if (mbox.canBeScheduledForExecution(hasMessageHint, hasSystemMessageHint)) { //This needs to be here to ensure thread safety and no races
       if (mbox.setAsScheduled()) {
         try {
-          executorService.get() execute mbox
+          executorService execute mbox
           true
         } catch {
           case e: RejectedExecutionException ⇒
             try {
-              executorService.get() execute mbox
+              executorService execute mbox
               true
             } catch { //Retry once
               case e: RejectedExecutionException ⇒
@@ -97,7 +129,7 @@ class Dispatcher(
     } else false
   }
 
-  override val toString = getClass.getSimpleName + "[" + id + "]"
+  override val toString: String = Logging.simpleName(this) + "[" + id + "]"
 }
 
 object PriorityGenerator {

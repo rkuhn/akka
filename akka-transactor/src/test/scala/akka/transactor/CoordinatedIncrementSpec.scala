@@ -1,18 +1,19 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.transactor
 
 import org.scalatest.BeforeAndAfterAll
 
+import scala.concurrent.Await
+import scala.concurrent.duration._
+import scala.concurrent.stm._
+import scala.collection.immutable
 import akka.actor._
-import akka.dispatch.Await
-import akka.util.duration._
 import akka.util.Timeout
 import akka.testkit._
-import scala.concurrent.stm._
-import akka.pattern.ask
+import akka.pattern.{ AskTimeoutException, ask }
 
 object CoordinatedIncrement {
 
@@ -30,7 +31,7 @@ object CoordinatedIncrement {
     }
   """
 
-  case class Increment(friends: Seq[ActorRef])
+  case class Increment(friends: immutable.Seq[ActorRef])
   case object GetCount
 
   class Counter(name: String) extends Actor {
@@ -68,8 +69,6 @@ object CoordinatedIncrement {
 class CoordinatedIncrementSpec extends AkkaSpec(CoordinatedIncrement.config) with BeforeAndAfterAll {
   import CoordinatedIncrement._
 
-  implicit val timeout = Timeout(5.seconds.dilated)
-
   val numCounters = 4
 
   def actorOfs = {
@@ -80,13 +79,14 @@ class CoordinatedIncrementSpec extends AkkaSpec(CoordinatedIncrement.config) wit
   }
 
   "Coordinated increment" should {
+    implicit val timeout = Timeout(100.millis.dilated)
     "increment all counters by one with successful transactions" in {
       val (counters, failer) = actorOfs
       val coordinated = Coordinated()
       counters(0) ! coordinated(Increment(counters.tail))
       coordinated.await
       for (counter ← counters) {
-        Await.result((counter ? GetCount).mapTo[Int], timeout.duration) must be === 1
+        Await.result((counter ? GetCount).mapTo[Int], remaining) must be === 1
       }
       counters foreach (system.stop(_))
       system.stop(failer)
@@ -96,14 +96,14 @@ class CoordinatedIncrementSpec extends AkkaSpec(CoordinatedIncrement.config) wit
       val ignoreExceptions = Seq(
         EventFilter[ExpectedFailureException](),
         EventFilter[CoordinatedTransactionException](),
-        EventFilter[ActorTimeoutException]())
+        EventFilter[AskTimeoutException]())
       filterEvents(ignoreExceptions) {
         val (counters, failer) = actorOfs
         val coordinated = Coordinated()
         counters(0) ! Coordinated(Increment(counters.tail :+ failer))
         coordinated.await
         for (counter ← counters) {
-          Await.result(counter ? GetCount, timeout.duration) must be === 0
+          Await.result(counter ? GetCount, remaining) must be === 0
         }
         counters foreach (system.stop(_))
         system.stop(failer)

@@ -1,16 +1,21 @@
 /**
- * Copyright (C) 2009-2011 Scalable Solutions AB <http://scalablesolutions.se>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
 
-import akka.util.{ ByteString, Duration, Deadline }
-import akka.util.duration._
+import language.postfixOps
+import akka.util.ByteString
+import scala.concurrent.{ ExecutionContext, Await, Future, Promise }
+import scala.concurrent.duration._
 import scala.util.continuations._
 import akka.testkit._
-import akka.dispatch.{ Await, Future, Promise, ExecutionContext, MessageDispatcher }
-import java.net.{ SocketAddress }
+import akka.dispatch.MessageDispatcher
 import akka.pattern.ask
+import java.net.{ Socket, InetSocketAddress, InetAddress, SocketAddress }
+import scala.util.Failure
+import scala.annotation.tailrec
+import akka.AkkaException
 
 object IOActorSpec {
 
@@ -51,27 +56,27 @@ object IOActorSpec {
 
     def receive = {
 
+      case _: IO.Connected ⇒ //don't care
+
       case bytes: ByteString ⇒
         val source = sender
         socket write bytes
-        state flatMap { _ ⇒
-          IO take bytes.length map (source ! _) recover {
-            case e ⇒ source ! Status.Failure(e)
-          }
-        }
+        state flatMap { _ ⇒ IO take bytes.length map (source ! _) }
 
       case IO.Read(`socket`, bytes) ⇒
         state(IO Chunk bytes)
 
       case IO.Closed(`socket`, cause) ⇒
-        state(IO EOF cause)
-        throw (cause getOrElse new RuntimeException("Socket closed"))
-
+        state(cause)
+        cause match {
+          case IO.Error(e) ⇒ throw e
+          case _           ⇒ throw new RuntimeException("Socket closed")
+        }
     }
 
     override def postStop {
       socket.close()
-      state(IO EOF None)
+      state(IO EOF)
     }
   }
 
@@ -152,6 +157,8 @@ object IOActorSpec {
       case IO.Read(socket, bytes) ⇒
         state(socket)(IO Chunk bytes)
 
+      case _: IO.Connected ⇒ //don't care
+
       case IO.Closed(socket, cause) ⇒
         state -= socket
 
@@ -176,29 +183,31 @@ object IOActorSpec {
         val source = sender
         socket write cmd.bytes
         state flatMap { _ ⇒
-          readResult map (source !) recover {
-            case e ⇒ source ! Status.Failure(e)
-          }
+          readResult map (source !)
         }
+
+      case _: IO.Connected ⇒ //don't care
 
       case IO.Read(`socket`, bytes) ⇒
         state(IO Chunk bytes)
 
       case IO.Closed(`socket`, cause) ⇒
-        state(IO EOF cause)
-        throw (cause getOrElse new RuntimeException("Socket closed"))
-
+        state(cause)
+        throw cause match {
+          case IO.Error(t) ⇒ t
+          case _           ⇒ new RuntimeException("Socket closed")
+        }
     }
 
     override def postStop {
       socket.close()
-      state(IO EOF None)
+      state(IO.EOF)
     }
 
     def readResult: IO.Iteratee[Any] = {
       IO take 1 map (_.utf8String) flatMap {
         case "+" ⇒ IO takeUntil EOL map (msg ⇒ msg.utf8String)
-        case "-" ⇒ IO takeUntil EOL flatMap (err ⇒ IO throwErr new RuntimeException(err.utf8String))
+        case "-" ⇒ IO takeUntil EOL flatMap (err ⇒ IO.Failure(new RuntimeException(err.utf8String)))
         case "$" ⇒
           IO takeUntil EOL map (_.utf8String.toInt) flatMap {
             case -1 ⇒ IO Done None
@@ -217,10 +226,10 @@ object IOActorSpec {
                   case (Right(m), List(Some(k: String), Some(v: String))) ⇒ Right(m + (k -> v))
                   case (Right(_), _) ⇒ Left("Unexpected Response")
                   case (left, _) ⇒ left
-                } fold (msg ⇒ IO throwErr new RuntimeException(msg), IO Done _)
+                } fold (msg ⇒ IO.Failure(new RuntimeException(msg)), IO Done _)
               }
           }
-        case _ ⇒ IO throwErr new RuntimeException("Unexpected Response")
+        case _ ⇒ IO.Failure(new RuntimeException("Unexpected Response"))
       }
     }
   }
@@ -240,9 +249,12 @@ class IOActorSpec extends AkkaSpec with DefaultTimeout {
    * @param filter determines which exceptions should be retried
    * @return a future containing the result or the last exception before a limit was hit.
    */
-  def retry[T](count: Option[Int] = None, timeout: Option[Duration] = None, delay: Option[Duration] = Some(100 millis), filter: Option[Throwable ⇒ Boolean] = None)(future: ⇒ Future[T])(implicit executor: ExecutionContext): Future[T] = {
+  def retry[T](count: Option[Int] = None,
+               timeout: Option[FiniteDuration] = None,
+               delay: Option[FiniteDuration] = Some(100 millis),
+               filter: Option[Throwable ⇒ Boolean] = None)(future: ⇒ Future[T])(implicit executor: ExecutionContext): Future[T] = {
 
-    val promise = Promise[T]()(executor)
+    val promise = Promise[T]()
 
     val timer: Option[Deadline] = timeout match {
       case Some(duration) ⇒ Some(duration fromNow)
@@ -254,7 +266,7 @@ class IOActorSpec extends AkkaSpec with DefaultTimeout {
 
     def run(n: Int) {
       future onComplete {
-        case Left(e) if check(n, e) ⇒
+        case Failure(e) if check(n, e) ⇒
           if (delay.isDefined) {
             executor match {
               case m: MessageDispatcher ⇒ m.prerequisites.scheduler.scheduleOnce(delay.get)(run(n + 1))
@@ -267,15 +279,16 @@ class IOActorSpec extends AkkaSpec with DefaultTimeout {
 
     run(0)
 
-    promise
+    promise.future
   }
 
   "an IO Actor" must {
+    import system.dispatcher
     "run echo server" in {
       filterException[java.net.ConnectException] {
         val addressPromise = Promise[SocketAddress]()
         val server = system.actorOf(Props(new SimpleEchoServer(addressPromise)))
-        val address = Await.result(addressPromise, TestLatch.DefaultTimeout)
+        val address = Await.result(addressPromise.future, TestLatch.DefaultTimeout)
         val client = system.actorOf(Props(new SimpleEchoClient(address)))
         val f1 = retry() { client ? ByteString("Hello World!1") }
         val f2 = retry() { client ? ByteString("Hello World!2") }
@@ -292,7 +305,7 @@ class IOActorSpec extends AkkaSpec with DefaultTimeout {
       filterException[java.net.ConnectException] {
         val addressPromise = Promise[SocketAddress]()
         val server = system.actorOf(Props(new SimpleEchoServer(addressPromise)))
-        val address = Await.result(addressPromise, TestLatch.DefaultTimeout)
+        val address = Await.result(addressPromise.future, TestLatch.DefaultTimeout)
         val client = system.actorOf(Props(new SimpleEchoClient(address)))
         val list = List.range(0, 100)
         val f = Future.traverse(list)(i ⇒ retry() { client ? ByteString(i.toString) })
@@ -306,7 +319,7 @@ class IOActorSpec extends AkkaSpec with DefaultTimeout {
       filterException[java.net.ConnectException] {
         val addressPromise = Promise[SocketAddress]()
         val server = system.actorOf(Props(new KVStore(addressPromise)))
-        val address = Await.result(addressPromise, TestLatch.DefaultTimeout)
+        val address = Await.result(addressPromise.future, TestLatch.DefaultTimeout)
         val client1 = system.actorOf(Props(new KVClient(address)))
         val client2 = system.actorOf(Props(new KVClient(address)))
         val f1 = retry() { client1 ? KVSet("hello", "World") }
@@ -326,6 +339,80 @@ class IOActorSpec extends AkkaSpec with DefaultTimeout {
         system.stop(server)
       }
     }
+
+    "takeUntil must fail on EOF before predicate when used with repeat" in {
+      val CRLF = ByteString("\r\n")
+      val dest = new InetSocketAddress(InetAddress.getLocalHost.getHostAddress, { val s = new java.net.ServerSocket(0); try s.getLocalPort finally s.close() })
+
+      val a = system.actorOf(Props(new Actor {
+        val state = IO.IterateeRef.Map.async[IO.Handle]()(context.dispatcher)
+
+        override def preStart {
+          IOManager(context.system) listen dest
+        }
+
+        def receive = {
+          case _: IO.Listening ⇒ testActor ! "Wejkipejki"
+          case IO.NewClient(server) ⇒
+            val socket = server.accept()
+            state(socket) flatMap (_ ⇒ IO.repeat(for (input ← IO.takeUntil(CRLF)) yield testActor ! input.utf8String))
+
+          case IO.Read(socket, bytes) ⇒
+            state(socket)(IO Chunk bytes)
+
+          case IO.Closed(socket, cause) ⇒
+            state(socket)(IO EOF)
+            state -= socket
+            testActor ! "eof"
+        }
+      }))
+      expectMsg("Wejkipejki")
+      val s = new Socket(dest.getAddress, dest.getPort)
+      try {
+        val expectedReceive = Seq("ole", "dole", "doff", "kinke", "lane", "koff", "ole", "dole", "dinke", "dane", "ole", "dole")
+        val expectedSend = expectedReceive ++ Seq("doff")
+        val out = s.getOutputStream
+        out.write(expectedSend.mkString(CRLF.utf8String).getBytes("UTF-8"))
+        out.flush()
+        for (word ← expectedReceive) expectMsg(word)
+        s.close()
+        expectMsg("eof")
+      } finally {
+        if (!s.isClosed) s.close()
+      }
+    }
+
+    "fail when listening on an invalid address" in {
+      implicit val self = testActor
+      val address = new InetSocketAddress("irate.elephant", 9999)
+      IOManager(system).listen(address)
+      expectMsgType[Status.Failure](1 seconds)
+    }
+
+    "fail when listening on a privileged port" in {
+      implicit val self = testActor
+      val address = new InetSocketAddress("localhost", 80) // Assumes test not run as root
+      IOManager(system).listen(address)
+      expectMsgType[Status.Failure](1 seconds)
+    }
+
+    "fail when connecting to an invalid address" in {
+      implicit val self = testActor
+      val address = new InetSocketAddress("irate.elephant", 80)
+      IOManager(system).connect(address)
+      expectMsgType[Status.Failure](1 seconds)
+    }
+
+    "fail when binding to already bound port and report port in failure" in {
+      implicit val self = testActor
+      IOManager(system).listen(new InetSocketAddress("localhost", 0))
+      val boundTo = expectMsgType[IO.Listening].address.asInstanceOf[InetSocketAddress]
+      IOManager(system).listen(boundTo)
+      val exc = expectMsgType[Status.Failure].cause
+      exc.getClass must be(classOf[AkkaException])
+      exc.getMessage must include(boundTo.getPort.toString)
+    }
+
   }
 
 }

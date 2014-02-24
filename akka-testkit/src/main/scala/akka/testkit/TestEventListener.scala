@@ -1,16 +1,21 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.testkit
 
+import language.existentials
+
 import scala.util.matching.Regex
+import scala.collection.immutable
+import scala.concurrent.duration.Duration
+import scala.reflect.ClassTag
 import akka.actor.{ DeadLetter, ActorSystem, Terminated, UnhandledMessage }
-import akka.dispatch.{ SystemMessage, Terminate }
+import akka.dispatch.sysmsg.{ SystemMessage, Terminate }
 import akka.event.Logging.{ Warning, LogEvent, InitializeLogger, Info, Error, Debug, LoggerInitialized }
 import akka.event.Logging
+import akka.actor.NoSerializationVerificationNeeded
+import akka.japi.Util.immutableSeq
 import java.lang.{ Iterable ⇒ JIterable }
-import scala.collection.JavaConverters
-import akka.util.Duration
 
 /**
  * Implementation helpers of the EventFilter facilities: send `Mute`
@@ -34,22 +39,22 @@ sealed trait TestEvent
  */
 object TestEvent {
   object Mute {
-    def apply(filter: EventFilter, filters: EventFilter*): Mute = new Mute(filter +: filters.toSeq)
+    def apply(filter: EventFilter, filters: EventFilter*): Mute = new Mute(filter +: filters.to[immutable.Seq])
   }
-  case class Mute(filters: Seq[EventFilter]) extends TestEvent {
+  case class Mute(filters: immutable.Seq[EventFilter]) extends TestEvent with NoSerializationVerificationNeeded {
     /**
-     * Java API
+     * Java API: create a Mute command from a list of filters
      */
-    def this(filters: JIterable[EventFilter]) = this(JavaConverters.iterableAsScalaIterableConverter(filters).asScala.toSeq)
+    def this(filters: JIterable[EventFilter]) = this(immutableSeq(filters))
   }
   object UnMute {
-    def apply(filter: EventFilter, filters: EventFilter*): UnMute = new UnMute(filter +: filters.toSeq)
+    def apply(filter: EventFilter, filters: EventFilter*): UnMute = new UnMute(filter +: filters.to[immutable.Seq])
   }
-  case class UnMute(filters: Seq[EventFilter]) extends TestEvent {
+  case class UnMute(filters: immutable.Seq[EventFilter]) extends TestEvent with NoSerializationVerificationNeeded {
     /**
-     * Java API
+     * Java API: create an UnMute command from a list of filters
      */
-    def this(filters: JIterable[EventFilter]) = this(JavaConverters.iterableAsScalaIterableConverter(filters).asScala.toSeq)
+    def this(filters: JIterable[EventFilter]) = this(immutableSeq(filters))
   }
 }
 
@@ -156,8 +161,8 @@ object EventFilter {
    * `null` does NOT work (passing `null` disables the
    * source filter).''
    */
-  def apply[A <: Throwable: Manifest](message: String = null, source: String = null, start: String = "", pattern: String = null, occurrences: Int = Int.MaxValue): EventFilter =
-    ErrorFilter(manifest[A].erasure, Option(source),
+  def apply[A <: Throwable: ClassTag](message: String = null, source: String = null, start: String = "", pattern: String = null, occurrences: Int = Int.MaxValue): EventFilter =
+    ErrorFilter(implicitly[ClassTag[A]].runtimeClass, Option(source),
       if (message ne null) Left(message) else Option(pattern) map (new Regex(_)) toRight start,
       message ne null)(occurrences)
 
@@ -272,7 +277,7 @@ case class ErrorFilter(
   }
 
   /**
-   * Java API
+   * Java API: create an ErrorFilter
    *
    * @param source
    *   apply this filter only to events from the given source; do not filter on source if this is given as <code>null</code>
@@ -321,7 +326,7 @@ case class WarningFilter(
   }
 
   /**
-   * Java API
+   * Java API: create a WarningFilter
    *
    * @param source
    *   apply this filter only to events from the given source; do not filter on source if this is given as <code>null</code>
@@ -364,7 +369,7 @@ case class InfoFilter(
   }
 
   /**
-   * Java API
+   * Java API: create an InfoFilter
    *
    * @param source
    *   apply this filter only to events from the given source; do not filter on source if this is given as <code>null</code>
@@ -407,7 +412,7 @@ case class DebugFilter(
   }
 
   /**
-   * Java API
+   * Java API: create a DebugFilter
    *
    * @param source
    *   apply this filter only to events from the given source; do not filter on source if this is given as <code>null</code>
@@ -448,7 +453,7 @@ case class CustomEventFilter(test: PartialFunction[LogEvent, Boolean])(occurrenc
  *
  * <pre><code>
  * akka {
- *   event-handlers = ["akka.testkit.TestEventListener"]
+ *   loggers = ["akka.testkit.TestEventListener"]
  * }
  * </code></pre>
  */

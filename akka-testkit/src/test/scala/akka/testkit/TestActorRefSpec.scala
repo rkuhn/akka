@@ -1,24 +1,22 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.testkit
 
+import language.{ postfixOps, reflectiveCalls }
 import org.scalatest.matchers.MustMatchers
 import org.scalatest.{ BeforeAndAfterEach, WordSpec }
 import akka.actor._
 import akka.event.Logging.Warning
-import akka.dispatch.{ Future, Promise, Await }
-import akka.util.duration._
+import scala.concurrent.{ Future, Promise, Await }
+import scala.concurrent.duration._
 import akka.actor.ActorSystem
 import akka.pattern.ask
 import akka.dispatch.Dispatcher
 
 /**
  * Test whether TestActorRef behaves as an ActorRef should, besides its own spec.
- *
- * @author Roland Kuhn
  */
-
 object TestActorRefSpec {
 
   var counter = 4
@@ -58,7 +56,9 @@ object TestActorRefSpec {
 
   class WorkerActor() extends TActor {
     def receiveT = {
-      case "work"              ⇒ sender ! "workDone"; context.stop(self)
+      case "work" ⇒
+        sender ! "workDone"
+        context stop self
       case replyTo: Promise[_] ⇒ replyTo.asInstanceOf[Promise[Any]].success("complexReply")
       case replyTo: ActorRef   ⇒ replyTo ! "complexReply"
     }
@@ -90,9 +90,17 @@ object TestActorRefSpec {
   class ReceiveTimeoutActor(target: ActorRef) extends Actor {
     context setReceiveTimeout 1.second
     def receive = {
-      case ReceiveTimeout ⇒ target ! "timeout"
+      case ReceiveTimeout ⇒
+        target ! "timeout"
+        context stop self
     }
   }
+
+  /**
+   * Forwarding `Terminated` to non-watching testActor is not possible,
+   * and therefore the `Terminated` message is wrapped.
+   */
+  case class WrappedTerminated(t: Terminated)
 
 }
 
@@ -115,7 +123,7 @@ class TestActorRefSpec extends AkkaSpec("disp1.type=Dispatcher") with BeforeAndA
 
       "used with TestActorRef" in {
         val a = TestActorRef(Props(new Actor {
-          val nested = TestActorRef(Props(self ⇒ { case _ ⇒ }))
+          val nested = TestActorRef(Props(new Actor { def receive = { case _ ⇒ } }))
           def receive = { case _ ⇒ sender ! nested }
         }))
         a must not be (null)
@@ -126,7 +134,7 @@ class TestActorRefSpec extends AkkaSpec("disp1.type=Dispatcher") with BeforeAndA
 
       "used with ActorRef" in {
         val a = TestActorRef(Props(new Actor {
-          val nested = context.actorOf(Props(self ⇒ { case _ ⇒ }))
+          val nested = context.actorOf(Props(new Actor { def receive = { case _ ⇒ } }))
           def receive = { case _ ⇒ sender ! nested }
         }))
         a must not be (null)
@@ -167,13 +175,16 @@ class TestActorRefSpec extends AkkaSpec("disp1.type=Dispatcher") with BeforeAndA
         val a = TestActorRef(Props[WorkerActor])
         val forwarder = system.actorOf(Props(new Actor {
           context.watch(a)
-          def receive = { case x ⇒ testActor forward x }
+          def receive = {
+            case t: Terminated ⇒ testActor forward WrappedTerminated(t)
+            case x             ⇒ testActor forward x
+          }
         }))
         a.!(PoisonPill)(testActor)
         expectMsgPF(5 seconds) {
-          case Terminated(`a`) ⇒ true
+          case WrappedTerminated(Terminated(`a`)) ⇒ true
         }
-        a.isTerminated() must be(true)
+        a.isTerminated must be(true)
         assertThread
       }
     }
@@ -233,7 +244,7 @@ class TestActorRefSpec extends AkkaSpec("disp1.type=Dispatcher") with BeforeAndA
 
     "set receiveTimeout to None" in {
       val a = TestActorRef[WorkerActor]
-      a.underlyingActor.context.receiveTimeout must be(None)
+      a.underlyingActor.context.receiveTimeout must be theSameInstanceAs Duration.Undefined
     }
 
     "set CallingThreadDispatcher" in {
@@ -246,10 +257,17 @@ class TestActorRefSpec extends AkkaSpec("disp1.type=Dispatcher") with BeforeAndA
       a.underlying.dispatcher.getClass must be(classOf[Dispatcher])
     }
 
-    "proxy receive for the underlying actor" in {
+    "proxy receive for the underlying actor without sender" in {
       val ref = TestActorRef[WorkerActor]
       ref.receive("work")
-      ref.isTerminated() must be(true)
+      ref.isTerminated must be(true)
+    }
+
+    "proxy receive for the underlying actor with sender" in {
+      val ref = TestActorRef[WorkerActor]
+      ref.receive("work", testActor)
+      ref.isTerminated must be(true)
+      expectMsg("workDone")
     }
 
   }

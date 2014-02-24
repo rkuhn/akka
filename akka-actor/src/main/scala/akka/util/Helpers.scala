@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 package akka.util
 
@@ -8,6 +8,8 @@ import scala.annotation.tailrec
 import java.util.regex.Pattern
 
 object Helpers {
+
+  val isWindows: Boolean = System.getProperty("os.name", "").toLowerCase.indexOf("win") >= 0
 
   def makePattern(s: String): Pattern = Pattern.compile("^\\Q" + s.replace("?", "\\E.\\Q").replace("*", "\\E.*\\Q") + "\\E$")
 
@@ -38,32 +40,54 @@ object Helpers {
   final val base64chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+~"
 
   @tailrec
-  def base64(l: Long, sb: StringBuilder = new StringBuilder("$")): String = {
-    sb += base64chars.charAt(l.toInt & 63)
+  def base64(l: Long, sb: java.lang.StringBuilder = new java.lang.StringBuilder("$")): String = {
+    sb append base64chars.charAt(l.toInt & 63)
     val next = l >>> 6
     if (next == 0) sb.toString
     else base64(next, sb)
   }
 
-  def ignore[E: Manifest](body: ⇒ Unit) {
-    try {
-      body
-    } catch {
-      case e if manifest[E].erasure.isAssignableFrom(e.getClass) ⇒ ()
+  /**
+   * Implicit class providing `requiring` methods. This class is based on
+   * `Predef.ensuring` in the Scala standard library. The difference is that
+   * this class's methods throw `IllegalArgumentException`s rather than
+   * `AssertionError`s.
+   *
+   * An example adapted from `Predef`'s documentation:
+   * {{{
+   * import akka.util.Helpers.Requiring
+   *
+   * def addNaturals(nats: List[Int]): Int = {
+   *   require(nats forall (_ >= 0), "List contains negative numbers")
+   *   nats.foldLeft(0)(_ + _)
+   * } requiring(_ >= 0)
+   * }}}
+   *
+   * @param value The value to check.
+   */
+  @inline final implicit class Requiring[A](val value: A) extends AnyVal {
+    /**
+     * Check that a condition is true. If true, return `value`, otherwise throw
+     * an `IllegalArgumentException` with the given message.
+     *
+     * @param cond The condition to check.
+     * @param msg The message to report if the condition isn't met.
+     */
+    @inline def requiring(cond: Boolean, msg: ⇒ Any): A = {
+      require(cond, msg)
+      value
     }
-  }
 
-  def withPrintStackTraceOnError(body: ⇒ Unit) {
-    try {
-      body
-    } catch {
-      case e: Throwable ⇒
-        val sw = new java.io.StringWriter()
-        var root = e
-        while (root.getCause ne null) root = e.getCause
-        root.printStackTrace(new java.io.PrintWriter(sw))
-        System.err.println(sw.toString)
-        throw e
+    /**
+     * Check that a condition is true for the `value`. If true, return `value`,
+     * otherwise throw an `IllegalArgumentException` with the given message.
+     *
+     * @param cond The function used to check the `value`.
+     * @param msg The message to report if the condition isn't met.
+     */
+    @inline def requiring(cond: A ⇒ Boolean, msg: ⇒ Any): A = {
+      require(cond(value), msg)
+      value
     }
   }
 }

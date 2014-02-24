@@ -1,14 +1,14 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.actor
 
+import language.postfixOps
 import akka.testkit._
-import akka.util.duration._
-
+import scala.concurrent.duration._
 import java.util.concurrent.atomic.AtomicInteger
-import akka.dispatch.Await
+import scala.concurrent.Await
 import java.util.concurrent.TimeoutException
 
 @org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
@@ -22,7 +22,7 @@ class ReceiveTimeoutSpec extends AkkaSpec {
       val timeoutActor = system.actorOf(Props(new Actor {
         context.setReceiveTimeout(500 milliseconds)
 
-        protected def receive = {
+        def receive = {
           case ReceiveTimeout ⇒ timeoutLatch.open
         }
       }))
@@ -38,7 +38,7 @@ class ReceiveTimeoutSpec extends AkkaSpec {
       val timeoutActor = system.actorOf(Props(new Actor {
         context.setReceiveTimeout(500 milliseconds)
 
-        protected def receive = {
+        def receive = {
           case Tick           ⇒ ()
           case ReceiveTimeout ⇒ timeoutLatch.open
         }
@@ -58,12 +58,12 @@ class ReceiveTimeoutSpec extends AkkaSpec {
       val timeoutActor = system.actorOf(Props(new Actor {
         context.setReceiveTimeout(500 milliseconds)
 
-        protected def receive = {
+        def receive = {
           case Tick ⇒ ()
           case ReceiveTimeout ⇒
             count.incrementAndGet
             timeoutLatch.open
-            context.resetReceiveTimeout()
+            context.setReceiveTimeout(Duration.Undefined)
         }
       }))
 
@@ -78,17 +78,13 @@ class ReceiveTimeoutSpec extends AkkaSpec {
       val timeoutLatch = TestLatch()
 
       val timeoutActor = system.actorOf(Props(new Actor {
-        protected def receive = {
+        def receive = {
           case ReceiveTimeout ⇒ timeoutLatch.open
         }
       }))
 
       intercept[TimeoutException] { Await.ready(timeoutLatch, 1 second) }
       system.stop(timeoutActor)
-    }
-
-    "have ReceiveTimeout eq to Actors ReceiveTimeout" in {
-      akka.actor.Actors.receiveTimeout must be theSameInstanceAs (ReceiveTimeout)
     }
   }
 }

@@ -1,8 +1,10 @@
 /**
- * Copyright (C) 2009-2012 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2013 Typesafe Inc. <http://www.typesafe.com>
  */
 
 package akka.transactor
+
+import language.postfixOps
 
 import akka.actor.{ Actor, ActorRef }
 import scala.concurrent.stm.InTxn
@@ -37,7 +39,7 @@ case class SendTo(actor: ActorRef, message: Option[Any] = None)
  * <br/>
  *
  * To coordinate with other transactors override the `coordinate` method.
- * The `coordinate` method maps a message to a set of [[akka.actor.Transactor.SendTo]]
+ * The `coordinate` method maps a message to a set of [[akka.transactor.SendTo]]
  * objects, pairs of `ActorRef` and a message.
  * You can use the `include` and `sendTo` methods to easily coordinate with other transactors.
  * The `include` method will send on the same message that was received to other transactors.
@@ -90,7 +92,7 @@ case class SendTo(actor: ActorRef, message: Option[Any] = None)
  * can implement normal actor behavior, or use the normal STM atomic for
  * local transactions.
  *
- * @see [[akka.transactor.Coordinated]] for more information about the underlying mechanism
+ * @see [[akka.transactor.Coordinated]]
  */
 trait Transactor extends Actor {
   private val settings = TransactorExtension(context.system)
@@ -176,8 +178,10 @@ trait Transactor extends Actor {
   /**
    * Default catch-all for the different Receive methods.
    */
-  def doNothing: Receive = new Receive {
-    def apply(any: Any) = {}
-    def isDefinedAt(any: Any) = false
-  }
+  def doNothing: Receive = EmptyReceive
+}
+
+private[akka] object EmptyReceive extends PartialFunction[Any, Unit] {
+  def apply(any: Any): Unit = ()
+  def isDefinedAt(any: Any): Boolean = false
 }
