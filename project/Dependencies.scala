@@ -31,7 +31,6 @@ object Dependencies {
     val scalaStm      = "org.scala-stm"              %% "scala-stm"                    % scalaStmVersion // Modified BSD (Scala)
 
     val slf4jApi      = "org.slf4j"                   % "slf4j-api"                    % "1.7.5"       // MIT
-    val zeroMQClient  = "org.zeromq"                 %% "zeromq-scala-binding"         % scalaZeroMQVersion // ApacheV2
     // mirrored in OSGi sample
     val uncommonsMath = "org.uncommons.maths"         % "uncommons-maths"              % "1.2.2a" exclude("jfree", "jcommon") exclude("jfree", "jfreechart")      // ApacheV2
     // mirrored in OSGi sample
@@ -123,8 +122,6 @@ object Dependencies {
   val uncommons = Seq(uncommonsMath)
 
   val docs = Seq(Test.scalatest, Test.junit, Test.junitIntf)
-
-  val zeroMQ = Seq(protobuf, zeroMQClient, Test.scalatest, Test.junit)
 
   val clusterSample = Seq(Test.scalatest, sigar)
 

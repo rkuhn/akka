@@ -56,13 +56,13 @@ object AkkaBuild extends Build {
       validatePullRequest <<= (unidoc in Compile, SphinxSupport.generate in Sphinx in docs) map { (_, _) => }
     ),
     aggregate = Seq(actor, testkit, actorTests, remote, remoteTests, camel, cluster, slf4j, agent,
-      persistence, persistenceTck, zeroMQ, kernel, osgi, docs, contrib, samples, multiNodeTestkit)
+      persistence, persistenceTck, kernel, osgi, docs, contrib, samples, multiNodeTestkit)
   )
 
   lazy val akkaScalaNightly = Project(
     id = "akka-scala-nightly",
     base = file("akka-scala-nightly"),
-    // remove dependencies that we have to build ourselves (Scala STM, ZeroMQ Scala Bindings)
+    // remove dependencies that we have to build ourselves (Scala STM)
     // samples don't work with dbuild right now
     aggregate = Seq(actor, testkit, actorTests, remote, remoteTests, camel, cluster, slf4j,
       persistence, persistenceTck, kernel, osgi, contrib, multiNodeTestkit)
@@ -131,12 +131,6 @@ object AkkaBuild extends Build {
     id = "akka-persistence-experimental-tck",
     base = file("akka-persistence-tck"),
     dependencies = Seq(persistence % "compile;test->test", testkit % "compile;test->test")
-  )
-
-  lazy val zeroMQ = Project(
-    id = "akka-zeromq",
-    base = file("akka-zeromq"),
-    dependencies = Seq(actor, testkit % "test;test->test")
   )
 
   lazy val kernel = Project(
@@ -241,7 +235,7 @@ object AkkaBuild extends Build {
     id = "akka-docs",
     base = file("akka-docs"),
     dependencies = Seq(actor, testkit % "test->test",
-      remote % "compile;test->test", cluster, slf4j, agent, zeroMQ, camel, osgi,
+      remote % "compile;test->test", cluster, slf4j, agent, camel, osgi,
       persistence % "compile;test->test", persistenceTck)
   )
 
