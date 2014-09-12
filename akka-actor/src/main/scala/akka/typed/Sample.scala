@@ -7,6 +7,8 @@ import scala.concurrent.Await
 import scala.concurrent.Future
 
 object Sample {
+  
+  import AskPattern._
 
   sealed trait Command
   case class Increment(x: Int) extends Command
@@ -68,7 +70,6 @@ object Sample {
 
   def main(args: Array[String]): Unit = {
     import Ops._
-    import AskRef._
     implicit val t = Timeout(1.second)
 
     val sys = ActorSystem("Sample")
@@ -85,10 +86,17 @@ object Sample {
 
     val wrapper2: ActorRef[WrapMsg[Exception]] = sys.spawn(Props(new Wrapper2(Props(new Terminator))))
     val future: Future[Done] =
-      // it is unfortunate that we need to annotate the type of the _ in this expression
-      wrapper2 ? (WrapMsg(new RuntimeException("hello!"), _: ActorRef[Done]))
+      /*
+       * it is unfortunate that we need to annotate the type of the _ in this expression;
+       * in this sample the information comes from the expected return type since val future
+       * is annotated, so this will probably not be an issue in most cases
+       */
+      wrapper2 ? (WrapMsg(new RuntimeException("hello!"), _))
     // just for demonstration it could also be done like this:
     wrapper2 ?[Done](WrapMsg(new RuntimeException("hello!"), _))
+    // or like this (doesn’t matter which ActorRef is passed in, just needs the system’s ActorRefProvider)
+    val pr = PromiseRef[Done](wrapper2)
+    wrapper2 ! WrapMsg(new RuntimeException("hello!"), pr.ref)
     println(Await.result(future, t.duration))
 
     sys.shutdown()
