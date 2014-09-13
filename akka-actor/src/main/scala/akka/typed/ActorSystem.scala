@@ -14,7 +14,7 @@ import akka.actor.DynamicAccess
 /**
  * Eventually there will be a new kind of ActorSystem that is started from a
  * configurable guardian (i.e. from a Props[T]). This is not yet done.
- * 
+ *
  * TODO
  */
 //trait ActorSystem[-T] extends ActorRef[T] {

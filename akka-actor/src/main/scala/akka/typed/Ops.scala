@@ -17,5 +17,7 @@ object Ops {
     def spawn[T](props: Props[T], name: String): ActorRef[T] =
       new ActorRef(ctx.actorOf(Props.untyped(props), name))
   }
+  
+  implicit def actorRefAdapter(ref: akka.actor.ActorRef): ActorRef[Any] = new ActorRef(ref)
 
 }

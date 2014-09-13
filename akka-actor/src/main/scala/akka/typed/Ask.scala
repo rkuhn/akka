@@ -9,7 +9,7 @@ import java.lang.IllegalArgumentException
 
 object AskPattern {
   implicit class Askable[T](val ref: ActorRef[T]) extends AnyVal {
-    def ?[U](f: ActorRef[U] => T)(implicit timeout: Timeout): Future[U] = ask(ref, timeout, f)
+    def ?[U](f: ActorRef[U] ⇒ T)(implicit timeout: Timeout): Future[U] = ask(ref, timeout, f)
   }
 
   class PromiseRef[U](actorRef: ActorRef[_], timeout: Timeout) {
@@ -29,12 +29,12 @@ object AskPattern {
       case _ ⇒ throw new IllegalArgumentException(s"cannot create PromiseRef for non-Akka ActorRef (${actorRef.getClass})")
     }
   }
-  
+
   object PromiseRef {
     def apply[U](actorRef: ActorRef[_])(implicit timeout: Timeout) = new PromiseRef[U](actorRef, timeout)
   }
 
-  private[typed] def ask[T, U](actorRef: ActorRef[T], timeout: Timeout, f: ActorRef[U] => T): Future[U] = {
+  private[typed] def ask[T, U](actorRef: ActorRef[T], timeout: Timeout, f: ActorRef[U] ⇒ T): Future[U] = {
     val p = PromiseRef[U](actorRef)(timeout)
     actorRef ! f(p.ref)
     p.future
