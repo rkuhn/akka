@@ -1,3 +1,6 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.typed
 
 import akka.actor.ActorSystem
@@ -41,7 +44,6 @@ object Sample {
 
   /*
    * The new way of writing actors: just behaviors, nothing special about them.
-   * 
    */
   object wrapper2 {
     def apply[T](props: Props[T]): Behavior[WrapMsg[T]] =
@@ -72,9 +74,9 @@ object Sample {
     import Behavior._
     var x = 0
     val behavior: Behavior[Command] = Static {
-      case Get(replyTo) => replyTo ! GetResult(x)
-      case Increment(n) => x += n
-      case Reset        => x = 0
+      case Get(replyTo) ⇒ replyTo ! GetResult(x)
+      case Increment(n) ⇒ x += n
+      case Reset        ⇒ x = 0
     }
   }
 

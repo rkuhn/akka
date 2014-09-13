@@ -1,3 +1,6 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.typed
 
 import scala.reflect.ClassTag
@@ -43,7 +46,7 @@ private[typed] class ActorAdapter[T: ClassTag](_initialBehavior: () ⇒ Behavior
   override def preRestart(reason: Throwable, message: Option[Any]): Unit =
     next(behavior.management(ctx, PreRestart(reason)))
   override def postRestart(reason: Throwable): Unit =
-    next(behavior.management(ctx, PreRestart(reason)))
+    next(behavior.management(ctx, PostRestart(reason)))
   override def postStop(): Unit =
     next(behavior.management(ctx, PostStop))
 }
