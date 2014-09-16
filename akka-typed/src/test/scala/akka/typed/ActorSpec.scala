@@ -8,7 +8,7 @@ class ActorSpec extends TypedSpec {
 
   object `An Actor` {
     def `should receive PreStart and PostStop`() {
-      val i = Inbox.inbox[Signal]
+      val i = Inbox.async[Signal]
       val b = Full[Any] {
         case (_, Left(PreStart)) ⇒
           i.ref ! PreStart; Stopped
@@ -23,7 +23,7 @@ class ActorSpec extends TypedSpec {
     }
 
     def `should receive PreRestart and PostRestart`() {
-      val i = Inbox.inbox[Signal]
+      val i = Inbox.async[Signal]
       val b = Full[Exception] {
         case (_, Right(ex)) ⇒
           throw ex; Same

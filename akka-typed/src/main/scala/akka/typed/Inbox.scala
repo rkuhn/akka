@@ -14,6 +14,15 @@ import akka.pattern.ask
 import akka.util.Helpers.ConfigOps
 import akka.util.Timeout
 import scala.concurrent.Future
+import akka.actor.MinimalActorRef
+import java.util.concurrent.ConcurrentLinkedQueue
+import akka.actor.ActorPath
+import akka.actor.RootActorPath
+import akka.actor.Address
+import scala.reflect.ClassTag
+import scala.collection.immutable
+import scala.annotation.tailrec
+import akka.actor.ActorRefProvider
 
 /**
  * INTERNAL API
@@ -189,9 +198,9 @@ object Inbox {
    * a system actor in the ActorSystem which is implicitly (or explicitly)
    * supplied.
    */
-  def inbox[T](implicit system: a.ActorSystem): Inbox[T] = new Inbox[T](system)
+  def async[T](implicit system: a.ActorSystem): AsyncInbox[T] = new AsyncInbox[T](system)
 
-  class Inbox[T](system: a.ActorSystem) {
+  class AsyncInbox[T](system: a.ActorSystem) {
     import system.dispatcher
 
     private val receiver: a.ActorRef = Extension(system).newReceiver
@@ -242,5 +251,30 @@ object Inbox {
     def watch(target: ActorRef[_]): Unit = receiver ! StartWatch(target.ref)
 
     def stop(): Unit = system.stop(receiver)
+  }
+
+  def sync[T](name: String): SyncInbox[T] = new SyncInbox(name)
+
+  class SyncInbox[T](name: String) {
+    private val q = new ConcurrentLinkedQueue[T]
+    private val r = new akka.actor.MinimalActorRef {
+      override def provider: ActorRefProvider = ???
+      override val path: ActorPath = RootActorPath(Address("akka", "SyncInbox")) / name
+      override def !(msg: Any)(implicit sender: akka.actor.ActorRef) = q.offer(msg.asInstanceOf[T])
+    }
+
+    val ref: ActorRef[T] = new ActorRef(r)
+    def receiveMsg(): T = q.poll() match {
+      case null ⇒ throw new NoSuchElementException(s"polling on an empty inbox: $name")
+      case x    ⇒ x
+    }
+    def receiveAll(): immutable.Seq[T] = {
+      @tailrec def rec(acc: List[T]): List[T] = q.poll() match {
+        case null ⇒ acc.reverse
+        case x    ⇒ rec(x :: acc)
+      }
+      rec(Nil)
+    }
+    def hasMessages: Boolean = q.peek() != null
   }
 }

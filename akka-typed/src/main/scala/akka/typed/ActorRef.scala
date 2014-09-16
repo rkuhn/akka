@@ -4,10 +4,13 @@
 package akka.typed
 
 import akka.actor.ActorPath
+import scala.annotation.unchecked.uncheckedVariance
 
-class ActorRef[-T](val ref: akka.actor.ActorRef) {
+class ActorRef[-T](val ref: akka.actor.ActorRef) extends java.lang.Comparable[ActorRef[_]] {
   def !(msg: T): Unit = ref ! msg
   def tell(msg: T): Unit = ref ! msg
+
+  def upcast[U >: T @uncheckedVariance]: ActorRef[U] = this.asInstanceOf[ActorRef[U]]
 
   def path: ActorPath = ref.path
 
@@ -17,4 +20,5 @@ class ActorRef[-T](val ref: akka.actor.ActorRef) {
     case _              ⇒ false
   }
   override def hashCode = ref.hashCode
+  override def compareTo(other: ActorRef[_]) = ref.compareTo(other.ref)
 }

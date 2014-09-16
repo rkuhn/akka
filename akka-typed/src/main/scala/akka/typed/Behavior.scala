@@ -118,7 +118,12 @@ object Behavior {
   def Same[T]: Behavior[T] = sameBehavior.asInstanceOf[Behavior[T]]
   def Stopped[T]: Behavior[T] = stoppedBehavior.asInstanceOf[Behavior[T]]
 
-  private[akka] val sameBehavior, stoppedBehavior = new Behavior[Nothing] {
+  private[akka] object sameBehavior extends Behavior[Nothing] {
+    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = ???
+    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = ???
+  }
+
+  private[akka] object stoppedBehavior extends Behavior[Nothing] {
     override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = ???
     override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = ???
   }
