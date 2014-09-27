@@ -7,6 +7,7 @@ import scala.concurrent.duration.FiniteDuration
 import scala.reflect.ClassTag
 import akka.actor.OneForOneStrategy
 import scala.annotation.tailrec
+import scala.collection.immutable
 
 /**
  * The behavior of an actor defines how it reacts to the messages that it
@@ -86,6 +87,14 @@ object Failure {
    */
   sealed abstract class Wrapper[T] extends Behavior[T] {
     def behavior: Behavior[T]
+    def precedence: Int
+    def wrap(b: Behavior[T]): Wrapper[T]
+  }
+  private[typed] case class NoFailure[T]() extends Wrapper[T] {
+    def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = ???
+    def message(ctx: ActorContext[T], msg: T): Behavior[T] = ???
+    def precedence = 0
+    def wrap(b: Behavior[T]): Wrapper[T] = ???
   }
   /**
    * Resuming the child actor means that the result of processing the message
@@ -96,6 +105,8 @@ object Failure {
   case class Resume[T](behavior: Behavior[T]) extends Wrapper[T] {
     def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
     def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+    def precedence = 1
+    def wrap(b: Behavior[T]): Wrapper[T] = Resume(b)
   }
   /**
    * Restarting the child actor means resetting its behavior to the initial
@@ -107,6 +118,8 @@ object Failure {
   case class Restart[T](behavior: Behavior[T]) extends Wrapper[T] {
     def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
     def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+    def precedence = 2
+    def wrap(b: Behavior[T]): Wrapper[T] = Restart(b)
   }
   /**
    * Stopping the child actor will free its resources and eventually
@@ -117,6 +130,8 @@ object Failure {
   case class Stop[T](behavior: Behavior[T]) extends Wrapper[T] {
     def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
     def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+    def precedence = 3
+    def wrap(b: Behavior[T]): Wrapper[T] = Stop(b)
   }
   /**
    * The default response to a failure in a child actor is to escalate the
@@ -127,6 +142,8 @@ object Failure {
   case class Escalate[T](behavior: Behavior[T]) extends Wrapper[T] {
     def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
     def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+    def precedence = 4
+    def wrap(b: Behavior[T]): Wrapper[T] = Escalate(b)
   }
 
   /**
@@ -269,6 +286,47 @@ object Behavior {
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(ctx, msg)
   }
 
+  case class And[T](left: Behavior[T], right: Behavior[T]) extends Behavior[T] {
+    private def sameOrOther(found: Behavior[T], old: Behavior[T]) =
+      if (found eq sameBehavior) old else found
+
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
+      val nl = left.management(ctx, msg)
+      val nr = right.management(ctx, msg)
+      val leftFailure = nl match {
+        case w: Failure.Wrapper[_] => Some(w)
+        case _                     => None
+      }
+      val rightFailure = nr match {
+        case w: Failure.Wrapper[_] => Some(w)
+        case _                     => None
+      }
+      val nextLeft = sameOrOther(Failure.unwrap(nl), left)
+      val nextRight = sameOrOther(Failure.unwrap(nr), right)
+      val next: Behavior[T] =
+        if ((nextLeft ne stoppedBehavior) && (nextRight ne stoppedBehavior)) And(nextLeft, nextRight)
+        else if (nextLeft ne stoppedBehavior) nextLeft
+        else if (nextRight ne stoppedBehavior) nextRight
+        else Stopped
+      if (leftFailure.isDefined || rightFailure.isDefined) {
+        val leftWrapper = leftFailure.getOrElse(Failure.NoFailure())
+        val rightWrapper = rightFailure.getOrElse(Failure.NoFailure())
+        if (leftWrapper.precedence >= rightWrapper.precedence) leftWrapper.wrap(next) else rightWrapper.wrap(next)
+      } else next
+    }
+
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
+      val nl = left.message(ctx, msg)
+      val nr = right.message(ctx, msg)
+      val nextLeft = sameOrOther(nl, left)
+      val nextRight = sameOrOther(nr, right)
+      if ((nextLeft ne stoppedBehavior) && (nextRight ne stoppedBehavior)) And(nextLeft, nextRight)
+      else if (nextLeft ne stoppedBehavior) nextLeft
+      else if (nextRight ne stoppedBehavior) nextRight
+      else Stopped
+    }
+  }
+  
   case class Selective[T](timeout: FiniteDuration, selector: PartialFunction[T, Behavior[T]], onTimeout: () ⇒ Behavior[T]) // TODO
 
   def SelfAware[T](behavior: ActorRef[T] ⇒ Behavior[T]): Behavior[T] =
@@ -276,7 +334,6 @@ object Behavior {
       case (ctx, Left(PreStart)) ⇒
         val behv = behavior(ctx.self)
         behv.management(ctx, PreStart)
-        behv
     }
 
   /**
