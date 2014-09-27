@@ -1,7 +1,7 @@
 package akka.typed
 
 class BehaviorSpec extends TypedSpec {
-  
+
   val childBehavior = Behavior.Static[(Int, ActorRef[String])] { case (n, ref) ⇒ ref ! n.toString }
 
   val behavior = Behavior.Contextual[String] { (ctx, msg) ⇒

@@ -9,18 +9,18 @@ object Ops {
 
   implicit class ActorSystemOps(val sys: ActorSystem) extends AnyVal {
     def spawn[T](props: Props[T]): ActorRef[T] =
-      new ActorRef(sys.actorOf(Props.untyped(props)))
+      ActorRef(sys.actorOf(Props.untyped(props)))
     def spawn[T](props: Props[T], name: String): ActorRef[T] =
-      new ActorRef(sys.actorOf(Props.untyped(props), name))
+      ActorRef(sys.actorOf(Props.untyped(props), name))
   }
 
   implicit class ActorContextOps(val ctx: akka.actor.ActorContext) extends AnyVal {
     def spawn[T](props: Props[T]): ActorRef[T] =
-      new ActorRef(ctx.actorOf(Props.untyped(props)))
+      ActorRef(ctx.actorOf(Props.untyped(props)))
     def spawn[T](props: Props[T], name: String): ActorRef[T] =
-      new ActorRef(ctx.actorOf(Props.untyped(props), name))
+      ActorRef(ctx.actorOf(Props.untyped(props), name))
   }
 
-  implicit def actorRefAdapter(ref: akka.actor.ActorRef): ActorRef[Any] = new ActorRef(ref)
+  implicit def actorRefAdapter(ref: akka.actor.ActorRef): ActorRef[Any] = ActorRef(ref)
 
 }

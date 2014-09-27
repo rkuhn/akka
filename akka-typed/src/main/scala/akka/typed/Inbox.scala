@@ -175,7 +175,7 @@ object Inbox {
     }
 
     private def wrap(msg: Any): Response[_] = msg match {
-      case a.Terminated(ref) ⇒ Terminated(new ActorRef(ref))
+      case a.Terminated(ref) ⇒ Terminated(ActorRef(ref))
       case msg               ⇒ Message(msg)
     }
   }
@@ -205,7 +205,7 @@ object Inbox {
 
     private val receiver: a.ActorRef = Extension(system).newReceiver
 
-    def ref: ActorRef[T] = new ActorRef(receiver)
+    def ref: ActorRef[T] = ActorRef(receiver)
 
     private val defaultTimeout: FiniteDuration = Extension(system).DSLDefaultTimeout
 
@@ -263,7 +263,7 @@ object Inbox {
       override def !(msg: Any)(implicit sender: akka.actor.ActorRef) = q.offer(msg.asInstanceOf[T])
     }
 
-    val ref: ActorRef[T] = new ActorRef(r)
+    val ref: ActorRef[T] = ActorRef(r)
     def receiveMsg(): T = q.poll() match {
       case null ⇒ throw new NoSuchElementException(s"polling on an empty inbox: $name")
       case x    ⇒ x

@@ -26,7 +26,7 @@ object AskPattern {
             Future.failed[U](new IllegalArgumentException(s"Timeout length must not be negative, question not sent to [$actorRef]")))
         else {
           val a = PromiseActorRef(ref.provider, timeout, targetName = actorRef.toString)
-          val b = new ActorRef[U](a)
+          val b = ActorRef[U](a)
           (b, a.result.future.asInstanceOf[Future[U]])
         }
       case _ ⇒ throw new IllegalArgumentException(s"cannot create PromiseRef for non-Akka ActorRef (${actorRef.getClass})")

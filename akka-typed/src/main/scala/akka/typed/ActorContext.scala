@@ -35,11 +35,11 @@ trait ActorContext[T] {
 
   def watch[U](other: ActorRef[U]): ActorRef[U]
 
-  def watch(other: akka.actor.ActorRef): other.type
+  def watch(other: akka.actor.ActorRef): akka.actor.ActorRef
 
   def unwatch[U](other: ActorRef[U]): ActorRef[U]
 
-  def unwatch(other: akka.actor.ActorRef): other.type
+  def unwatch(other: akka.actor.ActorRef): akka.actor.ActorRef
 
   def setReceiveTimeout(d: Duration): Unit
 
@@ -86,10 +86,7 @@ class DummyActorContext[T](
   def createWrapper[U](f: U ⇒ T): ActorRef[U] = ???
 
   def getInbox[U](name: String): Inbox.SyncInbox[U] = _children(name).asInstanceOf[Inbox.SyncInbox[U]]
-  def removeInbox(name: String): Unit = _children get name match {
-    case Some(i) ⇒ _children -= name
-    case None    ⇒
-  }
+  def removeInbox(name: String): Unit = _children -= name
 }
 
 class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSystem)
@@ -132,11 +129,11 @@ class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSy
     super.unwatch(other)
   }
   override def watch(other: akka.actor.ActorRef): other.type = {
-    eq.offer(Watched(new ActorRef[Any](other)))
+    eq.offer(Watched(ActorRef[Any](other)))
     super.watch(other)
   }
   override def unwatch(other: akka.actor.ActorRef): other.type = {
-    eq.offer(Unwatched(new ActorRef[Any](other)))
+    eq.offer(Unwatched(ActorRef[Any](other)))
     super.unwatch(other)
   }
   override def setReceiveTimeout(d: Duration): Unit = {

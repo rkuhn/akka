@@ -1,74 +1,79 @@
 package akka.typed
 
+import Pure._
+import Behavior._
+import Pure.semantics._
+import akka.actor.ActorSystem
+import scala.collection.immutable
+
 class PureSpec extends TypedSpec {
-
-  sealed trait Command
-  case object Create extends Command
-  case object Send extends Command
-  case class MkChild(name: String, props: Props[String]) extends Command
-  case object GetRefs extends Command
-  case class SetRefs(ref1: Either[ActorRef[Nothing], ActorRef[String]], ref2: Either[ActorRef[Nothing], ActorRef[String]]) extends Command
-
-  val behavior = Pure.Behavior[Command] { (ctx, msg) ⇒
-    msg match {
-      case Left(x) ⇒ ctx.unit(Behavior.Same)
-      case Right(Create) ⇒
-        for {
-          ref ← ctx.spawn(Props(child))
-        } yield next(ref)
-      case Right(MkChild(name, props)) ⇒
-        for {
-          ref1 ← ctx.spawn(props, name)
-          ref2 ← ctx.spawn(props, name)
-        } yield next2(ref1, ref2)
-    }
-  }
-
-  def next(ref: ActorRef[String]) = Pure.Behavior[Command] { (ctx, msg) ⇒
-    msg match {
-      case Right(Send) ⇒
-        ref ! "Hello World"
-        ctx.unit(Behavior.Same)
-    }
-  }
-
-  def next2(ref1: Either[ActorRef[Nothing], ActorRef[String]], ref2: Either[ActorRef[Nothing], ActorRef[String]]) =
-    Pure.Behavior[Command] { (ctx, msg) ⇒
-      msg match {
-        case Right(GetRefs) ⇒
-          for {
-            self ← ctx.self
-            _ ← ctx.unit(self ! SetRefs(ref1, ref2))
-          } yield Behavior.Same
-      }
-    }
-
-  val child = Behavior.Static[String] { case msg ⇒ }
 
   object `A Pure Behavior` {
 
-    def `must return effects`() {
-      val ctx = new DummyActorContext("fancy", Props(behavior), system)
-      // TODO: maybe stash away effects etc. in a context to the test procedure,
-      // so that this extraction of the return values does not clutter the test
-      val (effects, next: Pure.Behavior[_]) = behavior.run(ctx, Right(Create))
-      // TODO: think about tracking message sends as effects
-      val child = effects match {
-        case Pure.Spawned(x) :: Nil ⇒ x
-        case other                  ⇒ fail(s"$other was not Pure.Spawned")
+    def `must allow access to the context`() {
+      type Things = (ActorRef[SendThings], Props[SendThings], ActorSystem)
+      case class SendThings(target: ActorRef[Things])
+      val behavior = Total[SendThings] { (ctx, msg) ⇒
+        msg match {
+          case Left(_) ⇒ ctx.unit(Same)
+          case Right(m) ⇒
+            for {
+              self ← ctx.self
+              props ← ctx.props
+              system ← ctx.system
+              _ ← ctx.send(m.target, (self, props, system))
+            } yield Same
+        }
       }
-      next.run(ctx, Right(Send))
-      // TODO: need synchronous Inbox instead of this one
-      ctx.getInbox[String](child).receiveMsg() should be("Hello World")
+      val props = Props(behavior)
+      val ctx = new DummyActorContext("context", props, system)
+      val inbox = Inbox.sync[Things]("context_probe")
+      val msg = (ctx.self, props, system)
+      behavior.run(ctx, Right(SendThings(inbox.ref))).requireEffects(PF) {
+        case Messaged(_, `msg`) :: Nil ⇒
+      }
+      inbox.receiveAll() should be(List(msg))
     }
 
-    def `must track created child actors`() {
-      val ctx = new DummyActorContext("fancy", Props(behavior), system)
-      val (effects, next: Pure.Behavior[_]) = behavior.run(ctx, Right(MkChild("hello", Props(child))))
-      effects should be(List(Pure.Spawned("hello"), Pure.Spawned("hello")))
-      next.run(ctx, Right(GetRefs))
-      val c = ctx.child("hello").get.upcast[String]
-      ctx.inbox.receiveMsg() should be(SetRefs(Right(c), Left(c)))
+    def `must track child creation`() {
+      type Ref = Either[ActorRef[Nothing], ActorRef[Nothing]]
+      case class DoIt(p: Props[(Ref, Ref)])
+      val absorber = Props(Static[(Ref, Ref)] { case _ ⇒ })
+      val behavior = Total[DoIt] { (ctx, msg) ⇒
+        msg match {
+          case Left(_) ⇒ ctx.unit(Same)
+          case Right(DoIt(p)) ⇒
+            for {
+              c1 ← ctx.spawn(p, "child")
+              c2 ← ctx.spawn(p, "child")
+              _ ← ctx.send(c1.fold(_ ⇒ c2.right.get, identity), c1 -> c2)
+            } yield Same
+        }
+      }
+      val ctx = new DummyActorContext("context", Props(behavior), system)
+      behavior.run(ctx, Right(DoIt(absorber))).requireEffects(PF) {
+        case Spawned("child") :: Spawned("child") :: Messaged(ref1, (Right(ref2), Left(ref3))) :: Nil ⇒
+          val childRef = ctx.child("child").get
+          ref1 should be(childRef)
+          ref2 should be(childRef)
+          ref3 should be(childRef)
+      }
+    }
+
+    def `must track child watching`() {
+
+    }
+
+    def `must allow failure handling`() {
+      pending
+    }
+
+    def `must support receive timeouts`() {
+      pending
+    }
+
+    def `must not fire receive timeout after disabling it`() {
+      pending
     }
 
   }
