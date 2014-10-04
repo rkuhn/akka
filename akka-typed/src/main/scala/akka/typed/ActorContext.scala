@@ -3,17 +3,18 @@
  */
 package akka.typed
 
-import akka.actor.ActorSystem
 import scala.concurrent.duration.Duration
 import scala.collection.immutable
 import scala.collection.immutable.TreeSet
 import scala.collection.immutable.TreeMap
 import akka.util.Helpers
-import akka.actor.InvalidActorNameException
+import akka.{ actor ⇒ a }
 import scala.reflect.ClassTag
 import scala.reflect.classTag
 import java.util.concurrent.ConcurrentLinkedQueue
 import scala.annotation.tailrec
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.ExecutionContextExecutor
 
 trait ActorContext[T] {
 
@@ -21,7 +22,7 @@ trait ActorContext[T] {
 
   def props: Props[T]
 
-  def system: ActorSystem
+  def system: ActorSystem[Nothing]
 
   def children: Iterable[ActorRef[Nothing]]
 
@@ -30,6 +31,10 @@ trait ActorContext[T] {
   def spawn[U](props: Props[U]): ActorRef[U]
 
   def spawn[U](props: Props[U], name: String): ActorRef[U]
+
+  def actorOf(props: a.Props): a.ActorRef
+
+  def actorOf(props: a.Props, name: String): a.ActorRef
 
   def stop(childName: String): Unit
 
@@ -43,6 +48,10 @@ trait ActorContext[T] {
 
   def setReceiveTimeout(d: Duration): Unit
 
+  def schedule[T](delay: FiniteDuration, target: ActorRef[T], msg: T): a.Cancellable
+
+  implicit def executionContext: ExecutionContextExecutor
+
   /**
    * Create a child actor that will wrap messages such that other Actor’s
    * protocols can be ingested by this Actor. You are strongly advised to cache
@@ -54,7 +63,7 @@ trait ActorContext[T] {
 class DummyActorContext[T](
   val name: String,
   override val props: Props[T],
-  override implicit val system: ActorSystem) extends ActorContext[T] {
+  override implicit val system: ActorSystem[Nothing]) extends ActorContext[T] {
 
   val inbox = Inbox.sync[T](name)
   override val self = inbox.ref
@@ -71,11 +80,24 @@ class DummyActorContext[T](
   }
   override def spawn[U](props: Props[U], name: String): ActorRef[U] =
     _children get name match {
-      case Some(_) ⇒ throw new InvalidActorNameException(s"actor name $name is already taken")
+      case Some(_) ⇒ throw new a.InvalidActorNameException(s"actor name $name is already taken")
       case None ⇒
         val i = Inbox.sync[U](name)
         _children += name -> i
         i.ref
+    }
+  override def actorOf(props: a.Props): a.ActorRef = {
+    val i = Inbox.sync[Any](childName.next())
+    _children += i.ref.ref.path.name -> i
+    i.ref.ref
+  }
+  override def actorOf(props: a.Props, name: String): a.ActorRef =
+    _children get name match {
+      case Some(_) ⇒ throw new a.InvalidActorNameException(s"actor name $name is already taken")
+      case None ⇒
+        val i = Inbox.sync[Any](name)
+        _children += name -> i
+        i.ref.ref
     }
   override def stop(childName: String): Unit = () // removal is asynchronous
   def watch[U](other: ActorRef[U]): ActorRef[U] = other
@@ -83,13 +105,18 @@ class DummyActorContext[T](
   def unwatch[U](other: ActorRef[U]): ActorRef[U] = other
   def unwatch(other: akka.actor.ActorRef): other.type = other
   def setReceiveTimeout(d: Duration): Unit = ()
+  def schedule[T](delay: FiniteDuration, target: ActorRef[T], msg: T): a.Cancellable = new a.Cancellable {
+    def cancel() = false
+    def isCancelled = true
+  }
+  implicit def executionContext: ExecutionContextExecutor = system.untyped.dispatcher
   def createWrapper[U](f: U ⇒ T): ActorRef[U] = ???
 
   def getInbox[U](name: String): Inbox.SyncInbox[U] = _children(name).asInstanceOf[Inbox.SyncInbox[U]]
   def removeInbox(name: String): Unit = _children -= name
 }
 
-class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSystem)
+class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSystem[Nothing])
   extends DummyActorContext[T](_name, _props, _system) {
   import Pure._
 
@@ -115,6 +142,15 @@ class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSy
   override def spawn[U](props: Props[U], name: String): ActorRef[U] = {
     eq.offer(Spawned(name))
     super.spawn(props, name)
+  }
+  override def actorOf(props: a.Props): a.ActorRef = {
+    val ref = super.actorOf(props)
+    eq.offer(Spawned(ref.path.name))
+    ref
+  }
+  override def actorOf(props: a.Props, name: String): a.ActorRef = {
+    eq.offer(Spawned(name))
+    super.actorOf(props, name)
   }
   override def stop(childName: String): Unit = {
     eq.offer(Stopped(childName))

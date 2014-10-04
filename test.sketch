@@ -1,0 +1,19 @@
+StepWise[MyMessages] { ctx =>
+  startWith {
+    val c = ctx.watch(ctx.spawn(...))
+    val ex = new Exception("BUH")
+    c ! ex
+    (c, ex)
+  }.expectFailure(100.millis) { case (failure, (c, ex)) =>
+    failure should be(ex)
+    Failure.Restart -> (c, ex)
+  }.expectMessage(100.millis) { case (PreRestart(failure), (c, ex)) =>
+    failure should be(ex)
+    (c, ex)
+  }.expectMessage(100.millis) { case (PostRestart(failure), (c, ex)) =>
+    failures should be(ex)
+    c
+  }.expectTermination(100.millis) { case (Terminated(ref), c) =>
+    ref should be(c)
+  }
+}

@@ -23,6 +23,7 @@ import scala.reflect.ClassTag
 import scala.collection.immutable
 import scala.annotation.tailrec
 import akka.actor.ActorRefProvider
+import scala.concurrent.ExecutionContext
 
 /**
  * INTERNAL API
@@ -50,35 +51,15 @@ object Inbox {
   }
 
   private class Extension(val system: a.ExtendedActorSystem) extends akka.actor.Extension {
-    import akka.util.Helpers._
-
-    private case class MkChild(props: a.Props, name: String) extends a.NoSerializationVerificationNeeded
-    private val boss = system.systemActorOf(a.Props(
-      new a.Actor {
-        def receive = {
-          case MkChild(props, name) ⇒ sender() ! context.actorOf(props, name)
-          case any                  ⇒ sender() ! any
-        }
-      }), "dsl").asInstanceOf[a.RepointableActorRef]
 
     lazy val config = system.settings.config.getConfig("akka.actor.dsl")
 
     val DSLDefaultTimeout = config.getMillisDuration("default-timeout")
 
-    def mkChild(p: a.Props, name: String): a.ActorRef =
-      if (boss.isStarted)
-        boss.underlying.asInstanceOf[a.ActorCell].attachChild(p, name, systemService = true)
-      else {
-        implicit val timeout = system.settings.CreationTimeout
-        Await.result(boss ? MkChild(p, name), timeout.duration).asInstanceOf[a.ActorRef]
-      }
-
     val DSLInboxQueueSize = config.getInt("inbox-size")
 
     val inboxNr = new AtomicInteger
     val inboxProps = a.Props(classOf[InboxActor], DSLInboxQueueSize)
-
-    def newReceiver: a.ActorRef = mkChild(inboxProps, "inbox-" + inboxNr.incrementAndGet)
   }
 
   private implicit val deadlineOrder: Ordering[Query] = new Ordering[Query] {
@@ -191,6 +172,21 @@ object Inbox {
   case class Terminated(ref: ActorRef[Nothing]) extends Response[Nothing]
   case class Failure(ex: Throwable) extends Response[Nothing]
 
+  implicit class WithStackTrace[T](val f: Future[T]) extends AnyVal {
+    def localTrace(implicit ec: ExecutionContext): Future[T] = {
+      val ex = new RuntimeException
+      val r: Throwable ⇒ T = { other ⇒
+        throw new RuntimeException(other.getMessage(), other) {
+          override def fillInStackTrace(): Throwable = {
+            setStackTrace(ex.getStackTrace())
+            this
+          }
+        }
+      }
+      f.recover(PartialFunction(r))
+    }
+  }
+
   /**
    * Create a new actor which will internally queue up messages it gets so that
    * they can be interrogated with the [[akka.actor.dsl.Inbox!.Inbox!.receive]]
@@ -198,16 +194,16 @@ object Inbox {
    * a system actor in the ActorSystem which is implicitly (or explicitly)
    * supplied.
    */
-  def async[T](implicit system: a.ActorSystem): AsyncInbox[T] = new AsyncInbox[T](system)
+  def async[T](ctx: ActorContext[_], name: String): AsyncInbox[T] = new AsyncInbox[T](ctx, name)
 
-  class AsyncInbox[T](system: a.ActorSystem) {
-    import system.dispatcher
+  class AsyncInbox[T](ctx: ActorContext[_], name: String) {
+    import ctx.executionContext
 
-    private val receiver: a.ActorRef = Extension(system).newReceiver
+    private val receiver: a.ActorRef = ctx.actorOf(Extension(ctx.system.untyped).inboxProps, name)
 
     def ref: ActorRef[T] = ActorRef(receiver)
 
-    private val defaultTimeout: FiniteDuration = Extension(system).DSLDefaultTimeout
+    private val defaultTimeout: FiniteDuration = Extension(ctx.system.untyped).DSLDefaultTimeout
 
     /**
      * Receive a single message from the internal `receiver` actor. The supplied
@@ -216,14 +212,14 @@ object Inbox {
      */
     def receive(timeout: FiniteDuration = defaultTimeout): Future[Response[T]] = {
       implicit val t = Timeout(timeout + extraTime)
-      (receiver ? Get(Deadline.now + timeout)).asInstanceOf[Future[Response[T]]]
+      (receiver ? Get(Deadline.now + timeout)).asInstanceOf[Future[Response[T]]].localTrace
     }
 
     def receiveMsg(timeout: FiniteDuration = defaultTimeout): Future[T] =
-      receive(timeout).collect { case Message(m) ⇒ m }
+      receive(timeout).collect { case Message(m) ⇒ m }.localTrace
 
     def receiveTerminated(timeout: FiniteDuration = defaultTimeout): Future[Terminated] =
-      receive(timeout).collect { case t: Terminated ⇒ t }
+      receive(timeout).collect { case t: Terminated ⇒ t }.localTrace
 
     /**
      * Receive a single message for which the given partial function is defined
@@ -250,7 +246,7 @@ object Inbox {
      */
     def watch(target: ActorRef[_]): Unit = receiver ! StartWatch(target.ref)
 
-    def stop(): Unit = system.stop(receiver)
+    def stop(): Unit = ctx.stop(receiver.path.name)
   }
 
   def sync[T](name: String): SyncInbox[T] = new SyncInbox(name)

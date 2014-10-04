@@ -3,7 +3,6 @@ package akka.typed
 import Pure._
 import Behavior._
 import Pure.semantics._
-import akka.actor.ActorSystem
 import scala.collection.immutable
 
 class PureSpec extends TypedSpec {
@@ -11,7 +10,7 @@ class PureSpec extends TypedSpec {
   object `A Pure Behavior` {
 
     def `must allow access to the context`() {
-      type Things = (ActorRef[SendThings], Props[SendThings], ActorSystem)
+      type Things = (ActorRef[SendThings], Props[SendThings], ActorSystem[Nothing])
       case class SendThings(target: ActorRef[Things])
       val behavior = Total[SendThings] { (ctx, msg) ⇒
         msg match {

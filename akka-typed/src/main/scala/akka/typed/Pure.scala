@@ -1,6 +1,5 @@
 package akka.typed
 
-import akka.actor.ActorSystem
 import language.{ higherKinds, implicitConversions }
 import scala.concurrent.duration.Duration
 import scala.collection.immutable
@@ -63,7 +62,7 @@ object Pure {
     /**
      * Return the ActorSystem to which this actor belongs.
      */
-    def system: MonadicWithoutEffects[T, ActorSystem]
+    def system: MonadicWithoutEffects[T, ActorSystem[Nothing]]
     /**
      * Return the list of child actors that this actor has spawned.
      */

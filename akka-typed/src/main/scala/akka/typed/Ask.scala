@@ -18,11 +18,11 @@ object AskPattern {
   class PromiseRef[U](actorRef: ActorRef[_], timeout: Timeout) {
     val (ref: ActorRef[U], future: Future[U]) = actorRef.ref match {
       case ref: InternalActorRef if ref.isTerminated ⇒
-        (ref.provider.deadLetters,
+        (ActorRef[U](ref.provider.deadLetters),
           Future.failed[U](new AskTimeoutException(s"Recipient[$actorRef] had already been terminated.")))
       case ref: InternalActorRef ⇒
         if (timeout.duration.length <= 0)
-          (ref.provider.deadLetters,
+          (ActorRef[U](ref.provider.deadLetters),
             Future.failed[U](new IllegalArgumentException(s"Timeout length must not be negative, question not sent to [$actorRef]")))
         else {
           val a = PromiseActorRef(ref.provider, timeout, targetName = actorRef.toString)

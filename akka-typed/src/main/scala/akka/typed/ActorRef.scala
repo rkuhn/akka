@@ -7,7 +7,9 @@ import akka.actor.ActorPath
 import scala.annotation.unchecked.uncheckedVariance
 import language.implicitConversions
 
-class ActorRef[-T] private (val ref: akka.actor.ActorRef) extends java.lang.Comparable[ActorRef[_]] { this: ScalaActorRef[T] ⇒
+abstract class ActorRef[-T] extends java.lang.Comparable[ActorRef[_]] { this: ScalaActorRef[T] ⇒
+  def ref: akka.actor.ActorRef
+
   def tell(msg: T): Unit = ref ! msg
 
   def upcast[U >: T @uncheckedVariance]: ActorRef[U] = this.asInstanceOf[ActorRef[U]]
@@ -23,12 +25,12 @@ class ActorRef[-T] private (val ref: akka.actor.ActorRef) extends java.lang.Comp
   override def compareTo(other: ActorRef[_]) = ref.compareTo(other.ref)
 }
 
-sealed trait ScalaActorRef[-T] { this: ActorRef[T] ⇒
+trait ScalaActorRef[-T] { this: ActorRef[T] ⇒
   def !(msg: T): Unit = tell(msg)
 }
 
 object ActorRef {
-  private class Combined[T](_ref: akka.actor.ActorRef) extends ActorRef[T](_ref) with ScalaActorRef[T]
+  private class Combined[T](val ref: akka.actor.ActorRef) extends ActorRef[T] with ScalaActorRef[T]
 
   implicit def toScalaActorRef[T](ref: ActorRef[T]): ScalaActorRef[T] = ref.asInstanceOf[ScalaActorRef[T]]
 

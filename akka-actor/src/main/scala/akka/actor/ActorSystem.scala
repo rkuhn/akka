@@ -140,7 +140,7 @@ object ActorSystem {
   def apply(name: String, config: Option[Config] = None, classLoader: Option[ClassLoader] = None, defaultExecutionContext: Option[ExecutionContext] = None): ActorSystem = {
     val cl = classLoader.getOrElse(findClassLoader())
     val appConfig = config.getOrElse(ConfigFactory.load(cl))
-    new ActorSystemImpl(name, appConfig, cl, defaultExecutionContext).start()
+    new ActorSystemImpl(name, appConfig, cl, defaultExecutionContext, None).start()
   }
 
   /**
@@ -519,7 +519,12 @@ abstract class ExtendedActorSystem extends ActorSystem {
 
 }
 
-private[akka] class ActorSystemImpl(val name: String, applicationConfig: Config, classLoader: ClassLoader, defaultExecutionContext: Option[ExecutionContext]) extends ExtendedActorSystem {
+private[akka] class ActorSystemImpl(
+  val name: String,
+  applicationConfig: Config,
+  classLoader: ClassLoader,
+  defaultExecutionContext: Option[ExecutionContext],
+  val guardianProps: Option[Props]) extends ExtendedActorSystem {
 
   if (!name.matches("""^[a-zA-Z0-9][a-zA-Z0-9-]*$"""))
     throw new IllegalArgumentException(

@@ -13,37 +13,38 @@ import akka.actor.ExtensionId
 import akka.actor.ActorRefProvider
 import java.util.concurrent.ThreadFactory
 import akka.actor.DynamicAccess
+import akka.actor.ActorSystemImpl
+import com.typesafe.config.Config
+import akka.actor.ExtendedActorSystem
+import com.typesafe.config.ConfigFactory
 
 /**
- * Eventually there will be a new kind of ActorSystem that is started from a
- * configurable guardian (i.e. from a Props[T]). This is not yet done.
- *
- * TODO
  */
-//trait ActorSystem[-T] extends ActorRef[T] {
-//  def name: String
-//  def settings: akka.actor.ActorSystem.Settings
-//  def untyped: akka.actor.ActorSystem
-//  def logConfiguration(): Unit
-//  def startTime: Long
-//  def uptime: Long
-//  def eventStream: EventStream
-//  def deadLetters: akka.actor.ActorRef
-//  def scheduler: Scheduler
-//  implicit def dispatcher: ExecutionContext with Executor
-//  def registerOnTermination[T](code: => T): Unit
-//  def registerOnTermination(runnable: Runnable): Unit
-//  def awaitTermination(timeout: Duration): Unit
-//  def awaitTermination(): Unit
-//  def isTerminated: Boolean
-//  def shutdown(): Unit
-//  def registerExtension[T <: Extension](ext: ExtensionId[T]): T
-//  def extension[T <: Extension](ext: ExtensionId[T]): T
-//  def hasExtension(ext: ExtensionId[_ <: Extension]): Boolean
-//}
-//
-//trait ExtendedActorSystem[-T] extends ActorSystem[T] {
-//  def provider: ActorRefProvider
-//  def threadFactory: ThreadFactory
-//  def dynamicAccess: DynamicAccess
-//}
+abstract class ActorSystem[-T](val name: String) extends ActorRef[T] { this: ScalaActorRef[T] ⇒
+
+  val untyped: ExtendedActorSystem
+
+  lazy val ref = untyped.provider.guardian
+
+  def deadLetters[T]: ActorRef[T] = ActorRef(untyped.deadLetters)
+}
+
+object ActorSystem {
+  private class Impl[T](_name: String, _config: Config, _cl: ClassLoader, _ec: Option[ExecutionContext], _p: Props[T])
+    extends ActorSystem[T](_name) with ScalaActorRef[T] {
+    val untyped: ExtendedActorSystem = new ActorSystemImpl(_name, _config, _cl, _ec, Some(Props.untyped(_p))).start()
+  }
+
+  private class Wrapper(val untyped: ExtendedActorSystem) extends ActorSystem[Nothing](untyped.name) with ScalaActorRef[Nothing]
+
+  def apply[T](name: String, guardianProps: Props[T],
+               config: Option[Config] = None,
+               classLoader: Option[ClassLoader] = None,
+               executionContext: Option[ExecutionContext] = None): ActorSystem[T] = {
+    val cl = classLoader.getOrElse(akka.actor.ActorSystem.findClassLoader())
+    val appConfig = config.getOrElse(ConfigFactory.load(cl))
+    new Impl(name, appConfig, cl, executionContext, guardianProps)
+  }
+
+  def apply(untyped: akka.actor.ActorSystem): ActorSystem[Nothing] = new Wrapper(untyped.asInstanceOf[ExtendedActorSystem])
+}
