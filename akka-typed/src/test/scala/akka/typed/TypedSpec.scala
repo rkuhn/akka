@@ -45,6 +45,10 @@ class TypedSpec(config: Config) extends Spec with Matchers with BeforeAndAfterAl
       case Timedout   ⇒ fail("test timed out")
     }
   }
+
+  def assertEmpty(inboxes: Inbox.SyncInbox[_]*): Unit = {
+    inboxes foreach (i ⇒ withClue(s"inbox $i had messages")(i.hasMessages should be(false)))
+  }
 }
 
 object TypedSpec {

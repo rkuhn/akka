@@ -7,9 +7,10 @@ object Receptionist {
   trait ServiceKey[T]
 
   sealed trait Command
-  case class Register[T](key: ServiceKey[T], address: ActorRef[T]) extends Command
+  case class Register[T](key: ServiceKey[T], address: ActorRef[T], replyTo: ActorRef[Registered[T]]) extends Command
   case class Find[T](key: ServiceKey[T], replyTo: ActorRef[Listing[T]]) extends Command
 
+  case class Registered[T](key: ServiceKey[T], address: ActorRef[T])
   case class Listing[T](key: ServiceKey[T], addresses: Set[ActorRef[T]])
 
   /*
@@ -51,6 +52,7 @@ object Receptionist {
         case Some(old) ⇒ old + Address(r)
         case None      ⇒ Set(Address(r))
       }
+      r.replyTo ! Registered(r.key, r.address)
       behavior(map.updated(key, set))
     case (ctx, Right(f: Find[t])) ⇒
       val set = map get Key(f) getOrElse Set.empty
