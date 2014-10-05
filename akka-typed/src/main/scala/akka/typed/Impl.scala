@@ -25,7 +25,7 @@ private[typed] class ActorAdapter[T: ClassTag](_initialBehavior: () ⇒ Behavior
   }
 
   private def next(b: Behavior[T]): Unit = {
-    if (b != sameBehavior) behavior = b
+    behavior = unwrap(b, behavior)
     if (b.isInstanceOf[stoppedBehavior]) {
       context.stop(self)
     }
@@ -36,7 +36,7 @@ private[typed] class ActorAdapter[T: ClassTag](_initialBehavior: () ⇒ Behavior
       import Failed._
       import akka.actor.{ SupervisorStrategy ⇒ s }
       val b = behavior.management(ctx, Failed(ex, ActorRef(sender())))
-      next(unwrap(b))
+      next(b)
       b match {
         case Resume(_)  ⇒ s.Resume
         case Restart(_) ⇒ s.Restart

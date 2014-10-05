@@ -15,7 +15,6 @@ import java.util.concurrent.ConcurrentLinkedQueue
 import scala.annotation.tailrec
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.ExecutionContextExecutor
-import akka.typed.Behavior.sameBehavior
 import akka.typed.Behavior.stoppedBehavior
 
 trait ActorContext[T] {
@@ -144,16 +143,11 @@ class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSy
   def isStopped = current.isInstanceOf[stoppedBehavior]
 
   private def unwrap(b: Behavior[T]): Behavior[T] = {
-    @tailrec def rec(b: Behavior[T]): Behavior[T] =
-      b match {
-        case w: Failed.Wrapper[t] ⇒
-          lastWrapper = Some(w)
-          rec(Failed.unwrap(w))
-        case b if b == sameBehavior ⇒ current
-        case other                  ⇒ other
-      }
-    lastWrapper = None
-    rec(b)
+    b match {
+      case w: Failed.Wrapper[t] ⇒ lastWrapper = Some(w)
+      case _                    ⇒ lastWrapper = None
+    }
+    Behavior.unwrap(b, current)
   }
 
   override def spawn[U](props: Props[U]): ActorRef[U] = {

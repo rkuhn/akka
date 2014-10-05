@@ -85,30 +85,35 @@ object Failed {
   /**
    * Common supertype for the failure responses.
    */
-  sealed abstract class Wrapper[T] extends Behavior[T] {
-    def behavior: Behavior[T]
+  sealed abstract class Wrapper[T](_b: Behavior[T]) extends Behavior.Wrapper[T](_b) {
     def precedence: Int
     def wrap(b: Behavior[T]): Wrapper[T]
   }
 
+  /**
+   * Failure responses are in some cases communicated by using the companion
+   * objects of the wrapper behaviors, see the [[StepWise]] behavior for an
+   * example.
+   */
   sealed trait Decision
 
-  private[typed] case class NoFailure[T]() extends Wrapper[T] {
-    def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = ???
-    def message(ctx: ActorContext[T], msg: T): Behavior[T] = ???
-    def behavior: Behavior[T] = ???
+  /**
+   * INTERNAL API. This is used only to unify some internal processing of
+   * failure responses, it is never used to formulate such responses by the
+   * user.
+   */
+  private[typed] case class NoFailure[T]() extends Wrapper[T](null) {
     def precedence = 0
     def wrap(b: Behavior[T]): Wrapper[T] = ???
   }
+
   /**
    * Resuming the child actor means that the result of processing the message
    * on which it failed is just ignored, the previous state will be used to
    * process the next message. The message that triggered the failure will not
    * be processed again.
    */
-  case class Resume[T](behavior: Behavior[T]) extends Wrapper[T] {
-    def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
-    def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+  case class Resume[T](_b: Behavior[T]) extends Wrapper[T](_b) {
     def precedence = 1
     def wrap(b: Behavior[T]): Wrapper[T] = Resume(b)
   }
@@ -121,9 +126,7 @@ object Failed {
    * receive a [[PreRestart]] signal before this happens and the replacement
    * behavior will receive a [[PostRestart]] signal afterwards.
    */
-  case class Restart[T](behavior: Behavior[T]) extends Wrapper[T] {
-    def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
-    def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+  case class Restart[T](_b: Behavior[T]) extends Wrapper[T](_b) {
     def precedence = 2
     def wrap(b: Behavior[T]): Wrapper[T] = Restart(b)
   }
@@ -135,9 +138,7 @@ object Failed {
    * process can be observed by watching the child actor and reacting to its
    * [[Terminated]] signal.
    */
-  case class Stop[T](behavior: Behavior[T]) extends Wrapper[T] {
-    def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
-    def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+  case class Stop[T](_b: Behavior[T]) extends Wrapper[T](_b) {
     def precedence = 3
     def wrap(b: Behavior[T]): Wrapper[T] = Stop(b)
   }
@@ -149,21 +150,12 @@ object Failed {
    * to an exception unwinding the call stack, but it applies to the supervision
    * hierarchy instead.
    */
-  case class Escalate[T](behavior: Behavior[T]) extends Wrapper[T] {
-    def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
-    def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+  case class Escalate[T](_b: Behavior[T]) extends Wrapper[T](_b) {
     def precedence = 4
     def wrap(b: Behavior[T]): Wrapper[T] = Escalate(b)
   }
   object Escalate extends Decision
 
-  /**
-   * Remove the failure response marker wrappers from a behavior to obtain the
-   * contained real behavior.
-   */
-  @tailrec final def unwrap[T](b: Behavior[T]): Behavior[T] =
-    if (b.isInstanceOf[Wrapper[_]]) unwrap(b.asInstanceOf[Wrapper[T]].behavior)
-    else b
 }
 
 /**
@@ -298,8 +290,6 @@ object Behavior {
   }
 
   case class And[T](left: Behavior[T], right: Behavior[T]) extends Behavior[T] {
-    private def sameOrOther(found: Behavior[T], old: Behavior[T]) =
-      if (found eq sameBehavior) old else found
 
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
       val nl = left.management(ctx, msg)
@@ -312,8 +302,8 @@ object Behavior {
         case w: Failed.Wrapper[_] ⇒ Some(w)
         case _                    ⇒ None
       }
-      val nextLeft = sameOrOther(Failed.unwrap(nl), left)
-      val nextRight = sameOrOther(Failed.unwrap(nr), right)
+      val nextLeft = unwrap(nl, left)
+      val nextRight = unwrap(nr, right)
       val next: Behavior[T] =
         if ((nextLeft ne stoppedBehavior) && (nextRight ne stoppedBehavior)) And(nextLeft, nextRight)
         else if (nextLeft ne stoppedBehavior) nextLeft
@@ -329,8 +319,8 @@ object Behavior {
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
       val nl = left.message(ctx, msg)
       val nr = right.message(ctx, msg)
-      val nextLeft = sameOrOther(nl, left)
-      val nextRight = sameOrOther(nr, right)
+      val nextLeft = unwrap(nl, left)
+      val nextRight = unwrap(nr, right)
       if ((nextLeft ne stoppedBehavior) && (nextRight ne stoppedBehavior)) And(nextLeft, nextRight)
       else if (nextLeft ne stoppedBehavior) nextLeft
       else if (nextRight ne stoppedBehavior) nextRight
@@ -344,15 +334,14 @@ object Behavior {
     Full {
       case (ctx, Left(PreStart)) ⇒
         val behv = behavior(ctx.self)
-        val next = behv.management(ctx, PreStart)
-        if (next == sameBehavior) behv else next
+        unwrap(behv.management(ctx, PreStart), behv)
     }
 
   def ContextAware[T](behavior: ActorContext[T] ⇒ Behavior[T]): Behavior[T] =
     Full {
       case (ctx, Left(PreStart)) ⇒
         val behv = behavior(ctx)
-        behv.management(ctx, PreStart)
+        unwrap(behv.management(ctx, PreStart), behv)
     }
 
   /**
@@ -391,6 +380,21 @@ object Behavior {
    * INTERNAL API.
    */
   private[akka] object stoppedBehavior extends stoppedBehavior(() ⇒ ())
+
+  abstract class Wrapper[T](val behavior: Behavior[T]) extends Behavior[T] {
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+  }
+
+  def unwrap[T](behavior: Behavior[T], current: Behavior[T]): Behavior[T] = {
+    @tailrec def rec(b: Behavior[T]): Behavior[T] =
+      b match {
+        case w: Wrapper[t]          ⇒ rec(w.behavior)
+        case b if b == sameBehavior ⇒ current
+        case other                  ⇒ other
+      }
+    rec(behavior)
+  }
 
 }
 
