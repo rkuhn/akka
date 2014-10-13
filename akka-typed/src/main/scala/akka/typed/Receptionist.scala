@@ -7,8 +7,8 @@ object Receptionist {
   trait ServiceKey[T]
 
   sealed trait Command
-  case class Register[T](key: ServiceKey[T], address: ActorRef[T], replyTo: ActorRef[Registered[T]]) extends Command
-  case class Find[T](key: ServiceKey[T], replyTo: ActorRef[Listing[T]]) extends Command
+  case class Register[T](key: ServiceKey[T], address: ActorRef[T])(implicit val replyTo: ActorRef[Registered[T]]) extends Command
+  case class Find[T](key: ServiceKey[T])(implicit val replyTo: ActorRef[Listing[T]]) extends Command
 
   case class Registered[T](key: ServiceKey[T], address: ActorRef[T])
   case class Listing[T](key: ServiceKey[T], addresses: Set[ActorRef[T]])

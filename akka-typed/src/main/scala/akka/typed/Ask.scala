@@ -9,10 +9,21 @@ import akka.actor.InternalActorRef
 import akka.pattern.AskTimeoutException
 import akka.pattern.PromiseActorRef
 import java.lang.IllegalArgumentException
+import scala.util.Success
+import scala.concurrent.ExecutionContext
+import scala.util.Failure
+import akka.actor.Status
 
 object AskPattern {
   implicit class Askable[T](val ref: ActorRef[T]) extends AnyVal {
     def ?[U](f: ActorRef[U] ⇒ T)(implicit timeout: Timeout): Future[U] = ask(ref, timeout, f)
+  }
+
+  implicit class PipeTo[T](val f: Future[T]) extends AnyVal {
+    def pipeTo(target: ActorRef[T])(implicit ec: ExecutionContext): Unit = f.onComplete {
+      case Success(v)  ⇒ target ! v
+      case Failure(ex) ⇒ // FIXME
+    }
   }
 
   class PromiseRef[U](actorRef: ActorRef[_], timeout: Timeout) {
