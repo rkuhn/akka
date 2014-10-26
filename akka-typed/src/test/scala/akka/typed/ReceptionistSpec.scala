@@ -105,10 +105,11 @@ class ReceptionistSpec extends TypedSpec {
       StepWise[Registered[ServiceA]] { (ctx, startWith) ⇒
         val self = ctx.self
         import system.untyped.dispatcher
-        startWith {
+        startWith.withKeepTraces(true) {
           val r = ctx.spawn(Props(behavior))
           val s = ctx.spawn(propsA)
           val f = r ? Register(ServiceKeyA, s)
+          r ! Register(ServiceKeyA, s)(self)
           (f, s)
         }.expectMessage(1.second) {
           case (msg, (f, s)) ⇒
