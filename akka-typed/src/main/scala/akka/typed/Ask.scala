@@ -14,16 +14,28 @@ import scala.concurrent.ExecutionContext
 import scala.util.Failure
 import akka.actor.Status
 
+/**
+ * The ask-pattern implements the initiator side of a request–reply protocol.
+ * The party that asks may be within or without an Actor, since the
+ * implementation will fabricate a (hidden) [[ActorRef]] that is bound to a
+ * [[scala.concurrent.Promise]]. This ActorRef will need to be injected in the
+ * message that is sent to the target Actor in order to function as a reply-to
+ * address, therefore the argument to the [[AskPattern$.Askable ask
+ * operator]] is not the message itself but a function that given the reply-to
+ * address will create the message.
+ * 
+ * {{{
+ * case class Request(msg: String, replyTo: ActorRef[Reply])
+ * case class Reply(msg: String)
+ * 
+ * implicit val timeout = Timeout(3.seconds)
+ * val target: ActorRef[Request] = ...
+ * val f: Future[Reply] = target ? (Request("hello", _))
+ * }}}
+ */
 object AskPattern {
   implicit class Askable[T](val ref: ActorRef[T]) extends AnyVal {
     def ?[U](f: ActorRef[U] ⇒ T)(implicit timeout: Timeout): Future[U] = ask(ref, timeout, f)
-  }
-
-  implicit class PipeTo[T](val f: Future[T]) extends AnyVal {
-    def pipeTo(target: ActorRef[T])(implicit ec: ExecutionContext): Unit = f.onComplete {
-      case Success(v)  ⇒ target ! v
-      case Failure(ex) ⇒ // FIXME
-    }
   }
 
   class PromiseRef[U](actorRef: ActorRef[_], timeout: Timeout) {

@@ -58,8 +58,9 @@ final case object PostStop extends Signal
 /**
  * Lifecycle signal that is fired when a direct child actor fails. The child
  * actor will be suspended until its fate has been decided. The decision is
- * communicated by returning the next behavior wrapped in one of [[Failure.Resume]],
- * [[Failure.Restart]], [[Failure.Stop]] or [[Failure.Escalate]]. If this is not
+ * communicated by returning the next behavior wrapped in one of
+ * [[Failed$.Resume]], [[Failed$.Restart]], [[Failed$.Stop]] 
+ * or [[Failed$.Escalate]]. If this is not
  * done then the default behavior is to escalate the failure, which amounts to
  * failing this actor with the same exception that the child actor failed with.
  */
@@ -72,7 +73,8 @@ final case class Failed(cause: Throwable, child: ActorRef[Nothing]) extends Sign
 final case object ReceiveTimeout extends Signal
 /**
  * Lifecycle signal that is fired when an Actor that was watched has terminated.
- * Watching is performed by invoking the [[ActorContext#watch]] method.
+ * Watching is performed by invoking the
+ * [[akka.typed.ActorContext!.watch[U]* watch]] method.
  */
 final case class Terminated(ref: ActorRef[Nothing]) extends Signal
 
@@ -80,6 +82,14 @@ final case class Terminated(ref: ActorRef[Nothing]) extends Signal
  * The parent of an actor decides upon the fate of a failed child actor by
  * encapsulating its next behavior in one of the four wrappers defined within
  * this class.
+ *
+ * Failure responses have an associated precedence that ranks them, which is in
+ * descending importance:
+ *
+ *  - Escalate
+ *  - Stop
+ *  - Restart
+ *  - Resume
  */
 object Failed {
   /**
@@ -87,7 +97,6 @@ object Failed {
    */
   sealed abstract class Wrapper[T](_b: Behavior[T]) extends Behavior.Wrapper[T](_b) {
     def precedence: Int
-    def wrap(b: Behavior[T]): Wrapper[T]
   }
 
   /**
@@ -289,6 +298,13 @@ object Behavior {
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(ctx, msg)
   }
 
+  /**
+   * A behavior combinator that feeds incoming messages and signals both into
+   * the left and right sub-behavior and allows them to evolve independently of
+   * each other. When one of the sub-behaviors terminates the other takes over
+   * exclusively. When both sub-behaviors respond to a [[Failed]] signal, the
+   * response with the higher precedence is chosen (see [[Failed$]]).
+   */
   case class And[T](left: Behavior[T], right: Behavior[T]) extends Behavior[T] {
 
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
@@ -328,20 +344,72 @@ object Behavior {
     }
   }
 
-  case class Selective[T](timeout: FiniteDuration, selector: PartialFunction[T, Behavior[T]], onTimeout: () ⇒ Behavior[T]) // TODO
+  // TODO
+  // case class Selective[T](timeout: FiniteDuration, selector: PartialFunction[T, Behavior[T]], onTimeout: () ⇒ Behavior[T])
 
+  /**
+   * A behavior decorator that extracts the self [[ActorRef]] while receiving the
+   * the first signal or message and uses that to construct the real behavior
+   * (which will then also receive that signal or message).
+   *
+   * Example:
+   * {{{
+   * SelfAware[MyCommand] { self =>
+   *   Simple {
+   *     case cmd =>
+   *   }
+   * }
+   * }}}
+   *
+   * This can also be used together with implicitly sender-capturing message
+   * types:
+   * {{{
+   * case class OtherMsg(msg: String)(implicit val replyTo: ActorRef[Reply])
+   *
+   * SelfAware[MyCommand] { implicit self =>
+   *   Simple {
+   *     case cmd =>
+   *       other ! OtherMsg("hello") // assuming Reply <: MyCommand
+   *   }
+   * }
+   * }}}
+   */
   def SelfAware[T](behavior: ActorRef[T] ⇒ Behavior[T]): Behavior[T] =
-    Full {
-      case (ctx, Left(PreStart)) ⇒
-        val behv = behavior(ctx.self)
-        unwrap(behv.management(ctx, PreStart), behv)
+    FullTotal { (ctx, msg) ⇒
+      msg match {
+        case Left(signal) ⇒
+          val behv = behavior(ctx.self)
+          rewrap(behv.management(ctx, signal), behv)
+        case Right(msg) ⇒
+          val behv = behavior(ctx.self)
+          rewrap(behv.message(ctx, msg), behv)
+      }
     }
 
+  /**
+   * A behavior decorator that extracts the [[ActorContext]] while receiving the
+   * the first signal or message and uses that to construct the real behavior
+   * (which will then also receive that signal or message).
+   *
+   * Example:
+   * {{{
+   * ContextAware[MyCommand] { ctx => Simple {
+   *     case cmd =>
+   *       ...
+   *   }
+   * }
+   * }}}
+   */
   def ContextAware[T](behavior: ActorContext[T] ⇒ Behavior[T]): Behavior[T] =
-    Full {
-      case (ctx, Left(PreStart)) ⇒
-        val behv = behavior(ctx)
-        unwrap(behv.management(ctx, PreStart), behv)
+    FullTotal { (ctx, msg) ⇒
+      msg match {
+        case Left(signal) ⇒
+          val behv = behavior(ctx)
+          rewrap(behv.management(ctx, signal), behv)
+        case Right(msg) ⇒
+          val behv = behavior(ctx)
+          rewrap(behv.message(ctx, msg), behv)
+      }
     }
 
   /**
@@ -351,13 +419,26 @@ object Behavior {
    * that is not necessary.
    */
   def Same[T]: Behavior[T] = sameBehavior.asInstanceOf[Behavior[T]]
+
+  /**
+   * Return this behavior from message processing to signal that this actor
+   * shall terminate voluntarily. If this actor has created child actors then
+   * these will be stopped as part of the shutdown procedure. The PostStop
+   * signal that results from stopping this actor will NOT be passed to the
+   * current behavior, it will be effectively ignored. In order to install a
+   * cleanup action please refer to
+   * [[akka.typed.Behavior$.Stopped[T](cleanup* Stopped(cleanup: () => Unit)]].
+   */
+  def Stopped[T]: Behavior[T] = stoppedBehavior.asInstanceOf[Behavior[T]]
+
   /**
    * Return this behavior from message processing to signal that this actor
    * shall terminate voluntarily. If this actor has created child actors then
    * these will be stopped as part of the shutdown procedure.
+   *
+   * @param cleanup an action to run in response to the PostStop signal that
+   *                will result from stopping this actor
    */
-  def Stopped[T]: Behavior[T] = stoppedBehavior.asInstanceOf[Behavior[T]]
-
   def Stopped[T](cleanup: () ⇒ Unit): Behavior[T] = new stoppedBehavior(cleanup).asInstanceOf[Behavior[T]]
 
   /**
@@ -372,7 +453,11 @@ object Behavior {
    * INTERNAL API.
    */
   private[akka] class stoppedBehavior(cleanup: () ⇒ Unit) extends Behavior[Nothing] {
-    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = { cleanup(); this }
+    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = {
+      assert(msg == PostStop, s"stoppedBehavior received $msg (only PostStop is expected)")
+      cleanup()
+      this
+    }
     override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = ???
   }
 
@@ -381,11 +466,25 @@ object Behavior {
    */
   private[akka] object stoppedBehavior extends stoppedBehavior(() ⇒ ())
 
+  /**
+   * In order to save allocations, additional information can be returned from a
+   * behavior by wrapping the next behavior in a subclass of this generic
+   * wrapper. Using this wrapper is needed in order to allow generic unwrapping
+   * using the [[#unwrap]] method. One use-case of this feature is failure
+   * handling, see [[Failed!]].
+   */
   abstract class Wrapper[T](val behavior: Behavior[T]) extends Behavior[T] {
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
+    def wrap(behavior: Behavior[T]): Wrapper[T]
   }
 
+  /**
+   * Given a possibly wrapped behavior (see [[Behavior.Wrapper]]) and a
+   * “current” behavior (which defines the meaning of encountering a [[#Same]]
+   * behavior) this method unwraps the behavior such that the innermost behavior
+   * is returned, i.e. it removes the decorations.
+   */
   def unwrap[T](behavior: Behavior[T], current: Behavior[T]): Behavior[T] = {
     @tailrec def rec(b: Behavior[T]): Behavior[T] =
       b match {
@@ -394,6 +493,24 @@ object Behavior {
         case other                  ⇒ other
       }
     rec(behavior)
+  }
+
+  /**
+   * INTERNAL API.
+   */
+  private[typed] def rewrap[T](behavior: Behavior[T], current: Behavior[T]): Behavior[T] = {
+    @tailrec def needsWrap(b: Behavior[T]): Boolean =
+      b match {
+        case w: Wrapper[t]          ⇒ needsWrap(w.behavior)
+        case b if b == sameBehavior ⇒ true
+        case other                  ⇒ false
+      }
+    def reWrap(b: Behavior[T]): Behavior[T] =
+      b match {
+        case w: Wrapper[t] ⇒ w.wrap(reWrap(w.behavior))
+        case _             ⇒ current
+      }
+    if (needsWrap(behavior)) reWrap(behavior) else behavior
   }
 
 }

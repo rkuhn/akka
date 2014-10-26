@@ -113,7 +113,7 @@ object Pure {
     /**
      * Register for the delivery of a [[ReceiveTimeout]] signal in case no other
      * message is received for a duration greater than the given one. Set to
-     * [[Duration.Undefined]] in order to unregister, but beware that the signal
+     * [[scala.concurrent.duration.Duration.Undefined]] in order to unregister, but beware that the signal
      * may be received afterwards if the timer fired concurrently with the
      * processing of this effect.
      */
@@ -182,8 +182,8 @@ object Pure {
    * The only predefined differences concern the tracking of effects:
    *
    *  * [[ExecutionMode.NonTracking]] will not allocate or store effects, saving
-   *    runtime overhead; this mode is used when an [[ActorAdapter]] executes a
-   *    pure behavior.
+   *    runtime overhead; this mode is used when an ActorAdapter executes a
+   *    pure behavior (i.e. when spawning a pure behavior).
    *  * [[ExecutionMode.Tracking]] will allocate and store effects, which is
    *    useful primarily within test procedures.
    */
