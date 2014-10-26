@@ -1,9 +1,16 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.typed
 
 import language.{ higherKinds, implicitConversions }
 import scala.concurrent.duration.Duration
 import scala.collection.immutable
 
+/**
+ * This object contains tools for building purely functional Actor
+ * behaviors.
+ */
 object Pure {
   import akka.typed.{ ActorContext ⇒ AC }
 

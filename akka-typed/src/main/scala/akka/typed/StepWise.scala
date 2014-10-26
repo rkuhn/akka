@@ -1,3 +1,6 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.typed
 
 import scala.concurrent.duration.FiniteDuration
@@ -5,6 +8,32 @@ import scala.annotation.tailrec
 import java.util.concurrent.TimeoutException
 import scala.concurrent.duration.Deadline
 
+/**
+ * This object contains tools for building step-wise behaviors for formulating
+ * a linearly progressing protocol.
+ *
+ * Example:
+ * {{{
+ * import scala.concurrent.duration._
+ *
+ * StepWise[Command] { (ctx, startWith) =>
+ *   startWith {
+ *     val child = ctx.spawn(...)
+ *     child ! msg
+ *     child
+ *   }.expectMessage(100.millis) { (reply, child) =>
+ *     target ! GotReply(reply)
+ *   }
+ * }
+ * }}}
+ *
+ * State can be passed from one step to the next by returning it as is
+ * demonstrated with the `child` ActorRef in the example.
+ *
+ * This way of writing Actors can be very useful when writing Actor-based
+ * test procedures for actor systems, hence also the possibility to expect
+ * failures (see [[StepWise$.Steps!.expectFailure]]).
+ */
 object StepWise {
   import Behavior._
 

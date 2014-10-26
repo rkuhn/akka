@@ -59,7 +59,7 @@ final case object PostStop extends Signal
  * Lifecycle signal that is fired when a direct child actor fails. The child
  * actor will be suspended until its fate has been decided. The decision is
  * communicated by returning the next behavior wrapped in one of
- * [[Failed$.Resume]], [[Failed$.Restart]], [[Failed$.Stop]] 
+ * [[Failed$.Resume]], [[Failed$.Restart]], [[Failed$.Stop]]
  * or [[Failed$.Escalate]]. If this is not
  * done then the default behavior is to escalate the failure, which amounts to
  * failing this actor with the same exception that the child actor failed with.
@@ -74,7 +74,12 @@ final case object ReceiveTimeout extends Signal
 /**
  * Lifecycle signal that is fired when an Actor that was watched has terminated.
  * Watching is performed by invoking the
- * [[akka.typed.ActorContext!.watch[U]* watch]] method.
+ * [[akka.typed.ActorContext!.watch[U]* watch]] method. The DeathWatch service is
+ * idempotent, meaning that registering twice has the same effect as registering
+ * once. Registration does not need to happen before the Actor terminates, a
+ * notification is guaranteed to arrive after both registration and termination
+ * have occurred. Termination of a remote Actor can also be effected by declaring
+ * the Actor’s home system as failed (e.g. as a result of being unreachable).
  */
 final case class Terminated(ref: ActorRef[Nothing]) extends Signal
 

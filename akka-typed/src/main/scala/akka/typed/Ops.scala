@@ -5,6 +5,11 @@ package akka.typed
 
 import language.implicitConversions
 
+/**
+ * Import the contents of this object to retrofit the typed APIs onto the
+ * untyped [[akka.actor.ActorSystem]], [[akka.actor.ActorContext]] and
+ * [[akka.actor.ActorRef]].
+ */
 object Ops {
 
   implicit class ActorSystemOps(val sys: akka.actor.ActorSystem) extends AnyVal {

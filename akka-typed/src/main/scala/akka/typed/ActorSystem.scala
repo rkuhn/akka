@@ -19,6 +19,11 @@ import akka.actor.ExtendedActorSystem
 import com.typesafe.config.ConfigFactory
 
 /**
+ * An ActorSystem is home to a hierarchy of Actors. It is created using
+ * [[ActorSystem$.apply[T]]] from a [[Props]] object that describes the root
+ * Actor of this hierarchy and which will create all other Actors beneath it.
+ * A system also implements the [[ActorRef]] type, and sending a message to
+ * the system directs that message to the root Actor.
  */
 abstract class ActorSystem[-T](val name: String) extends ActorRef[T] { this: ScalaActorRef[T] ⇒
 
@@ -26,7 +31,12 @@ abstract class ActorSystem[-T](val name: String) extends ActorRef[T] { this: Sca
 
   lazy val ref = untyped.provider.guardian
 
-  def deadLetters[T]: ActorRef[T] = ActorRef(untyped.deadLetters)
+  /**
+   * The deadLetter address is a destination that will accept (and discard)
+   * every message sent to it.
+   */
+  def deadLetters[T]: ActorRef[T] = deadLetterRef
+  lazy private val deadLetterRef = ActorRef[Any](untyped.deadLetters)
 }
 
 object ActorSystem {

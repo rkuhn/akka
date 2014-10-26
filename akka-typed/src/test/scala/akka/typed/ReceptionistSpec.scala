@@ -1,3 +1,6 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.typed
 
 import Receptionist._
@@ -19,7 +22,7 @@ class ReceptionistSpec extends TypedSpec {
   object `A Receptionist` {
 
     def `must register a service`(): Unit = {
-      val ctx = new EffectfulActorContext("register", Props(receptionist), system)
+      val ctx = new EffectfulActorContext("register", Props(behavior), system)
       val a = Inbox.sync[ServiceA]("a")
       val r = Inbox.sync[Registered[_]]("r")
       ctx.run(Register(ServiceKeyA, a.ref)(r.ref))
@@ -31,7 +34,7 @@ class ReceptionistSpec extends TypedSpec {
     }
 
     def `must register two services`(): Unit = {
-      val ctx = new EffectfulActorContext("registertwo", Props(receptionist), system)
+      val ctx = new EffectfulActorContext("registertwo", Props(behavior), system)
       val a = Inbox.sync[ServiceA]("a")
       val r = Inbox.sync[Registered[_]]("r")
       ctx.run(Register(ServiceKeyA, a.ref)(r.ref))
@@ -48,7 +51,7 @@ class ReceptionistSpec extends TypedSpec {
     }
 
     def `must register two services with the same key`(): Unit = {
-      val ctx = new EffectfulActorContext("registertwosame", Props(receptionist), system)
+      val ctx = new EffectfulActorContext("registertwosame", Props(behavior), system)
       val a1 = Inbox.sync[ServiceA]("a1")
       val r = Inbox.sync[Registered[_]]("r")
       ctx.run(Register(ServiceKeyA, a1.ref)(r.ref))
@@ -65,7 +68,7 @@ class ReceptionistSpec extends TypedSpec {
     }
 
     def `must unregister services when they terminate`(): Unit = {
-      val ctx = new EffectfulActorContext("registertwosame", Props(receptionist), system)
+      val ctx = new EffectfulActorContext("registertwosame", Props(behavior), system)
       val r = Inbox.sync[Registered[_]]("r")
       val a = Inbox.sync[ServiceA]("a")
       ctx.run(Register(ServiceKeyA, a.ref)(r.ref))
@@ -100,14 +103,12 @@ class ReceptionistSpec extends TypedSpec {
 
     def `must work with ask`(): Unit = sync(runTest("Receptionist") {
       StepWise[Registered[ServiceA]] { (ctx, startWith) ⇒
-        implicit val self = ctx.self
+        val self = ctx.self
         import system.untyped.dispatcher
         startWith {
-          val r = ctx.spawn(Props(receptionist))
+          val r = ctx.spawn(Props(behavior))
           val s = ctx.spawn(propsA)
-          val f: Future[Registered[ServiceA]] = r ? (Register(ServiceKeyA, s)(_))
-          // r ? Register(ServiceKeyA, s) // does not work since currying is not tried
-          r ! Register(ServiceKeyA, s)
+          val f = r ? Register(ServiceKeyA, s)
           (f, s)
         }.expectMessage(1.second) {
           case (msg, (f, s)) ⇒

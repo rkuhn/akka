@@ -1,3 +1,6 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.typed
 
 import org.scalatest.Spec
@@ -12,7 +15,11 @@ import com.typesafe.config.ConfigFactory
 import akka.util.Timeout
 import scala.reflect.ClassTag
 import akka.actor.ActorInitializationException
+import language.existentials
 
+/**
+ * Helper class for writing tests for typed Actors with ScalaTest.
+ */
 class TypedSpec(config: Config) extends Spec with Matchers with BeforeAndAfterAll {
   import TypedSpec._
   import AskPattern._
@@ -28,11 +35,17 @@ class TypedSpec(config: Config) extends Spec with Matchers with BeforeAndAfterAl
     Await.result(system ? (Terminate(_)), timeout.duration): Status
   }
 
+  // TODO remove after basing on ScalaTest 3 with async support
   def await[T](f: Future[T]): T = Await.result(f, 30.seconds)
 
+  /**
+   * Run an Actor-based test. The test procedure is most conveniently
+   * formulated using the [[StepWise$]] behavior type.
+   */
   def runTest[T: ClassTag](name: String)(behavior: Behavior[T]): Future[Status] =
     system ? (RunTest(name, Props(behavior), _, timeout.duration))
 
+  // TODO remove after basing on ScalaTest 3 with async support
   def sync(f: Future[Status]): Unit = {
     def unwrap(ex: Throwable): Throwable = ex match {
       case ActorInitializationException(_, _, ex) ⇒ ex
@@ -46,6 +59,9 @@ class TypedSpec(config: Config) extends Spec with Matchers with BeforeAndAfterAl
     }
   }
 
+  /**
+   * Group assertion that ensures that the given inboxes are empty.
+   */
   def assertEmpty(inboxes: Inbox.SyncInbox[_]*): Unit = {
     inboxes foreach (i ⇒ withClue(s"inbox $i had messages")(i.hasMessages should be(false)))
   }

@@ -10,6 +10,10 @@ import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.ExecutionContextExecutor
 import akka.event.LoggingReceive
 
+/**
+ * INTERNAL API. Mapping the execution of a [[Behavior]] onto a good old untyped
+ * [[akka.actor.Actor]].
+ */
 private[typed] class ActorAdapter[T: ClassTag](_initialBehavior: () ⇒ Behavior[T]) extends akka.actor.Actor {
   import Behavior._
 
@@ -55,6 +59,9 @@ private[typed] class ActorAdapter[T: ClassTag](_initialBehavior: () ⇒ Behavior
     next(behavior.management(ctx, PostStop))
 }
 
+/**
+ * INTERNAL API. Wrapping an [[akka.actor.ActorContext]] as an [[ActorContext]].
+ */
 private[typed] class ActorContextAdapter[T](ctx: akka.actor.ActorContext) extends ActorContext[T] {
   import Ops._
   def self = ActorRef(ctx.self)
@@ -80,6 +87,9 @@ private[typed] class ActorContextAdapter[T](ctx: akka.actor.ActorContext) extend
   def createWrapper[U](f: U ⇒ T) = ActorRef[U](ctx.actorOf(akka.actor.Props(classOf[MessageWrapper], f)))
 }
 
+/**
+ * INTERNAL API. A small Actor that translates between message protocols.
+ */
 private[typed] class MessageWrapper(f: Any ⇒ Any) extends akka.actor.Actor {
   def receive = {
     case msg ⇒ context.parent ! f(msg)

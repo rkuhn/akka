@@ -26,7 +26,7 @@ import akka.actor.ActorRefProvider
 import scala.concurrent.ExecutionContext
 
 /**
- * INTERNAL API
+ * Message receptacles, both asynchronous and synchronous, but always typed.
  */
 object Inbox {
 

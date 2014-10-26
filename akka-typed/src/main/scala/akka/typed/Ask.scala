@@ -23,11 +23,11 @@ import akka.actor.Status
  * address, therefore the argument to the [[AskPattern$.Askable ask
  * operator]] is not the message itself but a function that given the reply-to
  * address will create the message.
- * 
+ *
  * {{{
  * case class Request(msg: String, replyTo: ActorRef[Reply])
  * case class Reply(msg: String)
- * 
+ *
  * implicit val timeout = Timeout(3.seconds)
  * val target: ActorRef[Request] = ...
  * val f: Future[Reply] = target ? (Request("hello", _))
