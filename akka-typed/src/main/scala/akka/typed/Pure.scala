@@ -247,7 +247,7 @@ object Pure {
       def combine[C, T, U](ctx: AC[C], first: Monadic[C, T], f: T ⇒ Monadic[C, U]): Result[U] =
         f(first.run(ctx, NonTracking)).run(ctx, NonTracking)
       def unwrapBehavior[T](r: Result[Behavior[T]], old: Behavior[T]): Result[Behavior[T]] =
-        if (r == Behavior.sameBehavior) old else r
+        Behavior.rewrap(r, old)
 
       private val _ctx = new NonTrackingContextImpl
       def ctx[T] = _ctx.asInstanceOf[PureContext[T]]
@@ -275,10 +275,7 @@ object Pure {
           }
         }
       def unwrapBehavior[T](r: Result[Behavior[T]], old: Behavior[T]): Result[Behavior[T]] =
-        r match {
-          case EffectsAndValue(effects, behv) if behv == Behavior.sameBehavior ⇒ EffectsAndValue(effects, old)
-          case other ⇒ other
-        }
+        EffectsAndValue(r.effects, Behavior.rewrap(r.value, old))
 
       private val _ctx = new TrackingContextImpl
       def ctx[T] = _ctx.asInstanceOf[PureContext[T]]

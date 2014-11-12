@@ -1,9 +1,12 @@
 /**
  * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
  */
-package akka.typed
+package akka.typed.patterns
 
-import Behavior._
+import akka.typed.Behavior._
+import akka.typed.ActorRef
+import akka.typed.Behavior
+import akka.typed.Terminated
 
 /**
  * A Receptionist is an entry point into an Actor hierarchy where select Actors

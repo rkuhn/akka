@@ -30,7 +30,7 @@ private[typed] class ActorAdapter[T: ClassTag](_initialBehavior: () ⇒ Behavior
 
   private def next(b: Behavior[T]): Unit = {
     behavior = unwrap(b, behavior)
-    if (b.isInstanceOf[stoppedBehavior]) {
+    if (b.isInstanceOf[stoppedBehavior[_]]) {
       context.stop(self)
     }
   }

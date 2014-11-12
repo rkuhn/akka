@@ -1,13 +1,21 @@
 /**
  * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
  */
-package akka.typed
+package akka.typed.patterns
 
 import Receptionist._
-import Behavior._
-import AskPattern._
+import akka.typed.Behavior._
+import akka.typed.AskPattern._
 import scala.concurrent.Future
 import scala.concurrent.duration._
+import akka.typed.TypedSpec
+import akka.typed.Props
+import akka.typed.EffectfulActorContext
+import akka.typed.Inbox
+import akka.typed.ActorRef
+import akka.typed.Pure
+import akka.typed.Terminated
+import akka.typed.StepWise
 
 class ReceptionistSpec extends TypedSpec {
 

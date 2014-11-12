@@ -240,7 +240,7 @@ class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSy
   def run(msg: T): Unit = current = unwrap(current.message(this, msg))
   def signal(signal: Signal): Unit = current = unwrap(current.management(this, signal))
 
-  def isStopped = current.isInstanceOf[stoppedBehavior]
+  def isStopped = current.isInstanceOf[stoppedBehavior[_]]
 
   private def unwrap(b: Behavior[T]): Behavior[T] = {
     b match {

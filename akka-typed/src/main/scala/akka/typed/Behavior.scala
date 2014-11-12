@@ -20,9 +20,30 @@ import scala.collection.immutable
  * creating a derived class or by employing factory methods like
  * [[Behavior.Simple]], [[Behavior.Static]], [[Behavior.Full]] etc.
  */
-abstract class Behavior[T] {
+abstract class Behavior[T] { self ⇒
   def management(ctx: ActorContext[T], msg: Signal): Behavior[T]
   def message(ctx: ActorContext[T], msg: T): Behavior[T]
+
+  def narrow[U <: T]: Behavior[U] = this.asInstanceOf[Behavior[U]]
+
+  def widen[U >: T](matcher: PartialFunction[U, T]): Behavior[U] =
+    new Behavior[U] { // TODO: optimize allocation-wise
+      import Behavior._
+      private def rewrap(b: Behavior[T]): Behavior[U] =
+        b match {
+          case w: Wrapper[t]          ⇒ w.wrap(rewrap(b))
+          case b if b == sameBehavior ⇒ this
+          case s: stoppedBehavior[t]  ⇒ s.asInstanceOf[Behavior[U]]
+          case _                      ⇒ b.widen(matcher)
+        }
+
+      override def management(ctx: ActorContext[U], msg: Signal): Behavior[U] =
+        rewrap(self.management(ctx.asInstanceOf[ActorContext[T]], msg))
+      override def message(ctx: ActorContext[U], msg: U): Behavior[U] =
+        if (matcher.isDefinedAt(msg))
+          rewrap(self.message(ctx.asInstanceOf[ActorContext[T]], matcher(msg)))
+        else Behavior.Unhandled
+    }
 }
 
 /**
@@ -118,7 +139,7 @@ object Failed {
    */
   private[typed] case class NoFailure[T]() extends Wrapper[T](null) {
     def precedence = 0
-    def wrap(b: Behavior[T]): Wrapper[T] = ???
+    def wrap[U](b: Behavior[U]): Wrapper[U] = ???
   }
 
   /**
@@ -129,7 +150,7 @@ object Failed {
    */
   case class Resume[T](_b: Behavior[T]) extends Wrapper[T](_b) {
     def precedence = 1
-    def wrap(b: Behavior[T]): Wrapper[T] = Resume(b)
+    def wrap[U](b: Behavior[U]): Wrapper[U] = Resume(b)
   }
   object Resume extends Decision
 
@@ -142,7 +163,7 @@ object Failed {
    */
   case class Restart[T](_b: Behavior[T]) extends Wrapper[T](_b) {
     def precedence = 2
-    def wrap(b: Behavior[T]): Wrapper[T] = Restart(b)
+    def wrap[U](b: Behavior[U]): Wrapper[U] = Restart(b)
   }
   object Restart extends Decision
 
@@ -154,7 +175,7 @@ object Failed {
    */
   case class Stop[T](_b: Behavior[T]) extends Wrapper[T](_b) {
     def precedence = 3
-    def wrap(b: Behavior[T]): Wrapper[T] = Stop(b)
+    def wrap[U](b: Behavior[U]): Wrapper[U] = Stop(b)
   }
   object Stop extends Decision
 
@@ -166,7 +187,7 @@ object Failed {
    */
   case class Escalate[T](_b: Behavior[T]) extends Wrapper[T](_b) {
     def precedence = 4
-    def wrap(b: Behavior[T]): Wrapper[T] = Escalate(b)
+    def wrap[U](b: Behavior[U]): Wrapper[U] = Escalate(b)
   }
   object Escalate extends Decision
 
@@ -202,12 +223,12 @@ object Behavior {
             }
             behavior.applyOrElse((ctx, Left(PostStop)), fallback)
           case PostRestart(_) ⇒ behavior.applyOrElse((ctx, Left(PreStart)), fallback)
-          case _              ⇒ Same
+          case _              ⇒ Unhandled
         }
       behavior.applyOrElse((ctx, Left(msg)), fallback)
     }
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
-      behavior.applyOrElse((ctx, Right(msg)), (_: (ActorContext[T], Either[Signal, T])) ⇒ Same)
+      behavior.applyOrElse((ctx, Right(msg)), (_: (ActorContext[T], Either[Signal, T])) ⇒ Unhandled)
     }
   }
 
@@ -235,7 +256,7 @@ object Behavior {
    */
   case class Simple[T](behavior: T ⇒ Behavior[T]) extends Behavior[T] {
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = msg match {
-      case _ ⇒ Same
+      case _ ⇒ Unhandled
     }
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(msg)
   }
@@ -251,7 +272,7 @@ object Behavior {
    */
   case class Static[T](behavior: T ⇒ Unit) extends Behavior[T] {
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = msg match {
-      case _ ⇒ Same
+      case _ ⇒ Unhandled
     }
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
       behavior(msg)
@@ -270,7 +291,7 @@ object Behavior {
    */
   case class Contextual[T](behavior: (ActorContext[T], T) ⇒ Behavior[T]) extends Behavior[T] {
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = msg match {
-      case _ ⇒ Same
+      case _ ⇒ Unhandled
     }
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(ctx, msg)
   }
@@ -296,11 +317,28 @@ object Behavior {
             }
             mgmt.applyOrElse((ctx, PostStop), fallback)
           case PostRestart(_) ⇒ mgmt.applyOrElse((ctx, PreStart), fallback)
-          case _              ⇒ Same
+          case _              ⇒ Unhandled
         }
       mgmt.applyOrElse((ctx, msg), fallback)
     }
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(ctx, msg)
+  }
+
+  case class SynchronousSelf[T](f: ActorRef[T] ⇒ Behavior[T]) extends Behavior[T] {
+    private val inbox = Inbox.sync[T]("syncbox")
+    private var behavior = f(inbox.ref)
+    @tailrec private def run(ctx: ActorContext[T], next: Behavior[T]): Behavior[T] =
+      if (inbox.hasMessages) run(ctx, next.message(ctx, inbox.receiveMsg()))
+      else next
+
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
+      behavior = run(ctx, behavior.management(ctx, msg))
+      this
+    }
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
+      behavior = run(ctx, behavior.message(ctx, msg))
+      this
+    }
   }
 
   /**
@@ -325,10 +363,18 @@ object Behavior {
       }
       val nextLeft = unwrap(nl, left)
       val nextRight = unwrap(nr, right)
+      val leftAlive = nextLeft match {
+        case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); false }
+        case _                     ⇒ true
+      }
+      val rightAlive = nextRight match {
+        case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); false }
+        case _                     ⇒ true
+      }
       val next: Behavior[T] =
-        if ((nextLeft ne stoppedBehavior) && (nextRight ne stoppedBehavior)) And(nextLeft, nextRight)
-        else if (nextLeft ne stoppedBehavior) nextLeft
-        else if (nextRight ne stoppedBehavior) nextRight
+        if (leftAlive && rightAlive) And(nextLeft, nextRight)
+        else if (leftAlive) nextLeft
+        else if (rightAlive) nextRight
         else Stopped
       if (leftFailure.isDefined || rightFailure.isDefined) {
         val leftWrapper = leftFailure.getOrElse(Failed.NoFailure())
@@ -338,14 +384,71 @@ object Behavior {
     }
 
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
-      val nl = left.message(ctx, msg)
-      val nr = right.message(ctx, msg)
-      val nextLeft = unwrap(nl, left)
-      val nextRight = unwrap(nr, right)
-      if ((nextLeft ne stoppedBehavior) && (nextRight ne stoppedBehavior)) And(nextLeft, nextRight)
-      else if (nextLeft ne stoppedBehavior) nextLeft
-      else if (nextRight ne stoppedBehavior) nextRight
+      val nl = unwrap(left.message(ctx, msg), left)
+      val nr = unwrap(right.message(ctx, msg), right)
+      val leftAlive = nl match {
+        case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); false }
+        case _                     ⇒ true
+      }
+      val rightAlive = nr match {
+        case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); false }
+        case _                     ⇒ true
+      }
+      if (leftAlive && rightAlive) And(nl, nr)
+      else if (leftAlive) nl
+      else if (rightAlive) nr
       else Stopped
+    }
+  }
+
+  /**
+   * A behavior combinator that feeds incoming messages and signals either into
+   * the left or right sub-behavior and allows them to evolve independently of
+   * each other. The message or signal is passed first into the left sub-behavior
+   * and only if that results in [[Behavior$.Unhandled]] is it passed to the right
+   * sub-behavior. When one of the sub-behaviors terminates the other takes over
+   * exclusively. When both sub-behaviors respond to a [[Failed]] signal, the
+   * response with the higher precedence is chosen (see [[Failed$]]).
+   */
+  case class Or[T](left: Behavior[T], right: Behavior[T]) extends Behavior[T] {
+
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
+      left.management(ctx, msg) match {
+        case b if b == unhandledBehavior ⇒
+          val nr = right.management(ctx, msg)
+          val next = unwrap(nr, right) match {
+            case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); left }
+            case other                 ⇒ Or(left, other)
+          }
+          nr match {
+            case w: Failed.Wrapper[t] ⇒ w.wrap(next)
+            case _                    ⇒ next
+          }
+        case nl ⇒
+          val next = unwrap(nl, left) match {
+            case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); right }
+            case other                 ⇒ Or(other, right)
+          }
+          nl match {
+            case w: Failed.Wrapper[t] ⇒ w.wrap(next)
+            case _                    ⇒ next
+          }
+      }
+    }
+
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
+      left.message(ctx, msg) match {
+        case b if b == unhandledBehavior ⇒
+          unwrap(right.message(ctx, msg), right) match {
+            case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); left }
+            case other                 ⇒ Or(left, other)
+          }
+        case nl ⇒
+          unwrap(nl, left) match {
+            case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); right }
+            case other                 ⇒ Or(other, right)
+          }
+      }
     }
   }
 
@@ -426,6 +529,14 @@ object Behavior {
   def Same[T]: Behavior[T] = sameBehavior.asInstanceOf[Behavior[T]]
 
   /**
+   * Return this behavior from message processing in order to advise the
+   * system to reuse the previous behavior, including the hint that the
+   * message has not been handled. This hint may be used by composite
+   * behaviors that delegate (partial) handling to other behaviors.
+   */
+  def Unhandled[T]: Behavior[T] = unhandledBehavior.asInstanceOf[Behavior[T]]
+
+  /**
    * Return this behavior from message processing to signal that this actor
    * shall terminate voluntarily. If this actor has created child actors then
    * these will be stopped as part of the shutdown procedure. The PostStop
@@ -441,10 +552,20 @@ object Behavior {
    * shall terminate voluntarily. If this actor has created child actors then
    * these will be stopped as part of the shutdown procedure.
    *
+   * TODO: think about whether the ability to defer the cleanup is really necessary
+   *
    * @param cleanup an action to run in response to the PostStop signal that
    *                will result from stopping this actor
    */
-  def Stopped[T](cleanup: () ⇒ Unit): Behavior[T] = new stoppedBehavior(cleanup).asInstanceOf[Behavior[T]]
+  def Stopped[T](cleanup: () ⇒ Unit): Behavior[T] = new stoppedBehavior(cleanup)
+
+  /**
+   * INTERNAL API.
+   */
+  private[akka] object unhandledBehavior extends Behavior[Nothing] {
+    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = ???
+    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = ???
+  }
 
   /**
    * INTERNAL API.
@@ -457,13 +578,13 @@ object Behavior {
   /**
    * INTERNAL API.
    */
-  private[akka] class stoppedBehavior(cleanup: () ⇒ Unit) extends Behavior[Nothing] {
-    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = {
+  private[akka] class stoppedBehavior[T](cleanup: () ⇒ Unit) extends Behavior[T] {
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
       assert(msg == PostStop, s"stoppedBehavior received $msg (only PostStop is expected)")
       cleanup()
       this
     }
-    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = ???
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = ???
   }
 
   /**
@@ -481,7 +602,7 @@ object Behavior {
   abstract class Wrapper[T](val behavior: Behavior[T]) extends Behavior[T] {
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
-    def wrap(behavior: Behavior[T]): Wrapper[T]
+    def wrap[U](behavior: Behavior[U]): Wrapper[U]
   }
 
   /**
@@ -493,9 +614,10 @@ object Behavior {
   def unwrap[T](behavior: Behavior[T], current: Behavior[T]): Behavior[T] = {
     @tailrec def rec(b: Behavior[T]): Behavior[T] =
       b match {
-        case w: Wrapper[t]          ⇒ rec(w.behavior)
-        case b if b == sameBehavior ⇒ current
-        case other                  ⇒ other
+        case w: Wrapper[t]       ⇒ rec(w.behavior)
+        case `sameBehavior`      ⇒ current
+        case `unhandledBehavior` ⇒ current
+        case other               ⇒ other
       }
     rec(behavior)
   }
@@ -506,9 +628,10 @@ object Behavior {
   private[typed] def rewrap[T](behavior: Behavior[T], current: Behavior[T]): Behavior[T] = {
     @tailrec def needsWrap(b: Behavior[T]): Boolean =
       b match {
-        case w: Wrapper[t]          ⇒ needsWrap(w.behavior)
-        case b if b == sameBehavior ⇒ true
-        case other                  ⇒ false
+        case w: Wrapper[t]       ⇒ needsWrap(w.behavior)
+        case `sameBehavior`      ⇒ true
+        case `unhandledBehavior` ⇒ true
+        case other               ⇒ false
       }
     def reWrap(b: Behavior[T]): Behavior[T] =
       b match {
