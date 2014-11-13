@@ -131,6 +131,13 @@ trait ActorContext[T] {
   def setReceiveTimeout(d: Duration): Unit
 
   /**
+   * When handling a [[Failed]] signal the behavior should invoke this method to
+   * inform the execution mechanism of the supervisor decision. If this is not
+   * done then the implied decision is to escalate the failure.
+   */
+  def setFailureResponse(decision: Failed.Decision): Unit
+
+  /**
    * Schedule the sending of the given message to the given target Actor after
    * the given time period has elapsed. The scheduled action can be cancelled
    * by invoking [[akka.actor.Cancellable!.cancel* cancel]] on the returned
@@ -202,6 +209,11 @@ class DummyActorContext[T](
   def unwatch[U](other: ActorRef[U]): ActorRef[U] = other
   def unwatch(other: akka.actor.ActorRef): other.type = other
   def setReceiveTimeout(d: Duration): Unit = ()
+
+  private var _lastFailureResponse: Failed.Decision = Failed.NoFailureResponse
+  def setFailureResponse(decision: Failed.Decision): Unit = _lastFailureResponse = decision
+  def getFailureResponse: Failed.Decision = _lastFailureResponse
+
   def schedule[T](delay: FiniteDuration, target: ActorRef[T], msg: T): a.Cancellable = new a.Cancellable {
     def cancel() = false
     def isCancelled = true
@@ -236,19 +248,11 @@ class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSy
   def hasEffects: Boolean = eq.peek() != null
 
   private var current = props.creator()
-  private var lastWrapper = Option.empty[Failed.Wrapper[T]]
-  def run(msg: T): Unit = current = unwrap(current.message(this, msg))
-  def signal(signal: Signal): Unit = current = unwrap(current.management(this, signal))
+
+  def run(msg: T): Unit = current = Behavior.canonicalize(this, current.message(this, msg), current)
+  def signal(signal: Signal): Unit = current = Behavior.canonicalize(this, current.management(this, signal), current)
 
   def isStopped = current.isInstanceOf[stoppedBehavior[_]]
-
-  private def unwrap(b: Behavior[T]): Behavior[T] = {
-    b match {
-      case w: Failed.Wrapper[t] ⇒ lastWrapper = Some(w)
-      case _                    ⇒ lastWrapper = None
-    }
-    Behavior.unwrap(b, current)
-  }
 
   override def spawn[U](props: Props[U]): ActorRef[U] = {
     val ref = super.spawn(props)

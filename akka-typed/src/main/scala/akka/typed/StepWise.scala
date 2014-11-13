@@ -133,14 +133,8 @@ object StepWise {
           case (_, Left(ReceiveTimeout)) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for a failure")
           case (_, Left(failure: Failed)) ⇒
             val (response, v) = f(failure, value)
-            val next = run(ctx, tail, v)
-            import Failed._
-            response match {
-              case Resume   ⇒ Resume(next)
-              case Restart  ⇒ Restart(next)
-              case Stop     ⇒ Stop(next)
-              case Escalate ⇒ Escalate(next)
-            }
+            ctx.setFailureResponse(response)
+            run(ctx, tail, v)
           case (_, other) ⇒ throwIllegalState(trace, s"unexpected $other while waiting for a message")
         }
       case Termination(t, f, trace) :: tail ⇒

@@ -29,8 +29,8 @@ private[typed] class ActorAdapter[T: ClassTag](_initialBehavior: () ⇒ Behavior
   }
 
   private def next(b: Behavior[T]): Unit = {
-    behavior = unwrap(b, behavior)
-    if (b.isInstanceOf[stoppedBehavior[_]]) {
+    behavior = canonicalize(ctx, b, behavior)
+    if (!isAlive(behavior)) {
       context.stop(self)
     }
   }
@@ -39,13 +39,13 @@ private[typed] class ActorAdapter[T: ClassTag](_initialBehavior: () ⇒ Behavior
     case ex ⇒
       import Failed._
       import akka.actor.{ SupervisorStrategy ⇒ s }
-      val b = behavior.management(ctx, Failed(ex, ActorRef(sender())))
-      next(b)
-      b match {
-        case Resume(_)  ⇒ s.Resume
-        case Restart(_) ⇒ s.Restart
-        case Stop(_)    ⇒ s.Stop
-        case _          ⇒ s.Escalate
+      ctx.setFailureResponse(Failed.NoFailureResponse)
+      next(behavior.management(ctx, Failed(ex, ActorRef(sender()))))
+      ctx.getFailureResponse match {
+        case Resume  ⇒ s.Resume
+        case Restart ⇒ s.Restart
+        case Stop    ⇒ s.Stop
+        case _       ⇒ s.Escalate
       }
   }
 
@@ -85,6 +85,10 @@ private[typed] class ActorContextAdapter[T](ctx: akka.actor.ActorContext) extend
     ctx.system.scheduler.scheduleOnce(delay, target.ref, msg)
   }
   def createWrapper[U](f: U ⇒ T) = ActorRef[U](ctx.actorOf(akka.actor.Props(classOf[MessageWrapper], f)))
+
+  private var _lastFailureResponse: Failed.Decision = Failed.NoFailureResponse
+  def setFailureResponse(decision: Failed.Decision): Unit = _lastFailureResponse = decision
+  def getFailureResponse: Failed.Decision = _lastFailureResponse
 }
 
 /**

@@ -181,7 +181,7 @@ object Pure {
     def run(ctx: AC[T], msg: Either[Signal, T]): EffectsAndValue[Behavior[T]] = run(ctx, msg, ExecutionMode.Tracking)
 
     private def execute(ctx: AC[T], m: Monadic[T, Behavior[T]], mode: ExecutionMode): mode.Result[Behavior[T]] =
-      mode.unwrapBehavior(m.run(ctx, mode), this)
+      mode.canonicalizeBehavior(ctx, m.run(ctx, mode), this)
   }
 
   /**
@@ -223,7 +223,7 @@ object Pure {
      * when invoked). Effects that were present in the input Result shall be
      * retained in the output Result.
      */
-    def unwrapBehavior[T](r: Result[Behavior[T]], old: Behavior[T]): Result[Behavior[T]]
+    def canonicalizeBehavior[T](ctx: AC[T], r: Result[Behavior[T]], old: Behavior[T]): Result[Behavior[T]]
 
     /**
      * Return an instance of [[PureContext]] that is tuned to this execution
@@ -246,8 +246,8 @@ object Pure {
       def wrapOne[T](e: Effect, v: T): T = v
       def combine[C, T, U](ctx: AC[C], first: Monadic[C, T], f: T ⇒ Monadic[C, U]): Result[U] =
         f(first.run(ctx, NonTracking)).run(ctx, NonTracking)
-      def unwrapBehavior[T](r: Result[Behavior[T]], old: Behavior[T]): Result[Behavior[T]] =
-        Behavior.rewrap(r, old)
+      def canonicalizeBehavior[T](ctx: AC[T], r: Result[Behavior[T]], old: Behavior[T]): Result[Behavior[T]] =
+        Behavior.canonicalize(ctx, r, old)
 
       private val _ctx = new NonTrackingContextImpl
       def ctx[T] = _ctx.asInstanceOf[PureContext[T]]
@@ -274,8 +274,8 @@ object Pure {
             case EffectsAndValue(effects2, value2) ⇒ EffectsAndValue(effects1 ++ effects2, value2)
           }
         }
-      def unwrapBehavior[T](r: Result[Behavior[T]], old: Behavior[T]): Result[Behavior[T]] =
-        EffectsAndValue(r.effects, Behavior.rewrap(r.value, old))
+      def canonicalizeBehavior[T](ctx: AC[T], r: Result[Behavior[T]], old: Behavior[T]): Result[Behavior[T]] =
+        EffectsAndValue(r.effects, Behavior.canonicalize(ctx, r.value, old))
 
       private val _ctx = new TrackingContextImpl
       def ctx[T] = _ctx.asInstanceOf[PureContext[T]]

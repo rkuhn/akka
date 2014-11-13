@@ -90,8 +90,11 @@ object TypedSpec {
           outstanding get test match {
             case Some(reply) ⇒
               reply ! Failed(ex)
-              t.Failed.Stop(guardian(outstanding - test))
-            case None ⇒ t.Failed.Stop(Same)
+              ctx.setFailureResponse(t.Failed.Stop)
+              guardian(outstanding - test)
+            case None ⇒
+              ctx.setFailureResponse(t.Failed.Stop)
+              Same
           }
         case Left(Terminated(test)) ⇒
           outstanding get test match {

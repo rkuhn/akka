@@ -28,20 +28,11 @@ abstract class Behavior[T] { self ⇒
 
   def widen[U >: T](matcher: PartialFunction[U, T]): Behavior[U] =
     new Behavior[U] { // TODO: optimize allocation-wise
-      import Behavior._
-      private def rewrap(b: Behavior[T]): Behavior[U] =
-        b match {
-          case w: Wrapper[t]          ⇒ w.wrap(rewrap(b))
-          case b if b == sameBehavior ⇒ this
-          case s: stoppedBehavior[t]  ⇒ s.asInstanceOf[Behavior[U]]
-          case _                      ⇒ b.widen(matcher)
-        }
-
       override def management(ctx: ActorContext[U], msg: Signal): Behavior[U] =
-        rewrap(self.management(ctx.asInstanceOf[ActorContext[T]], msg))
+        self.management(ctx.asInstanceOf[ActorContext[T]], msg).widen(matcher)
       override def message(ctx: ActorContext[U], msg: U): Behavior[U] =
         if (matcher.isDefinedAt(msg))
-          rewrap(self.message(ctx.asInstanceOf[ActorContext[T]], matcher(msg)))
+          self.message(ctx.asInstanceOf[ActorContext[T]], matcher(msg)).widen(matcher)
         else Behavior.Unhandled
     }
 }
@@ -118,12 +109,6 @@ final case class Terminated(ref: ActorRef[Nothing]) extends Signal
  *  - Resume
  */
 object Failed {
-  /**
-   * Common supertype for the failure responses.
-   */
-  sealed abstract class Wrapper[T](_b: Behavior[T]) extends Behavior.Wrapper[T](_b) {
-    def precedence: Int
-  }
 
   /**
    * Failure responses are in some cases communicated by using the companion
@@ -132,15 +117,7 @@ object Failed {
    */
   sealed trait Decision
 
-  /**
-   * INTERNAL API. This is used only to unify some internal processing of
-   * failure responses, it is never used to formulate such responses by the
-   * user.
-   */
-  private[typed] case class NoFailure[T]() extends Wrapper[T](null) {
-    def precedence = 0
-    def wrap[U](b: Behavior[U]): Wrapper[U] = ???
-  }
+  case object NoFailureResponse extends Decision
 
   /**
    * Resuming the child actor means that the result of processing the message
@@ -148,11 +125,7 @@ object Failed {
    * process the next message. The message that triggered the failure will not
    * be processed again.
    */
-  case class Resume[T](_b: Behavior[T]) extends Wrapper[T](_b) {
-    def precedence = 1
-    def wrap[U](b: Behavior[U]): Wrapper[U] = Resume(b)
-  }
-  object Resume extends Decision
+  case object Resume extends Decision
 
   /**
    * Restarting the child actor means resetting its behavior to the initial
@@ -161,11 +134,7 @@ object Failed {
    * receive a [[PreRestart]] signal before this happens and the replacement
    * behavior will receive a [[PostRestart]] signal afterwards.
    */
-  case class Restart[T](_b: Behavior[T]) extends Wrapper[T](_b) {
-    def precedence = 2
-    def wrap[U](b: Behavior[U]): Wrapper[U] = Restart(b)
-  }
-  object Restart extends Decision
+  case object Restart extends Decision
 
   /**
    * Stopping the child actor will free its resources and eventually
@@ -173,11 +142,7 @@ object Failed {
    * process can be observed by watching the child actor and reacting to its
    * [[Terminated]] signal.
    */
-  case class Stop[T](_b: Behavior[T]) extends Wrapper[T](_b) {
-    def precedence = 3
-    def wrap[U](b: Behavior[U]): Wrapper[U] = Stop(b)
-  }
-  object Stop extends Decision
+  case object Stop extends Decision
 
   /**
    * The default response to a failure in a child actor is to escalate the
@@ -185,11 +150,7 @@ object Failed {
    * to an exception unwinding the call stack, but it applies to the supervision
    * hierarchy instead.
    */
-  case class Escalate[T](_b: Behavior[T]) extends Wrapper[T](_b) {
-    def precedence = 4
-    def wrap[U](b: Behavior[U]): Wrapper[U] = Escalate(b)
-  }
-  object Escalate extends Decision
+  case object Escalate extends Decision
 
 }
 
@@ -351,52 +312,26 @@ object Behavior {
   case class And[T](left: Behavior[T], right: Behavior[T]) extends Behavior[T] {
 
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
-      val nl = left.management(ctx, msg)
-      val nr = right.management(ctx, msg)
-      val leftFailure = nl match {
-        case w: Failed.Wrapper[_] ⇒ Some(w)
-        case _                    ⇒ None
-      }
-      val rightFailure = nr match {
-        case w: Failed.Wrapper[_] ⇒ Some(w)
-        case _                    ⇒ None
-      }
-      val nextLeft = unwrap(nl, left)
-      val nextRight = unwrap(nr, right)
-      val leftAlive = nextLeft match {
-        case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); false }
-        case _                     ⇒ true
-      }
-      val rightAlive = nextRight match {
-        case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); false }
-        case _                     ⇒ true
-      }
-      val next: Behavior[T] =
-        if (leftAlive && rightAlive) And(nextLeft, nextRight)
-        else if (leftAlive) nextLeft
-        else if (rightAlive) nextRight
-        else Stopped
-      if (leftFailure.isDefined || rightFailure.isDefined) {
-        val leftWrapper = leftFailure.getOrElse(Failed.NoFailure())
-        val rightWrapper = rightFailure.getOrElse(Failed.NoFailure())
-        if (leftWrapper.precedence >= rightWrapper.precedence) leftWrapper.wrap(next) else rightWrapper.wrap(next)
-      } else next
+      val nextLeft = canonicalize(ctx, left.management(ctx, msg), left)
+      val nextRight = canonicalize(ctx, right.management(ctx, msg), right)
+      val leftAlive = isAlive(nextLeft)
+      val rightAlive = isAlive(nextRight)
+
+      if (leftAlive && rightAlive) And(nextLeft, nextRight)
+      else if (leftAlive) nextLeft
+      else if (rightAlive) nextRight
+      else Stopped
     }
 
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
-      val nl = unwrap(left.message(ctx, msg), left)
-      val nr = unwrap(right.message(ctx, msg), right)
-      val leftAlive = nl match {
-        case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); false }
-        case _                     ⇒ true
-      }
-      val rightAlive = nr match {
-        case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); false }
-        case _                     ⇒ true
-      }
-      if (leftAlive && rightAlive) And(nl, nr)
-      else if (leftAlive) nl
-      else if (rightAlive) nr
+      val nextLeft = canonicalize(ctx, left.message(ctx, msg), left)
+      val nextRight = canonicalize(ctx, right.message(ctx, msg), right)
+      val leftAlive = isAlive(nextLeft)
+      val rightAlive = isAlive(nextRight)
+
+      if (leftAlive && rightAlive) And(nextLeft, nextRight)
+      else if (leftAlive) nextLeft
+      else if (rightAlive) nextRight
       else Stopped
     }
   }
@@ -412,44 +347,25 @@ object Behavior {
    */
   case class Or[T](left: Behavior[T], right: Behavior[T]) extends Behavior[T] {
 
-    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] =
       left.management(ctx, msg) match {
-        case b if b == unhandledBehavior ⇒
-          val nr = right.management(ctx, msg)
-          val next = unwrap(nr, right) match {
-            case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); left }
-            case other                 ⇒ Or(left, other)
-          }
-          nr match {
-            case w: Failed.Wrapper[t] ⇒ w.wrap(next)
-            case _                    ⇒ next
-          }
+        case b if isUnhandled(b) ⇒
+          val nr = canonicalize(ctx, right.management(ctx, msg), right)
+          if (isAlive(nr)) Or(left, nr) else left
         case nl ⇒
-          val next = unwrap(nl, left) match {
-            case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); right }
-            case other                 ⇒ Or(other, right)
-          }
-          nl match {
-            case w: Failed.Wrapper[t] ⇒ w.wrap(next)
-            case _                    ⇒ next
-          }
+          val next = canonicalize(ctx, nl, left)
+          if (isAlive(next)) Or(next, right) else right
       }
-    }
 
-    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] =
       left.message(ctx, msg) match {
-        case b if b == unhandledBehavior ⇒
-          unwrap(right.message(ctx, msg), right) match {
-            case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); left }
-            case other                 ⇒ Or(left, other)
-          }
+        case b if isUnhandled(b) ⇒
+          val nr = canonicalize(ctx, right.message(ctx, msg), right)
+          if (isAlive(nr)) Or(left, nr) else left
         case nl ⇒
-          unwrap(nl, left) match {
-            case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); right }
-            case other                 ⇒ Or(other, right)
-          }
+          val next = canonicalize(ctx, nl, left)
+          if (isAlive(next)) Or(next, right) else right
       }
-    }
   }
 
   // TODO
@@ -487,10 +403,10 @@ object Behavior {
       msg match {
         case Left(signal) ⇒
           val behv = behavior(ctx.self)
-          rewrap(behv.management(ctx, signal), behv)
+          canonicalize(ctx, behv.management(ctx, signal), behv)
         case Right(msg) ⇒
           val behv = behavior(ctx.self)
-          rewrap(behv.message(ctx, msg), behv)
+          canonicalize(ctx, behv.message(ctx, msg), behv)
       }
     }
 
@@ -513,10 +429,10 @@ object Behavior {
       msg match {
         case Left(signal) ⇒
           val behv = behavior(ctx)
-          rewrap(behv.management(ctx, signal), behv)
+          canonicalize(ctx, behv.management(ctx, signal), behv)
         case Right(msg) ⇒
           val behv = behavior(ctx)
-          rewrap(behv.message(ctx, msg), behv)
+          canonicalize(ctx, behv.message(ctx, msg), behv)
       }
     }
 
@@ -593,53 +509,22 @@ object Behavior {
   private[akka] object stoppedBehavior extends stoppedBehavior(() ⇒ ())
 
   /**
-   * In order to save allocations, additional information can be returned from a
-   * behavior by wrapping the next behavior in a subclass of this generic
-   * wrapper. Using this wrapper is needed in order to allow generic unwrapping
-   * using the [[#unwrap]] method. One use-case of this feature is failure
-   * handling, see [[Failed!]].
-   */
-  abstract class Wrapper[T](val behavior: Behavior[T]) extends Behavior[T] {
-    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = behavior.management(ctx, msg)
-    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.message(ctx, msg)
-    def wrap[U](behavior: Behavior[U]): Wrapper[U]
-  }
-
-  /**
    * Given a possibly wrapped behavior (see [[Behavior.Wrapper]]) and a
    * “current” behavior (which defines the meaning of encountering a [[#Same]]
    * behavior) this method unwraps the behavior such that the innermost behavior
    * is returned, i.e. it removes the decorations.
    */
-  def unwrap[T](behavior: Behavior[T], current: Behavior[T]): Behavior[T] = {
-    @tailrec def rec(b: Behavior[T]): Behavior[T] =
-      b match {
-        case w: Wrapper[t]       ⇒ rec(w.behavior)
-        case `sameBehavior`      ⇒ current
-        case `unhandledBehavior` ⇒ current
-        case other               ⇒ other
-      }
-    rec(behavior)
-  }
+  def canonicalize[T](ctx: ActorContext[T], behavior: Behavior[T], current: Behavior[T]): Behavior[T] =
+    behavior match {
+      case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); Stopped }
+      case `sameBehavior`        ⇒ current
+      case `unhandledBehavior`   ⇒ current
+      case other                 ⇒ other
+    }
 
-  /**
-   * INTERNAL API.
-   */
-  private[typed] def rewrap[T](behavior: Behavior[T], current: Behavior[T]): Behavior[T] = {
-    @tailrec def needsWrap(b: Behavior[T]): Boolean =
-      b match {
-        case w: Wrapper[t]       ⇒ needsWrap(w.behavior)
-        case `sameBehavior`      ⇒ true
-        case `unhandledBehavior` ⇒ true
-        case other               ⇒ false
-      }
-    def reWrap(b: Behavior[T]): Behavior[T] =
-      b match {
-        case w: Wrapper[t] ⇒ w.wrap(reWrap(w.behavior))
-        case _             ⇒ current
-      }
-    if (needsWrap(behavior)) reWrap(behavior) else behavior
-  }
+  def isAlive[T](behavior: Behavior[T]): Boolean = !behavior.isInstanceOf[stoppedBehavior[_]]
+
+  def isUnhandled[T](behavior: Behavior[T]): Boolean = behavior eq unhandledBehavior
 
 }
 
