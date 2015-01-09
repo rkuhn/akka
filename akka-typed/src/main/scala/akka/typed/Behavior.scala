@@ -308,17 +308,21 @@ object Behavior {
 
   case class SynchronousSelf[T](f: ActorRef[T] ⇒ Behavior[T]) extends Behavior[T] {
     private val inbox = Inbox.sync[T]("syncbox")
-    private var behavior = f(inbox.ref)
+    private var _behavior = f(inbox.ref)
+    private def behavior = _behavior
+    private def setBehavior(ctx: ActorContext[T], b: Behavior[T]): Unit =
+      _behavior = Behavior.canonicalize(ctx, b, _behavior)
+
     @tailrec private def run(ctx: ActorContext[T], next: Behavior[T]): Behavior[T] =
       if (inbox.hasMessages) run(ctx, next.message(ctx, inbox.receiveMsg()))
       else next
 
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
-      behavior = run(ctx, behavior.management(ctx, msg))
+      setBehavior(ctx, run(ctx, behavior.management(ctx, msg)))
       this
     }
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
-      behavior = run(ctx, behavior.message(ctx, msg))
+      setBehavior(ctx, run(ctx, behavior.message(ctx, msg)))
       this
     }
 
@@ -499,11 +503,39 @@ object Behavior {
   def Stopped[T](cleanup: () ⇒ Unit): Behavior[T] = new stoppedBehavior(cleanup)
 
   /**
+   * This behavior does not handle any inputs, it is completely inert.
+   */
+  def Empty[T]: Behavior[T] = emptyBehavior.asInstanceOf[Behavior[T]]
+
+  /**
+   * INTERNAL API.
+   */
+  private[akka] object emptyBehavior extends Behavior[Any] {
+    override def management(ctx: ActorContext[Any], msg: Signal): Behavior[Any] = Unhandled
+    override def message(ctx: ActorContext[Any], msg: Any): Behavior[Any] = Unhandled
+    override def toString = "Empty"
+  }
+
+  /**
+   * This behavior does not handle any inputs, it is completely inert.
+   */
+  def Ignore[T]: Behavior[T] = ignoreBehavior.asInstanceOf[Behavior[T]]
+
+  /**
+   * INTERNAL API.
+   */
+  private[akka] object ignoreBehavior extends Behavior[Any] {
+    override def management(ctx: ActorContext[Any], msg: Signal): Behavior[Any] = Same
+    override def message(ctx: ActorContext[Any], msg: Any): Behavior[Any] = Same
+    override def toString = "Ignore"
+  }
+
+  /**
    * INTERNAL API.
    */
   private[akka] object unhandledBehavior extends Behavior[Nothing] {
-    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = ???
-    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = ???
+    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = throw new UnsupportedOperationException("Not Implemented")
+    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = throw new UnsupportedOperationException("Not Implemented")
     override def toString = "Unhandled"
   }
 
@@ -511,8 +543,8 @@ object Behavior {
    * INTERNAL API.
    */
   private[akka] object sameBehavior extends Behavior[Nothing] {
-    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = ???
-    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = ???
+    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = throw new UnsupportedOperationException("Not Implemented")
+    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = throw new UnsupportedOperationException("Not Implemented")
     override def toString = "Same"
   }
 
@@ -525,7 +557,7 @@ object Behavior {
       cleanup()
       this
     }
-    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = ???
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = throw new UnsupportedOperationException("Not Implemented")
     override def toString = "Stopped"
   }
 
