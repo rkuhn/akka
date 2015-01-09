@@ -16,6 +16,8 @@ import akka.util.Timeout
 import scala.reflect.ClassTag
 import akka.actor.ActorInitializationException
 import language.existentials
+import akka.testkit.EventFilter
+import akka.testkit.TestEvent.Mute
 
 /**
  * Helper class for writing tests for typed Actors with ScalaTest.
@@ -57,6 +59,17 @@ class TypedSpec(config: Config) extends Spec with Matchers with BeforeAndAfterAl
       case Failed(ex) ⇒ throw unwrap(ex)
       case Timedout   ⇒ fail("test timed out")
     }
+  }
+
+  def muteExpectedException[T <: Exception: ClassTag](
+    message: String = null,
+    source: String = null,
+    start: String = "",
+    pattern: String = null,
+    occurrences: Int = Int.MaxValue): EventFilter = {
+    val filter = EventFilter(message, source, start, pattern, occurrences)
+    system.untyped.eventStream.publish(Mute(filter))
+    filter
   }
 
   /**

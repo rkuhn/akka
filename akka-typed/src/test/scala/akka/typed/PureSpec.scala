@@ -28,7 +28,7 @@ class PureSpec extends TypedSpec {
         }
       }
       val props = Props(behavior)
-      val ctx = new DummyActorContext("context", props, system)
+      val ctx = new DummyActorContext("context", props)
       val inbox = Inbox.sync[Things]("context_probe")
       val msg = (ctx.self, props, system)
       behavior.run(ctx, Right(SendThings(inbox.ref))).requireEffects(PF) {
@@ -52,7 +52,7 @@ class PureSpec extends TypedSpec {
             } yield Same
         }
       }
-      val ctx = new DummyActorContext("context", Props(behavior), system)
+      val ctx = new DummyActorContext("context", Props(behavior))
       behavior.run(ctx, Right(DoIt(absorber))).requireEffects(PF) {
         case Spawned("child") :: Spawned("child") :: Messaged(ref1, (Right(ref2), Left(ref3))) :: Nil ⇒
           val childRef = ctx.child("child").get

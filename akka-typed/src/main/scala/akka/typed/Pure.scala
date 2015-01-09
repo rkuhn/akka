@@ -6,6 +6,7 @@ package akka.typed
 import language.{ higherKinds, implicitConversions }
 import scala.concurrent.duration.Duration
 import scala.collection.immutable
+import scala.concurrent.duration.FiniteDuration
 
 /**
  * This object contains tools for building purely functional Actor
@@ -52,6 +53,13 @@ object Pure {
    * effects.
    */
   trait MonadicWithoutEffects[T, U] extends Monadic[T, U]
+
+  /*
+   * FIXME
+   * 
+   * The monad must also hide the context itself, since closing over it makes
+   * the Behavior immobile.
+   */
 
   /**
    * Exploring going fully monadic on the effects; some of these (like self/props/system)
@@ -165,6 +173,7 @@ object Pure {
   case class Unwatched[T](other: ActorRef[T]) extends Effect
   case class ReceiveTimeoutSet(d: Duration) extends Effect
   case class Messaged[U](other: ActorRef[U], msg: U) extends Effect
+  case class Scheduled[U](delay: FiniteDuration, target: ActorRef[U], msg: U) extends Effect
   case object EmptyEffect extends Effect
 
   case class Total[T](f: (PureContext[T], Either[Signal, T]) ⇒ Monadic[T, akka.typed.Behavior[T]]) extends akka.typed.Behavior[T] {

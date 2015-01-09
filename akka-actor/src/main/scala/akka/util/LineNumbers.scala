@@ -24,12 +24,12 @@ object LineNumbers {
     def contains(str: String): Boolean = rev contains str
   }
 
-  final val debug = true
+  final val debug = false
 }
 
 class LineNumbers {
   import LineNumbers._
-  
+
   // FIXME: this needs memoization with an LRU cache
   def forClass(c: Class[_]): Result = {
     val resource = c.getName.replace('.', '/') + ".class"

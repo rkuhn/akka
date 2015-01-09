@@ -91,7 +91,10 @@ object Receiver {
       case (_, Left(ReceiveTimeout)) ⇒
         val (overdue, remaining) = queue partition (_.deadline.isOverdue)
         overdue foreach (a ⇒ a.replyTo ! GetOneResult(ctx.self, None))
-        asked(ctx, remaining)
+        if (remaining.isEmpty) {
+          ctx.setReceiveTimeout(Duration.Undefined)
+          empty(ctx)
+        } else asked(ctx, remaining)
       case (_, Right(msg)) ⇒
         msg match {
           case ExternalAddress(replyTo) ⇒ { replyTo ! ctx.self; Same }

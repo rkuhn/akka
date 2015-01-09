@@ -5,7 +5,7 @@ package akka.typed
 
 import akka.actor.Deploy
 import akka.routing.RouterConfig
-import scala.reflect.ClassTag
+import scala.reflect.{ ClassTag, classTag }
 
 /**
  * Props describe how to dress up a [[Behavior]] so that it can become an Actor.
@@ -27,6 +27,12 @@ object Props {
   def apply[T: ClassTag](block: ⇒ Behavior[T]): Props[T] = Props(() ⇒ block, akka.actor.Props.defaultDeploy)
 
   /**
+   * Props for a Behavior that just ignores all messages.
+   */
+  def empty[T]: Props[T] = EMPTY.asInstanceOf[Props[T]]
+  private val EMPTY: Props[Any] = Props(Behavior.Static[Any] { case _ ⇒ Behavior.Unhandled })
+
+  /**
    * INTERNAL API.
    */
   private[typed] def untyped[T](p: Props[T]): akka.actor.Props =
@@ -38,8 +44,8 @@ object Props {
   private[typed] def apply[T](p: akka.actor.Props): Props[T] = {
     assert(p.clazz == classOf[ActorAdapter[_]], "typed.Actor must have typed.Props")
     p.args match {
-      case (creator: Function0[Behavior[T]]) :: (tag: ClassTag[T]) :: Nil ⇒
-        Props(creator, p.deploy)(tag)
+      case (creator: Function0[_]) :: (tag: ClassTag[T]) :: Nil ⇒
+        Props(creator.asInstanceOf[Function0[Behavior[T]]], p.deploy)(tag)
       case _ ⇒ throw new AssertionError("typed.Actor args must be right")
     }
   }

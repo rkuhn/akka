@@ -14,7 +14,7 @@ class ActorSpec extends TypedSpec {
    * thoughts:
    * 
    *  - move test code fully into actors, with a helper that sends RunTest to the system
-   *  - move Inbox registration down to actors as well
+   *  - move Inbox registration down to actors as well ( => patterns.Receiver )
    *  - make new single-shot behavior that stops after receiving the first message
    */
 
@@ -50,14 +50,16 @@ class ActorSpec extends TypedSpec {
           val r = ctx.spawn(Props(b), "testee")
           ctx.watch(r)
           val ex = new Exception("BUH")
+          val f = muteExpectedException[Exception]("BUH", occurrences = 1)
           r ! ex
-          (r, ex)
+          (r, ex, f)
         }.expectFailure(100.millis) {
-          case (Failed(failure, child), (r, ex)) ⇒
+          case (Failed(failure, child), (r, ex, f)) ⇒
             failure should be(ex)
-            Failed.Restart -> ((r, ex))
+            Failed.Restart -> ((r, ex, f))
         }.expectMessage(100.millis) {
-          case (msg, (r, ex)) ⇒
+          case (msg, (r, ex, f)) ⇒
+            f.assertDone(100.millis)
             msg should be(PreRestart(ex))
             (r, ex)
         }.expectMessage(100.millis) {

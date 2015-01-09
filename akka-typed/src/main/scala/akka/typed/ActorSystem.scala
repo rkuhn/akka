@@ -35,7 +35,7 @@ abstract class ActorSystem[-T](val name: String) extends ActorRef[T] { this: Sca
    * The deadLetter address is a destination that will accept (and discard)
    * every message sent to it.
    */
-  def deadLetters[T]: ActorRef[T] = deadLetterRef
+  def deadLetters[U]: ActorRef[U] = deadLetterRef
   lazy private val deadLetterRef = ActorRef[Any](untyped.deadLetters)
 }
 

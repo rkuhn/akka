@@ -143,7 +143,7 @@ trait ActorContext[T] {
    * by invoking [[akka.actor.Cancellable!.cancel* cancel]] on the returned
    * handle.
    */
-  def schedule[T](delay: FiniteDuration, target: ActorRef[T], msg: T): a.Cancellable
+  def schedule[U](delay: FiniteDuration, target: ActorRef[U], msg: U): a.Cancellable
 
   /**
    * This Actor’s execution context. It can be used to run asynchronous tasks
@@ -166,8 +166,8 @@ trait ActorContext[T] {
  */
 class DummyActorContext[T](
   val name: String,
-  override val props: Props[T],
-  override implicit val system: ActorSystem[Nothing]) extends ActorContext[T] {
+  override val props: Props[T])(
+    override implicit val system: ActorSystem[Nothing]) extends ActorContext[T] {
 
   val inbox = Inbox.sync[T](name)
   override val self = inbox.ref
@@ -214,7 +214,7 @@ class DummyActorContext[T](
   def setFailureResponse(decision: Failed.Decision): Unit = _lastFailureResponse = decision
   def getFailureResponse: Failed.Decision = _lastFailureResponse
 
-  def schedule[T](delay: FiniteDuration, target: ActorRef[T], msg: T): a.Cancellable = new a.Cancellable {
+  def schedule[U](delay: FiniteDuration, target: ActorRef[U], msg: U): a.Cancellable = new a.Cancellable {
     def cancel() = false
     def isCancelled = true
   }
@@ -230,7 +230,7 @@ class DummyActorContext[T](
  * on it and otherwise stubs them out like a [[DummyActorContext]].
  */
 class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSystem[Nothing])
-  extends DummyActorContext[T](_name, _props, _system) {
+  extends DummyActorContext[T](_name, _props)(_system) {
   import Pure._
 
   private val eq = new ConcurrentLinkedQueue[Effect]
@@ -248,6 +248,9 @@ class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSy
   def hasEffects: Boolean = eq.peek() != null
 
   private var current = props.creator()
+  signal(PreStart)
+
+  def currentBehavior: Behavior[T] = current
 
   def run(msg: T): Unit = current = Behavior.canonicalize(this, current.message(this, msg), current)
   def signal(signal: Signal): Unit = current = Behavior.canonicalize(this, current.management(this, signal), current)
@@ -296,4 +299,29 @@ class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSy
     eq.offer(ReceiveTimeoutSet(d))
     super.setReceiveTimeout(d)
   }
+  override def schedule[U](delay: FiniteDuration, target: ActorRef[U], msg: U): a.Cancellable = {
+    eq.offer(Scheduled(delay, target, msg))
+    super.schedule(delay, target, msg)
+  }
 }
+
+/*
+ * TODO
+ * 
+ * Currently running a behavior requires that the context stays the same, since
+ * the behavior may well close over it and thus a change might not be effective
+ * at all. Another issue is that there is genuine state within the context that
+ * is coupled to the behavior’s state: if child actors were created then
+ * migrating a behavior into a new context will not work.
+ * 
+ * This note is about remembering the reasons behind this restriction and
+ * proposes an ActorContextProxy as a (broken) half-solution. Another avenue
+ * by which a solution may be explored is for Pure behaviors in that they
+ * may be forced to never remember anything that is immobile.
+ */
+//class MobileActorContext[T](_name: String, _props: Props[T], _system: ActorSystem[Nothing])
+//  extends EffectfulActorContext[T](_name, _props, _system) {
+//
+//}
+//
+//class ActorContextProxy[T](var d: ActorContext[T]) extends ActorContext[T]
