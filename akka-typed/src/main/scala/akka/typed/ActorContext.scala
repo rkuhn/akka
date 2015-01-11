@@ -255,8 +255,6 @@ class EffectfulActorContext[T](_name: String, _props: Props[T], _system: ActorSy
   def run(msg: T): Unit = current = Behavior.canonicalize(this, current.message(this, msg), current)
   def signal(signal: Signal): Unit = current = Behavior.canonicalize(this, current.management(this, signal), current)
 
-  def isStopped = current.isInstanceOf[stoppedBehavior[_]]
-
   override def spawn[U](props: Props[U]): ActorRef[U] = {
     val ref = super.spawn(props)
     eq.offer(Spawned(ref.ref.path.name))

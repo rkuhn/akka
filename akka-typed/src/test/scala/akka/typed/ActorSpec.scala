@@ -25,7 +25,10 @@ class ActorSpec extends TypedSpec {
         val b = Full[Any] {
           case (_, Left(PreStart)) ⇒
             i.ref ! PreStart
-            Stopped(() ⇒ i.ref ! PostStop)
+            Stopped
+          case (_, Left(PostStop)) ⇒
+            i.ref ! PostStop
+            Stopped
         }
         val r = ctx.spawn(Props(b), "testee")
         i.watch(r)

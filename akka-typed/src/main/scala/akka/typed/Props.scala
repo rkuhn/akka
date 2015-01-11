@@ -23,6 +23,9 @@ case class Props[T](creator: () ⇒ Behavior[T], deploy: Deploy)(implicit val ta
 object Props {
   /**
    * Create a Props instance from a block of code that creates a [[Behavior]].
+   *
+   * FIXME: investigate the pros and cons of making this take an explicit
+   *        function instead of a by-name argument
    */
   def apply[T: ClassTag](block: ⇒ Behavior[T]): Props[T] = Props(() ⇒ block, akka.actor.Props.defaultDeploy)
 

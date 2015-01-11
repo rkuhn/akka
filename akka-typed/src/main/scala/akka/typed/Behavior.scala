@@ -79,6 +79,10 @@ final case class PostRestart(failure: Throwable) extends Signal
  * Lifecycle signal that is fired after this actor and all its child actors
  * (transitively) have terminated. The [[Terminated]] signal is only sent to
  * registered watchers after this signal has been processed.
+ *
+ * <b>IMPORTANT NOTE:</b> if the actor terminated by switching to the
+ * [[Behavior$.Stopped]] behavior then this signal will be ignored (i.e. the
+ * Stopped behvavior will do nothing in reaction to it).
  */
 final case object PostStop extends Signal
 /**
@@ -479,6 +483,12 @@ object Behavior {
    */
   def Unhandled[T]: Behavior[T] = unhandledBehavior.asInstanceOf[Behavior[T]]
 
+  /*
+   * TODO write a Behavior that waits for all child actors to stop and then
+   * runs some cleanup before stopping. The factory for this behavior should
+   * stop and watch all children to get the process started.
+   */
+
   /**
    * Return this behavior from message processing to signal that this actor
    * shall terminate voluntarily. If this actor has created child actors then
@@ -489,18 +499,6 @@ object Behavior {
    * [[akka.typed.Behavior$.Stopped[T](cleanup* Stopped(cleanup: () => Unit)]].
    */
   def Stopped[T]: Behavior[T] = stoppedBehavior.asInstanceOf[Behavior[T]]
-
-  /**
-   * Return this behavior from message processing to signal that this actor
-   * shall terminate voluntarily. If this actor has created child actors then
-   * these will be stopped as part of the shutdown procedure.
-   *
-   * TODO: think about whether the ability to defer the cleanup is really necessary
-   *
-   * @param cleanup an action to run in response to the PostStop signal that
-   *                will result from stopping this actor
-   */
-  def Stopped[T](cleanup: () ⇒ Unit): Behavior[T] = new stoppedBehavior(cleanup)
 
   /**
    * This behavior does not handle any inputs, it is completely inert.
@@ -551,20 +549,14 @@ object Behavior {
   /**
    * INTERNAL API.
    */
-  private[akka] class stoppedBehavior[T](cleanup: () ⇒ Unit) extends Behavior[T] {
-    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
+  private[akka] object stoppedBehavior extends Behavior[Nothing] {
+    override def management(ctx: ActorContext[Nothing], msg: Signal): Behavior[Nothing] = {
       assert(msg == PostStop, s"stoppedBehavior received $msg (only PostStop is expected)")
-      cleanup()
       this
     }
-    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = throw new UnsupportedOperationException("Not Implemented")
+    override def message(ctx: ActorContext[Nothing], msg: Nothing): Behavior[Nothing] = throw new UnsupportedOperationException("Not Implemented")
     override def toString = "Stopped"
   }
-
-  /**
-   * INTERNAL API.
-   */
-  private[akka] object stoppedBehavior extends stoppedBehavior(() ⇒ ())
 
   /**
    * Given a possibly wrapped behavior (see [[Behavior.Wrapper]]) and a
@@ -574,13 +566,12 @@ object Behavior {
    */
   def canonicalize[T](ctx: ActorContext[T], behavior: Behavior[T], current: Behavior[T]): Behavior[T] =
     behavior match {
-      case s: stoppedBehavior[t] ⇒ { s.management(ctx, PostStop); Stopped }
-      case `sameBehavior`        ⇒ current
-      case `unhandledBehavior`   ⇒ current
-      case other                 ⇒ other
+      case `sameBehavior`      ⇒ current
+      case `unhandledBehavior` ⇒ current
+      case other               ⇒ other
     }
 
-  def isAlive[T](behavior: Behavior[T]): Boolean = !behavior.isInstanceOf[stoppedBehavior[_]]
+  def isAlive[T](behavior: Behavior[T]): Boolean = behavior ne stoppedBehavior
 
   def isUnhandled[T](behavior: Behavior[T]): Boolean = behavior eq unhandledBehavior
 

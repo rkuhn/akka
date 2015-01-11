@@ -40,6 +40,7 @@ object StepWise {
 
   sealed trait AST
   private case class Thunk(f: () ⇒ Any) extends AST
+  private case class ThunkV(f: Any ⇒ Any) extends AST
   private case class Message(timeout: FiniteDuration, f: (Any, Any) ⇒ Any, trace: Trace) extends AST
   private case class MultiMessage(timeout: FiniteDuration, count: Int, f: (Seq[Any], Any) ⇒ Any, trace: Trace) extends AST
   private case class Failure(timeout: FiniteDuration, f: (Failed, Any) ⇒ (Failed.Decision, Any), trace: Trace) extends AST
@@ -47,19 +48,30 @@ object StepWise {
 
   private sealed trait Trace {
     def getStackTrace: Array[StackTraceElement]
+    protected def getFrames: Array[StackTraceElement] =
+      Thread.currentThread.getStackTrace.dropWhile { elem ⇒
+        val name = elem.getClassName
+        name.startsWith("java.lang.Thread") || name.startsWith("akka.typed.StepWise")
+      }
   }
   private class WithTrace extends Trace {
-    private val trace = Thread.currentThread.getStackTrace
+    private val trace = getFrames
     def getStackTrace = trace
   }
   private object WithoutTrace extends Trace {
-    def getStackTrace = Thread.currentThread.getStackTrace
+    def getStackTrace = getFrames
   }
 
   case class Steps[T, U](ops: List[AST], keepTraces: Boolean) {
     private def getTrace(): Trace =
       if (keepTraces) new WithTrace
       else WithoutTrace
+
+    def apply[V](thunk: U ⇒ V): Steps[T, V] =
+      copy(ops = ThunkV(thunk.asInstanceOf[Any ⇒ Any]) :: ops)
+
+    def keep(thunk: U ⇒ Unit): Steps[T, U] =
+      copy(ops = ThunkV(value ⇒ { thunk.asInstanceOf[Any ⇒ Any](value); value }) :: ops)
 
     def expectMessage[V](timeout: FiniteDuration)(f: (T, U) ⇒ V): Steps[T, V] =
       copy(ops = Message(timeout, f.asInstanceOf[(Any, Any) ⇒ Any], getTrace()) :: ops)
@@ -72,6 +84,18 @@ object StepWise {
 
     def expectTermination[V](timeout: FiniteDuration)(f: (Terminated, U) ⇒ V): Steps[T, V] =
       copy(ops = Termination(timeout, f.asInstanceOf[(Terminated, Any) ⇒ Any], getTrace()) :: ops)
+
+    def expectMessageKeep(timeout: FiniteDuration)(f: (T, U) ⇒ Unit): Steps[T, U] =
+      copy(ops = Message(timeout, (msg, value) ⇒ { f.asInstanceOf[(Any, Any) ⇒ Any](msg, value); value }, getTrace()) :: ops)
+
+    def expectMultipleMessagesKeep(timeout: FiniteDuration, count: Int)(f: (Seq[T], U) ⇒ Unit): Steps[T, U] =
+      copy(ops = MultiMessage(timeout, count, (msgs, value) ⇒ { f.asInstanceOf[(Seq[Any], Any) ⇒ Any](msgs, value); value }, getTrace()) :: ops)
+
+    def expectFailureKeep(timeout: FiniteDuration)(f: (Failed, U) ⇒ Failed.Decision): Steps[T, U] =
+      copy(ops = Failure(timeout, (failed, value) ⇒ f.asInstanceOf[(Failed, Any) ⇒ Failed.Decision](failed, value) -> value, getTrace()) :: ops)
+
+    def expectTerminationKeep(timeout: FiniteDuration)(f: (Terminated, U) ⇒ Unit): Steps[T, U] =
+      copy(ops = Termination(timeout, (t, value) ⇒ { f.asInstanceOf[(Terminated, Any) ⇒ Any](t, value); value }, getTrace()) :: ops)
 
     def withKeepTraces(b: Boolean): Steps[T, U] = copy(keepTraces = b)
   }
@@ -104,7 +128,8 @@ object StepWise {
 
   private def run[T](ctx: ActorContext[T], ops: List[AST], value: Any): Behavior[T] =
     ops match {
-      case Thunk(f) :: tail ⇒ run(ctx, tail, f())
+      case Thunk(f) :: tail  ⇒ run(ctx, tail, f())
+      case ThunkV(f) :: tail ⇒ run(ctx, tail, f(value))
       case Message(t, f, trace) :: tail ⇒
         ctx.setReceiveTimeout(t)
         Full {
