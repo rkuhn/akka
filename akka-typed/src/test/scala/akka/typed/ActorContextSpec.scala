@@ -3,6 +3,7 @@ package akka.typed
 import scala.concurrent.duration._
 import scala.concurrent.Future
 import org.scalautils.ConversionCheckedTripleEquals
+import com.typesafe.config.ConfigFactory
 
 object ActorContextSpec {
   import Behavior._
@@ -54,6 +55,9 @@ object ActorContextSpec {
   case class Children(c: Set[ActorRef[Nothing]]) extends Event
 
   case class ChildEvent(event: Event) extends Event
+
+  case class BecomeInert(replyTo: ActorRef[BecameInert.type]) extends Command
+  case object BecameInert extends Event
 
   def subject(monitor: ActorRef[GotSignal]): Behavior[Command] =
     FullTotal((ctx, msg) ⇒ msg match {
@@ -110,11 +114,21 @@ object ActorContextSpec {
         case GetChildren(replyTo) ⇒
           replyTo ! Children(ctx.children.toSet)
           Same
+        case BecomeInert(replyTo) ⇒
+          replyTo ! BecameInert
+          Ignore
       }
     })
 }
 
-class ActorContextSpec extends TypedSpec with ConversionCheckedTripleEquals {
+class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
+  """|akka {
+     |  loglevel = WARNING
+     |  actor.debug {
+     |    lifecycle = off
+     |    autoreceive = off
+     |  }
+     |}""".stripMargin)) with ConversionCheckedTripleEquals {
   import ActorContextSpec._
 
   def setup(name: String)(proc: (ActorContext[Event], StepWise.Steps[Event, ActorRef[Command]]) ⇒ StepWise.Steps[Event, _]): Future[TypedSpec.Status] =
@@ -174,7 +188,7 @@ class ActorContextSpec extends TypedSpec with ConversionCheckedTripleEquals {
         msg should ===(GotSignal(PostStop))
       }
     })
-    
+
     def `02 must not signal PostStop after voluntary termination`(): Unit = sync(setup("ctx02") { (ctx, startWith) ⇒
       startWith.keep { subj ⇒
         ctx.watch(subj)
@@ -183,20 +197,47 @@ class ActorContextSpec extends TypedSpec with ConversionCheckedTripleEquals {
         t.ref should ===(subj)
       }
     })
-    
+
+    private implicit class MkC(val startWith: StepWise.Steps[Event, ActorRef[Command]]) {
+      /**
+       * Ask the subject to create a child actor, setting its behavior to “inert” if requested.
+       * The latter is very useful in order to avoid disturbances with GotSignal(PostStop) in
+       * test procedures that stop this child.
+       */
+      def mkChild(name: Option[String],
+                  monitor: ActorRef[Event],
+                  self: ActorRef[Event],
+                  inert: Boolean = false): StepWise.Steps[Event, (ActorRef[Command], ActorRef[Command])] = {
+        val s =
+          startWith.keep { subj ⇒
+            subj ! MkChild(name, monitor, self)
+          }.expectMultipleMessages(500.millis, 2) { (msgs, subj) ⇒
+            val child = msgs match {
+              case Created(child) :: ChildEvent(GotSignal(PreStart)) :: Nil ⇒ child
+              case ChildEvent(GotSignal(PreStart)) :: Created(child) :: Nil ⇒ child
+            }
+            (subj, child)
+          }
+
+        if (!inert) s
+        else
+          s.keep {
+            case (subj, child) ⇒
+              child ! BecomeInert(self)
+          }.expectMessageKeep(500.millis) { (msg, _) ⇒
+            msg should ===(BecameInert)
+          }
+      }
+    }
+
     def `03 must restart and stop a child actor`(): Unit = sync(setup("ctx03") { (ctx, startWith) ⇒
       val self = ctx.self
       val ex = new Exception("KABOOM")
-      startWith.keep { subj ⇒
-        subj ! MkChild(None, ctx.createWrapper { (e: Event) ⇒ ChildEvent(e) }, self)
-      }.expectMultipleMessages(500.millis, 2) { (msgs, subj) ⇒
-        val child = msgs match {
-          case Created(child) :: ChildEvent(GotSignal(PreStart)) :: Nil ⇒ child
-          case ChildEvent(GotSignal(PreStart)) :: Created(child) :: Nil ⇒ child
-        }
-        val log = muteExpectedException[Exception]("KABOOM", occurrences = 1)
-        child ! Throw(ex)
-        (subj, child, log)
+      startWith.mkChild(None, ctx.createWrapper(ChildEvent), self) {
+        case (subj, child) ⇒
+          val log = muteExpectedException[Exception]("KABOOM", occurrences = 1)
+          child ! Throw(ex)
+          (subj, child, log)
       }.expectMultipleMessages(500.millis, 3) {
         case (msgs, (subj, child, log)) ⇒
           msgs should ===(
@@ -217,6 +258,20 @@ class ActorContextSpec extends TypedSpec with ConversionCheckedTripleEquals {
       }.expectTermination(500.millis) {
         case (t, subj) ⇒
           t.ref should ===(subj)
+      }
+    })
+
+    def `04 must stop a child actor`(): Unit = sync(setup("ctx04") { (ctx, startWith) ⇒
+      val self = ctx.self
+      startWith.mkChild(Some("A"), ctx.createWrapper(ChildEvent), self, inert = true) {
+        case (subj, child) ⇒
+          subj ! Kill("A", self)
+          child
+      }.expectMessageKeep(500.millis) { (msg, child) ⇒
+        msg should ===(Killed)
+        ctx.watch(child)
+      }.expectTermination(500.millis) { (t, child) ⇒
+        t.ref should ===(child)
       }
     })
   }
