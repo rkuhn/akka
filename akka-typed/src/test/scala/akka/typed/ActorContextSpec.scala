@@ -14,8 +14,10 @@ object ActorContextSpec {
   // TODO add DeadLetterSuppression
   case class GotSignal(signal: Signal) extends Event
 
-  case class Ping(replyTo: ActorRef[Pong.type]) extends Command
-  case object Pong extends Event
+  case class Ping(replyTo: ActorRef[Pong]) extends Command
+  sealed trait Pong extends Event
+  case object Pong1 extends Pong
+  case object Pong2 extends Pong
 
   case class Miss(replyTo: ActorRef[Missed.type]) extends Command
   case object Missed extends Event
@@ -46,7 +48,7 @@ object ActorContextSpec {
   case object Unwatched extends Event
 
   case class GetInfo(replyTo: ActorRef[Info]) extends Command
-  case class Info(self: ActorRef[Command], props: Props[Command], system: ActorSystem[Nothing])
+  case class Info(self: ActorRef[Command], props: Props[Command], system: ActorSystem[Nothing]) extends Event
 
   case class GetChild(name: String, replyTo: ActorRef[Child]) extends Command
   case class Child(c: Option[ActorRef[Nothing]]) extends Event
@@ -67,7 +69,7 @@ object ActorContextSpec {
         Same
       case Right(message) ⇒ message match {
         case Ping(replyTo) ⇒
-          replyTo ! Pong
+          replyTo ! Pong1
           Same
         case Miss(replyTo) ⇒
           replyTo ! Missed
@@ -116,7 +118,14 @@ object ActorContextSpec {
           Same
         case BecomeInert(replyTo) ⇒
           replyTo ! BecameInert
-          Ignore
+          Full {
+            case (_, Right(Ping(replyTo))) ⇒
+              replyTo ! Pong2
+              Same
+            case (_, Right(Throw(ex))) ⇒
+              throw ex
+            case _ ⇒ Same
+          }
       }
     })
 }
@@ -142,6 +151,8 @@ class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
       proc(ctx, steps)
     })
 
+  // TODO run these tests also for all behavior wrappers
+
   object `An ActorCell` {
     def `01 must canonicalize behaviors`(): Unit =
       sync(setup("cell01") { (ctx, startWith) ⇒
@@ -149,7 +160,7 @@ class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
         startWith.keep { subj ⇒
           subj ! Ping(self)
         }.expectMessageKeep(500.millis) { (msg, subj) ⇒
-          msg should ===(Pong)
+          msg should ===(Pong1)
           subj ! Miss(self)
         }.expectMessageKeep(500.millis) { (msg, subj) ⇒
           msg should ===(Missed)
@@ -158,7 +169,7 @@ class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
           msg should ===(Renewed)
           subj ! Ping(self)
         }.expectMessage(500.millis) { (msg, _) ⇒
-          msg should ===(Pong)
+          msg should ===(Pong1)
         }
       })
   }
@@ -166,9 +177,9 @@ class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
   object `An ActorContext` {
     def `01 must correctly wire the lifecycle hooks`(): Unit = sync(setup("ctx01") { (ctx, startWith) ⇒
       val self = ctx.self
-      val ex = new Exception("KABOOM")
+      val ex = new Exception("KABOOM1")
       startWith { subj ⇒
-        val log = muteExpectedException[Exception]("KABOOM", occurrences = 1)
+        val log = muteExpectedException[Exception]("KABOOM1", occurrences = 1)
         subj ! Throw(ex)
         (subj, log)
       }.expectFailureKeep(500.millis) {
@@ -230,12 +241,19 @@ class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
       }
     }
 
+    private implicit class MessageStep[T](val startWith: StepWise.Steps[Event, T]) {
+      def stimulate(f: T ⇒ Unit, ev: T ⇒ Event): StepWise.Steps[Event, T] =
+        startWith.keep(f).expectMessageKeep(500.millis) { (msg, v) ⇒
+          msg should ===(ev(v))
+        }
+    }
+
     def `03 must restart and stop a child actor`(): Unit = sync(setup("ctx03") { (ctx, startWith) ⇒
       val self = ctx.self
-      val ex = new Exception("KABOOM")
+      val ex = new Exception("KABOOM2")
       startWith.mkChild(None, ctx.createWrapper(ChildEvent), self) {
         case (subj, child) ⇒
-          val log = muteExpectedException[Exception]("KABOOM", occurrences = 1)
+          val log = muteExpectedException[Exception]("KABOOM2", occurrences = 1)
           child ! Throw(ex)
           (subj, child, log)
       }.expectMultipleMessages(500.millis, 3) {
@@ -273,6 +291,130 @@ class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
       }.expectTermination(500.millis) { (t, child) ⇒
         t.ref should ===(child)
       }
+    })
+
+    def `05 must reset behavior upon Restart`(): Unit = sync(setup("ctx05") { (ctx, startWith) ⇒
+      val self = ctx.self
+      val ex = new Exception("KABOOM05")
+      startWith
+        .stimulate(_ ! BecomeInert(self), _ ⇒ BecameInert)
+        .stimulate(_ ! Ping(self), _ ⇒ Pong2) { subj ⇒
+          val log = muteExpectedException[Exception]("KABOOM05")
+          subj ! Throw(ex)
+          (subj, log)
+        }.expectFailureKeep(500.millis) {
+          case (f, (subj, log)) ⇒
+            f.child should ===(subj)
+            f.cause should ===(ex)
+            Failed.Restart
+        }.expectMessage(500.millis) {
+          case (msg, (subj, log)) ⇒
+            msg should ===(GotSignal(PostRestart(ex)))
+            log.assertDone(500.millis)
+            subj
+        }.stimulate(_ ! Ping(self), _ ⇒ Pong1)
+    })
+
+    def `06 must not reset behavior upon Resume`(): Unit = sync(setup("ctx05") { (ctx, startWith) ⇒
+      val self = ctx.self
+      val ex = new Exception("KABOOM05")
+      startWith
+        .stimulate(_ ! BecomeInert(self), _ ⇒ BecameInert)
+        .stimulate(_ ! Ping(self), _ ⇒ Pong2).keep { subj ⇒
+          subj ! Throw(ex)
+        }.expectFailureKeep(500.millis) { (f, subj) ⇒
+          f.child should ===(subj)
+          f.cause should ===(ex)
+          Failed.Resume
+        }.stimulate(_ ! Ping(self), _ ⇒ Pong2)
+    })
+
+    def `07 must stop upon Stop`(): Unit = sync(setup("ctx05") { (ctx, startWith) ⇒
+      val self = ctx.self
+      val ex = new Exception("KABOOM05")
+      startWith
+        .stimulate(_ ! Ping(self), _ ⇒ Pong1).keep { subj ⇒
+          subj ! Throw(ex)
+          ctx.watch(subj)
+        }.expectFailureKeep(500.millis) { (f, subj) ⇒
+          f.child should ===(subj)
+          f.cause should ===(ex)
+          Failed.Stop
+        }.expectMessageKeep(500.millis) { (msg, _) ⇒
+          msg should ===(GotSignal(PostStop))
+        }.expectTermination(500.millis) { (t, subj) ⇒
+          t.ref should ===(subj)
+        }
+    })
+
+    def `10 must watch a child actor before its termination`(): Unit = sync(setup("ctx10") { (ctx, startWith) ⇒
+      val self = ctx.self
+      startWith.mkChild(None, ctx.createWrapper(ChildEvent), self) {
+        case (subj, child) ⇒
+          subj ! Watch(child, self)
+          child
+      }.expectMessageKeep(500.millis) { (msg, child) ⇒
+        msg should ===(Watched)
+        child ! Stop
+      }.expectMessage(500.millis) { (msg, child) ⇒
+        msg should ===(GotSignal(Terminated(child)))
+      }
+    })
+
+    def `11 must watch a child actor after its termination`(): Unit = sync(setup("ctx11") { (ctx, startWith) ⇒
+      val self = ctx.self
+      startWith.mkChild(None, ctx.createWrapper(ChildEvent), self).keep {
+        case (subj, child) ⇒
+          ctx.watch(child)
+          child ! Stop
+      }.expectTermination(500.millis) {
+        case (t, (subj, child)) ⇒
+          t should ===(Terminated(child))
+          subj ! Watch(child, blackhole)
+          child
+      }.expectMessage(500.millis) { (msg, child) ⇒
+        msg should ===(GotSignal(Terminated(child)))
+      }
+    })
+
+    def `12 must unwatch a child actor before its termination`(): Unit = sync(setup("ctx12") { (ctx, startWith) ⇒
+      val self = ctx.self
+      startWith.mkChild(None, ctx.createWrapper(ChildEvent), self).keep {
+        case (subj, child) ⇒
+          subj ! Watch(child, self)
+      }.expectMessageKeep(500.millis) {
+        case (msg, (subj, child)) ⇒
+          msg should ===(Watched)
+          subj ! Unwatch(child, self)
+      }.expectMessage(500.millis) {
+        case (msg, (subj, child)) ⇒
+          msg should ===(Unwatched)
+          ctx.watch(child)
+          child ! Stop
+          child
+      }.expectTermination(500.millis) { (t, child) ⇒
+        t should ===(Terminated(child))
+      }
+    })
+
+    def `20 must return the right context info`(): Unit = sync(setup("ctx20") { (ctx, startWith) ⇒
+      startWith.keep(_ ! GetInfo(ctx.self))
+        .expectMessage(500.millis) {
+          case (msg: Info, subj) ⇒
+            msg.self should ===(subj)
+            msg.system should ===(system)
+          case (other, _) ⇒
+            fail(s"$other was not an Info(...)")
+        }
+    })
+
+    def `21 must return right info about children`(): Unit = sync(setup("ctx21") { (ctx, startWith) ⇒
+      val self = ctx.self
+      startWith
+        .mkChild(Some("B"), ctx.createWrapper(ChildEvent), self)
+        .stimulate(_._1 ! GetChild("A", self), _ ⇒ Child(None))
+        .stimulate(_._1 ! GetChild("B", self), x ⇒ Child(Some(x._2)))
+        .stimulate(_._1 ! GetChildren(self), x ⇒ Children(Set(x._2)))
     })
   }
 

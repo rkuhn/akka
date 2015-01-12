@@ -40,6 +40,8 @@ class TypedSpec(config: Config) extends Spec with Matchers with BeforeAndAfterAl
   // TODO remove after basing on ScalaTest 3 with async support
   def await[T](f: Future[T]): T = Await.result(f, 30.seconds)
 
+  val blackhole = await(system ? Create(Props(Behavior.Full[Any] { case _ ⇒ Behavior.Same }), "blackhole"))
+
   /**
    * Run an Actor-based test. The test procedure is most conveniently
    * formulated using the [[StepWise$]] behavior type.
@@ -90,6 +92,7 @@ object TypedSpec {
   sealed trait Command
   case class RunTest[T](name: String, props: Props[T], replyTo: ActorRef[Status], timeout: FiniteDuration) extends Command
   case class Terminate(reply: ActorRef[Status]) extends Command
+  case class Create[T](props: Props[T], name: String)(val replyTo: ActorRef[ActorRef[T]]) extends Command
 
   sealed trait Status
   case object Success extends Status
@@ -125,6 +128,9 @@ object TypedSpec {
         case Right(Terminate(reply)) ⇒
           reply ! Success
           Stopped
+        case Right(c: Create[t]) ⇒
+          c.replyTo ! ctx.spawn(c.props, c.name)
+          Same
       }
     }
 }
