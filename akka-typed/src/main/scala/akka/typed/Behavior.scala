@@ -194,17 +194,16 @@ object Behavior {
   // TODO introduce Message/Signal ADT instead of using Either
   case class Full[T](behavior: PartialFunction[(ActorContext[T], Either[Signal, T]), Behavior[T]]) extends Behavior[T] {
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
-      lazy val fallback: ((ActorContext[T], Either[Signal, T])) ⇒ Behavior[T] = _ ⇒
-        msg match {
-          case PreRestart(_) ⇒
-            ctx.children foreach { child ⇒
-              ctx.unwatch(child.ref)
-              ctx.stop(child.path.name)
-            }
-            behavior.applyOrElse((ctx, Left(PostStop)), fallback)
-          case PostRestart(_) ⇒ behavior.applyOrElse((ctx, Left(PreStart)), fallback)
-          case _              ⇒ Unhandled
-        }
+      lazy val fallback: ((ActorContext[T], Either[Signal, T])) ⇒ Behavior[T] = {
+        case (context, Left(PreRestart(_))) ⇒
+          context.children foreach { child ⇒
+            context.unwatch(child.ref)
+            context.stop(child.path.name)
+          }
+          behavior.applyOrElse((context, Left(PostStop)), fallback)
+        case (context, Left(PostRestart(_))) ⇒ behavior.applyOrElse((context, Left(PreStart)), fallback)
+        case _                               ⇒ Unhandled
+      }
       behavior.applyOrElse((ctx, Left(msg)), fallback)
     }
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
@@ -245,6 +244,46 @@ object Behavior {
   }
 
   /**
+   * This type of Behavior is created from a partial function from the declared
+   * message type to the next behavior, flagging all unmatched messages as
+   * [[Behavior$.Unhandled]]. All system signals are
+   * ignored by this behavior, which implies that a failure of a child actor
+   * will be escalated unconditionally.
+   *
+   * This behavior type is most useful for leaf actors that do not create child
+   * actors themselves.
+   */
+  case class Partial[T](behavior: PartialFunction[T, Behavior[T]]) extends Behavior[T] {
+    private val default = (_: T) ⇒ Unhandled[T]
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = msg match {
+      case _ ⇒ Unhandled
+    }
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior.applyOrElse(msg, default)
+    override def toString = s"Partial(${LN.forClass(behavior.getClass)})"
+  }
+
+  case class Tap[T](f: PartialFunction[Either[Signal, T], Unit], behavior: Behavior[T]) extends Behavior[T] {
+    private val default = (_: Either[Signal, T]) ⇒ ()
+    private def canonical(behv: Behavior[T]): Behavior[T] =
+      if (isUnhandled(behv)) Unhandled
+      else if (behv eq sameBehavior) Same
+      else if (isAlive(behv)) Tap(f, behv)
+      else Stopped
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
+      f.applyOrElse(Left(msg), default)
+      canonical(behavior.management(ctx, msg))
+    }
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
+      f.applyOrElse(Right(msg), default)
+      canonical(behavior.message(ctx, msg))
+    }
+    override def toString = s"Tap(${LN.forClass(f.getClass)},$behavior)"
+  }
+  object Tap {
+    def monitor[T](monitor: ActorRef[T], behavior: Behavior[T]): Tap[T] = Tap({ case Right(msg) ⇒ monitor ! msg }, behavior)
+  }
+
+  /**
    * This type of behavior is a variant of [[Behavior.Simple]] that does not
    * allow the actor to change behavior. It is an efficient choice for stateless
    * actors, possibly entering such a behavior after finishing its
@@ -281,35 +320,6 @@ object Behavior {
     override def toString = s"Contextual(${LN.forClass(behavior.getClass)})"
   }
 
-  /**
-   * A variant of [[Behavior.Contextual]] that also allows handling of system
-   * notifications. The difference to [[Behavior.Full]] is that it separates
-   * the channels for signals and user messages into different fucntions,
-   * enabling the latter to benefit from exhaustiveness checking since it employs
-   * a total function.
-   *
-   * This behavior employs the same fallback mechanism for [[PreRestart]] and
-   * [[PostRestart]] signals as [[Behavior.Full]].
-   */
-  case class Composite[T](mgmt: PartialFunction[(ActorContext[T], Signal), Behavior[T]], behavior: (ActorContext[T], T) ⇒ Behavior[T]) extends Behavior[T] {
-    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
-      lazy val fallback: ((ActorContext[T], Signal)) ⇒ Behavior[T] = _ ⇒
-        msg match {
-          case PreRestart(_) ⇒
-            ctx.children foreach { child ⇒
-              ctx.unwatch(child.ref)
-              ctx.stop(child.path.name)
-            }
-            mgmt.applyOrElse((ctx, PostStop), fallback)
-          case PostRestart(_) ⇒ mgmt.applyOrElse((ctx, PreStart), fallback)
-          case _              ⇒ Unhandled
-        }
-      mgmt.applyOrElse((ctx, msg), fallback)
-    }
-    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = behavior(ctx, msg)
-    override def toString = s"Composite(${LN.forClass(mgmt.getClass)},${LN.forClass(behavior.getClass)})"
-  }
-
   case class SynchronousSelf[T](f: ActorRef[T] ⇒ Behavior[T]) extends Behavior[T] {
     private val inbox = Inbox.sync[T]("syncbox")
     private var _behavior = f(inbox.ref)
@@ -317,18 +327,18 @@ object Behavior {
     private def setBehavior(ctx: ActorContext[T], b: Behavior[T]): Unit =
       _behavior = Behavior.canonicalize(ctx, b, _behavior)
 
-    @tailrec private def run(ctx: ActorContext[T], next: Behavior[T]): Behavior[T] =
-      if (inbox.hasMessages) run(ctx, next.message(ctx, inbox.receiveMsg()))
-      else next
+    @tailrec private def run(ctx: ActorContext[T], next: Behavior[T]): Behavior[T] = {
+      setBehavior(ctx, next)
+      if (inbox.hasMessages) run(ctx, behavior.message(ctx, inbox.receiveMsg()))
+      else if (isUnhandled(next)) Unhandled
+      else if (isAlive(next)) this
+      else Stopped
+    }
 
-    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
-      setBehavior(ctx, run(ctx, behavior.management(ctx, msg)))
-      this
-    }
-    override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
-      setBehavior(ctx, run(ctx, behavior.message(ctx, msg)))
-      this
-    }
+    override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] =
+      run(ctx, behavior.management(ctx, msg))
+    override def message(ctx: ActorContext[T], msg: T): Behavior[T] =
+      run(ctx, behavior.message(ctx, msg))
 
     override def toString: String = s"SynchronousSelf($behavior)"
   }
@@ -343,27 +353,37 @@ object Behavior {
   case class And[T](left: Behavior[T], right: Behavior[T]) extends Behavior[T] {
 
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] = {
-      val nextLeft = canonicalize(ctx, left.management(ctx, msg), left)
-      val nextRight = canonicalize(ctx, right.management(ctx, msg), right)
-      val leftAlive = isAlive(nextLeft)
-      val rightAlive = isAlive(nextRight)
+      val l = left.management(ctx, msg)
+      val r = right.management(ctx, msg)
+      if (isUnhandled(l) && isUnhandled(r)) Unhandled
+      else {
+        val nextLeft = canonicalize(ctx, l, left)
+        val nextRight = canonicalize(ctx, r, right)
+        val leftAlive = isAlive(nextLeft)
+        val rightAlive = isAlive(nextRight)
 
-      if (leftAlive && rightAlive) And(nextLeft, nextRight)
-      else if (leftAlive) nextLeft
-      else if (rightAlive) nextRight
-      else Stopped
+        if (leftAlive && rightAlive) And(nextLeft, nextRight)
+        else if (leftAlive) nextLeft
+        else if (rightAlive) nextRight
+        else Stopped
+      }
     }
 
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] = {
-      val nextLeft = canonicalize(ctx, left.message(ctx, msg), left)
-      val nextRight = canonicalize(ctx, right.message(ctx, msg), right)
-      val leftAlive = isAlive(nextLeft)
-      val rightAlive = isAlive(nextRight)
+      val l = left.message(ctx, msg)
+      val r = right.message(ctx, msg)
+      if (isUnhandled(l) && isUnhandled(r)) Unhandled
+      else {
+        val nextLeft = canonicalize(ctx, l, left)
+        val nextRight = canonicalize(ctx, r, right)
+        val leftAlive = isAlive(nextLeft)
+        val rightAlive = isAlive(nextRight)
 
-      if (leftAlive && rightAlive) And(nextLeft, nextRight)
-      else if (leftAlive) nextLeft
-      else if (rightAlive) nextRight
-      else Stopped
+        if (leftAlive && rightAlive) And(nextLeft, nextRight)
+        else if (leftAlive) nextLeft
+        else if (rightAlive) nextRight
+        else Stopped
+      }
     }
   }
 
@@ -381,8 +401,12 @@ object Behavior {
     override def management(ctx: ActorContext[T], msg: Signal): Behavior[T] =
       left.management(ctx, msg) match {
         case b if isUnhandled(b) ⇒
-          val nr = canonicalize(ctx, right.management(ctx, msg), right)
-          if (isAlive(nr)) Or(left, nr) else left
+          val r = right.management(ctx, msg)
+          if (isUnhandled(r)) Unhandled
+          else {
+            val nr = canonicalize(ctx, r, right)
+            if (isAlive(nr)) Or(left, nr) else left
+          }
         case nl ⇒
           val next = canonicalize(ctx, nl, left)
           if (isAlive(next)) Or(next, right) else right
@@ -391,8 +415,12 @@ object Behavior {
     override def message(ctx: ActorContext[T], msg: T): Behavior[T] =
       left.message(ctx, msg) match {
         case b if isUnhandled(b) ⇒
-          val nr = canonicalize(ctx, right.message(ctx, msg), right)
-          if (isAlive(nr)) Or(left, nr) else left
+          val r = right.message(ctx, msg)
+          if (isUnhandled(r)) Unhandled
+          else {
+            val nr = canonicalize(ctx, r, right)
+            if (isAlive(nr)) Or(left, nr) else left
+          }
         case nl ⇒
           val next = canonicalize(ctx, nl, left)
           if (isAlive(next)) Or(next, right) else right
