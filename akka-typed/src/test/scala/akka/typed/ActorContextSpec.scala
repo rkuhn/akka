@@ -62,12 +62,12 @@ object ActorContextSpec {
   case object BecameInert extends Event
 
   def subject(monitor: ActorRef[GotSignal]): Behavior[Command] =
-    FullTotal((ctx, msg) ⇒ msg match {
-      case Left(signal) ⇒
+    FullTotal {
+      case Sig(ctx, signal) ⇒
         monitor ! GotSignal(signal)
         if (signal.isInstanceOf[Failed]) ctx.setFailureResponse(Failed.Restart)
         Same
-      case Right(message) ⇒ message match {
+      case Msg(ctx, message) ⇒ message match {
         case Ping(replyTo) ⇒
           replyTo ! Pong1
           Same
@@ -119,15 +119,15 @@ object ActorContextSpec {
         case BecomeInert(replyTo) ⇒
           replyTo ! BecameInert
           Full {
-            case (_, Right(Ping(replyTo))) ⇒
+            case Msg(_, Ping(replyTo)) ⇒
               replyTo ! Pong2
               Same
-            case (_, Right(Throw(ex))) ⇒
+            case Msg(_, Throw(ex)) ⇒
               throw ex
             case _ ⇒ Same
           }
       }
-    })
+    }
 }
 
 class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
@@ -271,12 +271,14 @@ class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
               ChildEvent(GotSignal(PreRestart(`ex`))) ::
               ChildEvent(GotSignal(PostRestart(`ex`))) :: Nil)
           log.assertDone(500.millis)
+          child ! BecomeInert(self) // necessary to avoid PostStop/Terminated interference
+          (subj, child)
+      }.expectMessageKeep(500.millis) {
+        case (msg, (subj, child)) ⇒
+          msg should ===(BecameInert)
           stop(subj)
           ctx.watch(child)
           ctx.watch(subj)
-          (subj, child)
-      }.expectMessageKeep(500.millis) { (msg, _) ⇒
-        msg should ===(ChildEvent(GotSignal(PostStop)))
       }.expectTermination(500.millis) {
         case (t, (subj, child)) ⇒
           t.ref should ===(child)
@@ -469,7 +471,7 @@ class ActorContextSpec extends TypedSpec(ConfigFactory.parseString(
     override def behavior(ctx: ActorContext[Event]): Behavior[Command] = Tap({ case _ ⇒ }, subject(ctx.self))
   }
 
-  private val stoppingBehavior = Full[Command] { case (_, Right(Stop)) ⇒ Stopped }
+  private val stoppingBehavior = Full[Command] { case Msg(_, Stop) ⇒ Stopped }
 
   object `An ActorContext with And (left)` extends Tests {
     override def suite = "and"

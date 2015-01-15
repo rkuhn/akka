@@ -100,37 +100,35 @@ object TypedSpec {
   case object Timedout extends Status
 
   def guardian(outstanding: Map[ActorRef[_], ActorRef[Status]] = Map.empty): Behavior[Command] =
-    FullTotal { (ctx, msg) ⇒
-      msg match {
-        case Left(t.Failed(ex, test)) ⇒
-          outstanding get test match {
-            case Some(reply) ⇒
-              reply ! Failed(ex)
-              ctx.setFailureResponse(t.Failed.Stop)
-              guardian(outstanding - test)
-            case None ⇒
-              ctx.setFailureResponse(t.Failed.Stop)
-              Same
-          }
-        case Left(Terminated(test)) ⇒
-          outstanding get test match {
-            case Some(reply) ⇒
-              reply ! Success
-              guardian(outstanding - test)
-            case None ⇒ Same
-          }
-        case Left(_) ⇒ Same
-        case Right(r: RunTest[t]) ⇒
-          val test = ctx.spawn(r.props, r.name)
-          ctx.schedule(r.timeout, r.replyTo, Timedout)
-          ctx.watch(test)
-          guardian(outstanding + ((test, r.replyTo)))
-        case Right(Terminate(reply)) ⇒
-          reply ! Success
-          Stopped
-        case Right(c: Create[t]) ⇒
-          c.replyTo ! ctx.spawn(c.props, c.name)
-          Same
-      }
+    FullTotal {
+      case Sig(ctx, t.Failed(ex, test)) ⇒
+        outstanding get test match {
+          case Some(reply) ⇒
+            reply ! Failed(ex)
+            ctx.setFailureResponse(t.Failed.Stop)
+            guardian(outstanding - test)
+          case None ⇒
+            ctx.setFailureResponse(t.Failed.Stop)
+            Same
+        }
+      case Sig(ctx, Terminated(test)) ⇒
+        outstanding get test match {
+          case Some(reply) ⇒
+            reply ! Success
+            guardian(outstanding - test)
+          case None ⇒ Same
+        }
+      case _: Sig[_] ⇒ Same
+      case Msg(ctx, r: RunTest[t]) ⇒
+        val test = ctx.spawn(r.props, r.name)
+        ctx.schedule(r.timeout, r.replyTo, Timedout)
+        ctx.watch(test)
+        guardian(outstanding + ((test, r.replyTo)))
+      case Msg(_, Terminate(reply)) ⇒
+        reply ! Success
+        Stopped
+      case Msg(ctx, c: Create[t]) ⇒
+        c.replyTo ! ctx.spawn(c.props, c.name)
+        Same
     }
 }

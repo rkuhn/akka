@@ -107,7 +107,7 @@ object StepWise {
 
   def apply[T](f: (ActorContext[T], StartWith[T]) ⇒ Steps[T, _]): Behavior[T] =
     Full {
-      case (ctx, Left(PreStart)) ⇒ run(ctx, f(ctx, new StartWith(keepTraces = false)).ops.reverse, ())
+      case Sig(ctx, PreStart) ⇒ run(ctx, f(ctx, new StartWith(keepTraces = false)).ops.reverse, ())
     }
 
   private def throwTimeout(trace: Trace, message: String): Nothing =
@@ -133,41 +133,41 @@ object StepWise {
       case Message(t, f, trace) :: tail ⇒
         ctx.setReceiveTimeout(t)
         Full {
-          case (_, Left(ReceiveTimeout)) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for a message")
-          case (_, Right(msg))           ⇒ run(ctx, tail, f(msg, value))
-          case (_, other)                ⇒ throwIllegalState(trace, s"unexpected $other while waiting for a message")
+          case Sig(_, ReceiveTimeout) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for a message")
+          case Msg(_, msg)            ⇒ run(ctx, tail, f(msg, value))
+          case Sig(_, other)          ⇒ throwIllegalState(trace, s"unexpected $other while waiting for a message")
         }
       case MultiMessage(t, c, f, trace) :: tail ⇒
         val deadline = Deadline.now + t
         def behavior(count: Int, acc: List[Any]): Behavior[T] = {
           ctx.setReceiveTimeout(deadline.timeLeft)
           Full {
-            case (_, Left(ReceiveTimeout)) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for $c messages (got only $count)")
-            case (_, Right(msg)) ⇒
+            case Sig(_, ReceiveTimeout) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for $c messages (got only $count)")
+            case Msg(_, msg) ⇒
               val nextCount = count + 1
               if (nextCount == c) {
                 run(ctx, tail, f((msg :: acc).reverse, value))
               } else behavior(nextCount, msg :: acc)
-            case (_, other) ⇒ throwIllegalState(trace, s"unexpected $other while waiting for $c messages (got $count valid ones)")
+            case Sig(_, other) ⇒ throwIllegalState(trace, s"unexpected $other while waiting for $c messages (got $count valid ones)")
           }
         }
         behavior(0, Nil)
       case Failure(t, f, trace) :: tail ⇒
         ctx.setReceiveTimeout(t)
         Full {
-          case (_, Left(ReceiveTimeout)) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for a failure")
-          case (_, Left(failure: Failed)) ⇒
+          case Sig(_, ReceiveTimeout) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for a failure")
+          case Sig(_, failure: Failed) ⇒
             val (response, v) = f(failure, value)
             ctx.setFailureResponse(response)
             run(ctx, tail, v)
-          case (_, other) ⇒ throwIllegalState(trace, s"unexpected $other while waiting for a message")
+          case other ⇒ throwIllegalState(trace, s"unexpected $other while waiting for a message")
         }
       case Termination(t, f, trace) :: tail ⇒
         ctx.setReceiveTimeout(t)
         Full {
-          case (_, Left(ReceiveTimeout)) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for termination")
-          case (_, Left(t: Terminated))  ⇒ run(ctx, tail, f(t, value))
-          case (_, other)                ⇒ throwIllegalState(trace, s"unexpected $other while waiting for termination")
+          case Sig(_, ReceiveTimeout) ⇒ throwTimeout(trace, s"timeout of $t expired while waiting for termination")
+          case Sig(_, t: Terminated)  ⇒ run(ctx, tail, f(t, value))
+          case other                  ⇒ throwIllegalState(trace, s"unexpected $other while waiting for termination")
         }
       case Nil ⇒ Stopped
     }

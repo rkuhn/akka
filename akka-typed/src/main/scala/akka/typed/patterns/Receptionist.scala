@@ -88,7 +88,7 @@ object Receptionist {
   }
 
   private def behavior(map: Map[Key, Set[Address]]): Behavior[Command] = Full {
-    case (ctx, Right(r: Register[t])) ⇒
+    case Msg(ctx, r: Register[t]) ⇒
       ctx.watch(r.address)
       val key = Key(r)
       val set = map get key match {
@@ -97,11 +97,11 @@ object Receptionist {
       }
       r.replyTo ! Registered(r.key, r.address)
       behavior(map.updated(key, set))
-    case (ctx, Right(f: Find[t])) ⇒
+    case Msg(ctx, f: Find[t]) ⇒
       val set = map get Key(f) getOrElse Set.empty
       f.replyTo ! Listing(f.key, set.map(_.extract[t]))
       Same
-    case (ctx, Left(Terminated(ref))) ⇒
+    case Sig(ctx, Terminated(ref)) ⇒
       val addr = Address(ref)
       // this is not at all optimized
       behavior(map.map { case (k, v) ⇒ k -> (v - addr) })

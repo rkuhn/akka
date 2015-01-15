@@ -287,32 +287,34 @@ class BehaviorSpec extends TypedSpec with ConversionCheckedTripleEquals {
     }
   }
 
-  private def mkFull(monitor: ActorRef[Event], state: State = StateA): Behavior[Command] =
-    Behavior.Full {
-      case (ctx, Left(signal)) ⇒
+  private def mkFull(monitor: ActorRef[Event], state: State = StateA): Behavior[Command] = {
+    import Behavior.{ Full, Msg, Sig }
+    Full {
+      case Sig(ctx, signal) ⇒
         monitor ! GotSignal(signal)
         if (signal.isInstanceOf[Failed]) ctx.setFailureResponse(Failed.Restart)
         Behavior.Same
-      case (ctx, Right(GetSelf)) ⇒
+      case Msg(ctx, GetSelf) ⇒
         monitor ! Self(ctx.self)
         Behavior.Same
-      case (ctx, Right(Miss)) ⇒
+      case Msg(ctx, Miss) ⇒
         monitor ! Missed
         Behavior.Unhandled
-      case (ctx, Right(Ignore)) ⇒
+      case Msg(ctx, Ignore) ⇒
         monitor ! Ignored
         Behavior.Same
-      case (ctx, Right(Ping)) ⇒
+      case Msg(ctx, Ping) ⇒
         monitor ! Pong
         mkFull(monitor, state)
-      case (ctx, Right(Swap)) ⇒
+      case Msg(ctx, Swap) ⇒
         monitor ! Swapped
         mkFull(monitor, state.next)
-      case (ctx, Right(GetState(replyTo))) ⇒
+      case Msg(ctx, GetState(replyTo)) ⇒
         replyTo ! state
         Behavior.Same
-      case (ctx, Right(Stop)) ⇒ Behavior.Stopped
+      case Msg(ctx, Stop) ⇒ Behavior.Stopped
     }
+  }
 
   object `A Full Behavior` extends Messages with BecomeWithLifecycle with Stoppable {
     override def behavior(monitor: ActorRef[Event]): Behavior[Command] = mkFull(monitor)
@@ -320,35 +322,35 @@ class BehaviorSpec extends TypedSpec with ConversionCheckedTripleEquals {
 
   object `A FullTotal Behavior` extends Messages with BecomeWithLifecycle with Stoppable {
     override def behavior(monitor: ActorRef[Event]): Behavior[Command] = behv(monitor, StateA)
-    private def behv(monitor: ActorRef[Event], state: State): Behavior[Command] =
-      Behavior.FullTotal { (ctx, msg) ⇒
-        msg match {
-          case Left(signal) ⇒
-            monitor ! GotSignal(signal)
-            if (signal.isInstanceOf[Failed]) ctx.setFailureResponse(Failed.Restart)
-            Behavior.Same
-          case Right(GetSelf) ⇒
-            monitor ! Self(ctx.self)
-            Behavior.Same
-          case Right(Miss) ⇒
-            monitor ! Missed
-            Behavior.Unhandled
-          case Right(Ignore) ⇒
-            monitor ! Ignored
-            Behavior.Same
-          case Right(Ping) ⇒
-            monitor ! Pong
-            behv(monitor, state)
-          case Right(Swap) ⇒
-            monitor ! Swapped
-            behv(monitor, state.next)
-          case Right(GetState(replyTo)) ⇒
-            replyTo ! state
-            Behavior.Same
-          case Right(Stop)       ⇒ Behavior.Stopped
-          case Right(_: AuxPing) ⇒ Behavior.Unhandled
-        }
+    private def behv(monitor: ActorRef[Event], state: State): Behavior[Command] = {
+      import Behavior.{ FullTotal, Sig, Msg }
+      FullTotal {
+        case Sig(ctx, signal) ⇒
+          monitor ! GotSignal(signal)
+          if (signal.isInstanceOf[Failed]) ctx.setFailureResponse(Failed.Restart)
+          Behavior.Same
+        case Msg(ctx, GetSelf) ⇒
+          monitor ! Self(ctx.self)
+          Behavior.Same
+        case Msg(_, Miss) ⇒
+          monitor ! Missed
+          Behavior.Unhandled
+        case Msg(_, Ignore) ⇒
+          monitor ! Ignored
+          Behavior.Same
+        case Msg(_, Ping) ⇒
+          monitor ! Pong
+          behv(monitor, state)
+        case Msg(_, Swap) ⇒
+          monitor ! Swapped
+          behv(monitor, state.next)
+        case Msg(_, GetState(replyTo)) ⇒
+          replyTo ! state
+          Behavior.Same
+        case Msg(_, Stop)       ⇒ Behavior.Stopped
+        case Msg(_, _: AuxPing) ⇒ Behavior.Unhandled
       }
+    }
   }
 
   object `A ContextAware Behavior` extends Messages with BecomeWithLifecycle with Stoppable {
@@ -433,7 +435,7 @@ class BehaviorSpec extends TypedSpec with ConversionCheckedTripleEquals {
   trait Or extends Common {
     private def strange(monitor: ActorRef[Event]): Behavior[Command] =
       Behavior.Full {
-        case (_, Right(Ping | AuxPing(_))) ⇒
+        case Behavior.Msg(_, Ping | AuxPing(_)) ⇒
           monitor ! Pong
           Behavior.Unhandled
       }
