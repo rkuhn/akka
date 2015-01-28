@@ -5,16 +5,12 @@ package akka.stream
 
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+
+import akka.actor.{ ActorContext, ActorRef, ActorRefFactory, ActorSystem, ExtendedActorSystem, Props }
 import akka.stream.impl._
-import akka.stream.scaladsl.Key
-import scala.collection.immutable
-import akka.actor.ActorContext
-import akka.actor.ActorRefFactory
-import akka.actor.ActorSystem
-import akka.actor.ExtendedActorSystem
+import akka.stream.scaladsl.RunnableFlow
 import com.typesafe.config.Config
-import org.reactivestreams.Publisher
-import org.reactivestreams.Subscriber
+
 import scala.concurrent.duration._
 import akka.actor.Props
 import akka.actor.ActorRef
@@ -161,12 +157,7 @@ abstract class FlowMaterializer {
    * stream. The result can be highly implementation specific, ranging from
    * local actor chains to remote-deployed processing networks.
    */
-  def materialize[In, Out](source: scaladsl.Source[In], sink: scaladsl.Sink[Out], ops: List[Ast.AstNode], keys: List[Key[_]]): scaladsl.MaterializedMap
-
-  /**
-   * Create publishers and subscribers for fan-in and fan-out operations.
-   */
-  def materializeJunction[In, Out](op: Ast.JunctionAstNode, inputCount: Int, outputCount: Int): (immutable.Seq[Subscriber[In]], immutable.Seq[Publisher[Out]])
+  def materialize[Mat](runnable: RunnableFlow[Mat]): Mat
 
 }
 
@@ -199,7 +190,6 @@ object ActorFlowMaterializerSettings {
       dispatcher = config.getString("dispatcher"),
       supervisionDecider = Supervision.stoppingDecider,
       subscriptionTimeoutSettings = StreamSubscriptionTimeoutSettings(config),
-      fileIODispatcher = config.getString("file-io-dispatcher"),
       debugLogging = config.getBoolean("debug-logging"),
       optimizations = Optimizations.none)
 
@@ -234,7 +224,6 @@ final case class ActorFlowMaterializerSettings(
   dispatcher: String,
   supervisionDecider: Supervision.Decider,
   subscriptionTimeoutSettings: StreamSubscriptionTimeoutSettings,
-  fileIODispatcher: String, // FIXME Why does this exist?!
   debugLogging: Boolean,
   optimizations: Optimizations) {
 
@@ -272,11 +261,13 @@ final case class ActorFlowMaterializerSettings(
   def withOptimizations(optimizations: Optimizations): ActorFlowMaterializerSettings =
     copy(optimizations = optimizations)
 
-  private def isPowerOfTwo(n: Integer): Boolean = (n & (n - 1)) == 0 // FIXME this considers 0 a power of 2
+  // This considers 0 a power of 2, but this is called after a require n > 0. Never call this method without that
+  // kind of guard in front of it
+  private def isPowerOfTwo(n: Integer): Boolean = (n & (n - 1)) == 0
 }
 
 object StreamSubscriptionTimeoutSettings {
-  import StreamSubscriptionTimeoutTerminationMode._
+  import akka.stream.StreamSubscriptionTimeoutTerminationMode._
 
   /** Java API */
   def create(config: Config): StreamSubscriptionTimeoutSettings =

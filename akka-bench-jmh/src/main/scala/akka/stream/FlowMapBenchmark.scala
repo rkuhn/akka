@@ -39,7 +39,7 @@ class FlowMapBenchmark {
 
   implicit val system = ActorSystem("test", config)
 
-  var materializer: FlowMaterializer = _
+  var materializer: ActorFlowMaterializer = _
 
 
   // manual, and not via @Param, because we want @OperationsPerInvocation on our tests
