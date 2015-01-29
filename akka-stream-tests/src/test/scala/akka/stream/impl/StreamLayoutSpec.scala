@@ -134,53 +134,80 @@ class StreamLayoutSpec extends AkkaSpec {
 
   }
 
+  "OrderMaintainance" must {
+
+    "maintain order" in {
+      val a1 = testStage()
+      val a2 = testStage()
+      val a3 = testStage()
+      val a4 = testStage()
+      val a5 = testStage()
+
+      val c3 = TopologicOrder().insertFirst(a3)
+      c3.modules.toList should be(List(a3))
+
+      val c34 = c3.insert(a3, a4)
+      c34.modules.toList should be(List(a3, a4))
+
+      val c134 = c34.insertFirst(a1)
+      c134.modules.toList should be(List(a1, a3, a4))
+
+      val c1234 = c134.insert(a1, a2)
+      c1234.modules.toList should be(List(a1, a2, a3, a4))
+
+      val c12345 = c1234.insertLast(a5)
+      c12345.modules.toList should be(List(a1, a2, a3, a4, a5))
+    }
+
+  }
+
   "ConnectedComponents" must {
 
-    "must properly maintiain connected components" in {
-      val atomics: IndexedSeq[AtomicModule] = Vector.fill(10)(testStage())
-      val c1 = atomics.foldLeft(ConnectedComponents())((c, a) ⇒ c.add(a))
-
-      for (a1 ← atomics; a2 ← atomics if a1 != a2) {
-        c1.inSameComponent(a1, a2) should be(false)
-      }
-
-      val c2 = c1.link(atomics(0), atomics(1)).link(atomics(8), atomics(9))
-      c2.inSameComponent(atomics(0), atomics(1)) should be(true)
-      c2.inSameComponent(atomics(1), atomics(0)) should be(true)
-      c2.inSameComponent(atomics(8), atomics(9)) should be(true)
-      c2.inSameComponent(atomics(9), atomics(8)) should be(true)
-
-      for (a1 ← atomics.slice(2, 8); a2 ← atomics.slice(2, 8) if a1 != a2) {
-        c2.inSameComponent(a1, a2) should be(false)
-        c2.inSameComponent(a1, atomics(0)) should be(false)
-        c2.inSameComponent(a1, atomics(1)) should be(false)
-        c2.inSameComponent(a1, atomics(8)) should be(false)
-        c2.inSameComponent(a1, atomics(9)) should be(false)
-      }
-
-      val c3 =
-        c2.link(atomics(2), atomics(3)).link(atomics(4), atomics(5)).link(atomics(6), atomics(7))
-          .link(atomics(4), atomics(3)).link(atomics(6), atomics(5))
-
-      c3.inSameComponent(atomics(0), atomics(1)) should be(true)
-      c3.inSameComponent(atomics(1), atomics(0)) should be(true)
-      c3.inSameComponent(atomics(8), atomics(9)) should be(true)
-      c3.inSameComponent(atomics(9), atomics(8)) should be(true)
-
-      for (a1 ← atomics.slice(2, 8); a2 ← atomics.slice(2, 8) if a1 != a2) {
-        c2.inSameComponent(a1, a2) should be(true)
-        c3.inSameComponent(a1, atomics(0)) should be(false)
-        c3.inSameComponent(a1, atomics(1)) should be(false)
-        c3.inSameComponent(a1, atomics(8)) should be(false)
-        c3.inSameComponent(a1, atomics(9)) should be(false)
-      }
-
-      val c4 = c3.link(atomics(0), atomics(7)).link(atomics(6), atomics(9))
-
-      for (a1 ← atomics; a2 ← atomics if a1 != a2) {
-        c2.inSameComponent(a1, a2) should be(true)
-      }
-    }
+    //    "must properly maintain connected components" in {
+    //      val atomics: IndexedSeq[AtomicModule] = Vector.fill(10)(testStage())
+    //      val c1 = atomics.foldLeft(ConnectedComponents())((c, a) ⇒ c.add(a))
+    //
+    //      for (a1 ← atomics; a2 ← atomics if a1 != a2) {
+    //        c1.inSameComponent(a1, a2) should be(false)
+    //      }
+    //
+    //      val c2 = c1.link(atomics(0), atomics(1)).link(atomics(8), atomics(9))
+    //      c2.inSameComponent(atomics(0), atomics(1)) should be(true)
+    //      c2.inSameComponent(atomics(1), atomics(0)) should be(true)
+    //      c2.inSameComponent(atomics(8), atomics(9)) should be(true)
+    //      c2.inSameComponent(atomics(9), atomics(8)) should be(true)
+    //
+    //      for (a1 ← atomics.slice(2, 8); a2 ← atomics.slice(2, 8) if a1 != a2) {
+    //        c2.inSameComponent(a1, a2) should be(false)
+    //        c2.inSameComponent(a1, atomics(0)) should be(false)
+    //        c2.inSameComponent(a1, atomics(1)) should be(false)
+    //        c2.inSameComponent(a1, atomics(8)) should be(false)
+    //        c2.inSameComponent(a1, atomics(9)) should be(false)
+    //      }
+    //
+    //      val c3 =
+    //        c2.link(atomics(2), atomics(3)).link(atomics(4), atomics(5)).link(atomics(6), atomics(7))
+    //          .link(atomics(4), atomics(3)).link(atomics(6), atomics(5))
+    //
+    //      c3.inSameComponent(atomics(0), atomics(1)) should be(true)
+    //      c3.inSameComponent(atomics(1), atomics(0)) should be(true)
+    //      c3.inSameComponent(atomics(8), atomics(9)) should be(true)
+    //      c3.inSameComponent(atomics(9), atomics(8)) should be(true)
+    //
+    //      for (a1 ← atomics.slice(2, 8); a2 ← atomics.slice(2, 8) if a1 != a2) {
+    //        c2.inSameComponent(a1, a2) should be(true)
+    //        c3.inSameComponent(a1, atomics(0)) should be(false)
+    //        c3.inSameComponent(a1, atomics(1)) should be(false)
+    //        c3.inSameComponent(a1, atomics(8)) should be(false)
+    //        c3.inSameComponent(a1, atomics(9)) should be(false)
+    //      }
+    //
+    //      val c4 = c3.link(atomics(0), atomics(7)).link(atomics(6), atomics(9))
+    //
+    //      for (a1 ← atomics; a2 ← atomics if a1 != a2) {
+    //        c2.inSameComponent(a1, a2) should be(true)
+    //      }
+    //    }
 
     "must detect cycles" in {
       pending
