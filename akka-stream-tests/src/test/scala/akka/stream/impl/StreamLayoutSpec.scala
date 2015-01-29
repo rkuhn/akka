@@ -164,27 +164,27 @@ class StreamLayoutSpec extends AkkaSpec {
     override def onNext(t: Any): Unit = ()
   }
 
-  class FlatTestMaterializer extends MaterializerSession {
+  class FlatTestMaterializer(_module: Module) extends MaterializerSession(_module) {
     var publishers = Vector.empty[TestPublisher]
     var subscribers = Vector.empty[TestSubscriber]
 
-    override protected def materializeAtomic(atomic: AtomicModule, topLevel: Module): Unit = {
+    override protected def materializeAtomic(atomic: AtomicModule): Unit = {
       for (inPort ← atomic.inPorts) {
         val subscriber = TestSubscriber(atomic, inPort)
         subscribers :+= subscriber
-        assignPort(inPort, subscriber, topLevel)
+        assignPort(inPort, subscriber)
       }
       for (outPort ← atomic.outPorts) {
         val publisher = TestPublisher(atomic, outPort)
         publishers :+= publisher
-        assignPort(outPort, publisher, topLevel)
+        assignPort(outPort, publisher)
       }
     }
   }
 
   def checkMaterialized(topLevel: Module): (Set[TestPublisher], Set[TestSubscriber]) = {
-    val materializer = new FlatTestMaterializer()
-    materializer.materialize(topLevel)
+    val materializer = new FlatTestMaterializer(topLevel)
+    materializer.materialize()
     materializer.publishers.isEmpty should be(false)
     materializer.subscribers.isEmpty should be(false)
 

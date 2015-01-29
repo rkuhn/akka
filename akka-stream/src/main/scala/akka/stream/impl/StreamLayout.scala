@@ -103,38 +103,38 @@ private[akka] object StreamLayout {
 
 }
 
-abstract class MaterializerSession {
+abstract class MaterializerSession(val topLevel: StreamLayout.Module) {
   import StreamLayout._
 
   private val subscribers = scala.collection.mutable.HashMap[InPort, Subscriber[Any]]().withDefaultValue(null)
   private val publishers = scala.collection.mutable.HashMap[OutPort, Publisher[Any]]().withDefaultValue(null)
 
-  final def materialize(module: Module): Unit = {
-    assert(module.isRunnable)
-    materializeModule(module, module)
+  final def materialize(): Unit = {
+    assert(topLevel.isRunnable)
+    materializeModule(topLevel)
   }
 
-  protected def materializeModule(module: Module, topLevel: Module): Unit = {
+  protected def materializeModule(module: Module): Unit = {
     for (submodule ← module.subModules) {
       submodule match {
-        case c: CompositeModule ⇒ materializeComposite(c, topLevel)
-        case a: AtomicModule    ⇒ materializeAtomic(a, topLevel)
+        case c: CompositeModule ⇒ materializeComposite(c)
+        case a: AtomicModule    ⇒ materializeAtomic(a)
       }
     }
   }
 
-  protected def materializeComposite(composite: CompositeModule, topLevel: Module): Unit = {
-    materializeModule(composite, topLevel)
+  protected def materializeComposite(composite: CompositeModule): Unit = {
+    materializeModule(composite)
   }
 
-  protected def materializeAtomic(atomic: AtomicModule, topLevel: Module): Unit
+  protected def materializeAtomic(atomic: AtomicModule): Unit
 
-  final protected def assignPort(in: InPort, subscriber: Subscriber[Any], topLevel: Module): Unit = {
+  final protected def assignPort(in: InPort, subscriber: Subscriber[Any]): Unit = {
     subscribers.put(in, subscriber)
     val publisher = publishers(topLevel.upstreams(in))
     if (publisher ne null) publisher.subscribe(subscriber)
   }
-  final protected def assignPort(out: OutPort, publisher: Publisher[Any], topLevel: Module): Unit = {
+  final protected def assignPort(out: OutPort, publisher: Publisher[Any]): Unit = {
     publishers.put(out, publisher)
     val subscriber = subscribers(topLevel.downstreams(out))
     if (subscriber ne null) publisher.subscribe(subscriber)
