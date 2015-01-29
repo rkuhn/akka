@@ -134,6 +134,60 @@ class StreamLayoutSpec extends AkkaSpec {
 
   }
 
+  "ConnectedComponents" must {
+
+    "must properly maintiain connected components" in {
+      val atomics: IndexedSeq[AtomicModule] = Vector.fill(10)(testStage())
+      val c1 = atomics.foldLeft(ConnectedComponents())((c, a) ⇒ c.add(a))
+
+      for (a1 ← atomics; a2 ← atomics if a1 != a2) {
+        c1.inSameComponent(a1, a2) should be(false)
+      }
+
+      val c2 = c1.link(atomics(0), atomics(1)).link(atomics(8), atomics(9))
+      c2.inSameComponent(atomics(0), atomics(1)) should be(true)
+      c2.inSameComponent(atomics(1), atomics(0)) should be(true)
+      c2.inSameComponent(atomics(8), atomics(9)) should be(true)
+      c2.inSameComponent(atomics(9), atomics(8)) should be(true)
+
+      for (a1 ← atomics.slice(2, 8); a2 ← atomics.slice(2, 8) if a1 != a2) {
+        c2.inSameComponent(a1, a2) should be(false)
+        c2.inSameComponent(a1, atomics(0)) should be(false)
+        c2.inSameComponent(a1, atomics(1)) should be(false)
+        c2.inSameComponent(a1, atomics(8)) should be(false)
+        c2.inSameComponent(a1, atomics(9)) should be(false)
+      }
+
+      val c3 =
+        c2.link(atomics(2), atomics(3)).link(atomics(4), atomics(5)).link(atomics(6), atomics(7))
+          .link(atomics(4), atomics(3)).link(atomics(6), atomics(5))
+
+      c3.inSameComponent(atomics(0), atomics(1)) should be(true)
+      c3.inSameComponent(atomics(1), atomics(0)) should be(true)
+      c3.inSameComponent(atomics(8), atomics(9)) should be(true)
+      c3.inSameComponent(atomics(9), atomics(8)) should be(true)
+
+      for (a1 ← atomics.slice(2, 8); a2 ← atomics.slice(2, 8) if a1 != a2) {
+        c2.inSameComponent(a1, a2) should be(true)
+        c3.inSameComponent(a1, atomics(0)) should be(false)
+        c3.inSameComponent(a1, atomics(1)) should be(false)
+        c3.inSameComponent(a1, atomics(8)) should be(false)
+        c3.inSameComponent(a1, atomics(9)) should be(false)
+      }
+
+      val c4 = c3.link(atomics(0), atomics(7)).link(atomics(6), atomics(9))
+
+      for (a1 ← atomics; a2 ← atomics if a1 != a2) {
+        c2.inSameComponent(a1, a2) should be(true)
+      }
+    }
+
+    "must detect cycles" in {
+      pending
+    }
+
+  }
+
   case class TestPublisher(owner: Module, port: OutPort) extends Publisher[Any] with Subscription {
     var downstreamModule: Module = _
     var downstreamPort: InPort = _

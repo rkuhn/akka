@@ -5,6 +5,8 @@ package akka.stream.impl
 
 import org.reactivestreams.{ Publisher, Subscriber }
 
+import scala.annotation.tailrec
+
 /**
  * INTERNAL API
  */
@@ -99,6 +101,44 @@ private[akka] object StreamLayout {
       outPorts,
       downstreams,
       upstreams)
+  }
+
+  // FIXME fix immutability, add a backing vector, pointers replaced by numbers
+  class ConnectedComponentNode(var parent: ConnectedComponentNode)
+  def ConnectedComponent(): ConnectedComponentNode = {
+    val n = new ConnectedComponentNode(null)
+    n.parent = n
+    n
+  }
+
+  // TODO: Path compress
+  case class ConnectedComponents(components: Map[AtomicModule, ConnectedComponentNode] = Map.empty) {
+
+    def add(atomic: AtomicModule): ConnectedComponents = {
+      assert(!components.isDefinedAt(atomic))
+      this.copy(components.updated(atomic, ConnectedComponent()))
+    }
+    def merge(that: ConnectedComponents): ConnectedComponents = this.copy(this.components ++ that.components)
+    def link(from: AtomicModule, to: AtomicModule): ConnectedComponents = {
+      val componentFrom = resolve(components(from))
+      val componentTo = resolve(components(to))
+
+      if (componentFrom eq componentTo) this
+      else {
+        val newParent = ConnectedComponent()
+        componentFrom.parent = newParent
+        componentTo.parent = newParent
+        this
+      }
+    }
+
+    def inSameComponent(atomic1: AtomicModule, atomic2: AtomicModule): Boolean =
+      resolve(components(atomic1)) eq resolve(components(atomic2))
+
+    @tailrec private def resolve(node: ConnectedComponentNode): ConnectedComponentNode = {
+      if (node.parent == node) node
+      else resolve(node.parent)
+    }
   }
 
 }
