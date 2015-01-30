@@ -3,6 +3,7 @@
  */
 package akka.stream.impl
 
+import akka.stream.scaladsl.OperationAttributes
 import org.reactivestreams.{ Publisher, Subscriber }
 
 import scala.annotation.tailrec
@@ -74,9 +75,14 @@ private[akka] object StreamLayout {
 
   }
 
-  sealed trait Module extends Layout
+  trait Module extends Layout {
+    def attributes: OperationAttributes
+    def withAttributes(attr: OperationAttributes): Module
+  }
 
-  final case class AtomicModule(inPorts: Set[InPort], outPorts: Set[OutPort]) extends Module {
+  trait Description
+
+  abstract class AtomicModule extends Module {
     override val downstreams = Map.empty[OutPort, InPort]
     override val upstreams = Map.empty[InPort, OutPort]
     override val subModules = Set[Module](this)
@@ -84,12 +90,20 @@ private[akka] object StreamLayout {
     override def toString = System.identityHashCode(this).toString
   }
 
+  trait LinearModule extends AtomicModule {
+    override val inPorts: Set[InPort] = Set(new InPort)
+    override val outPorts: Set[OutPort] = Set(new OutPort)
+  }
+
   final case class CompositeModule(
     subModules: Set[Module],
     inPorts: Set[InPort],
     outPorts: Set[OutPort],
     downstreams: Map[OutPort, InPort],
-    upstreams: Map[InPort, OutPort]) extends Module
+    upstreams: Map[InPort, OutPort],
+    attributes: OperationAttributes) extends Module {
+    override def withAttributes(attr: OperationAttributes): Module = copy(attributes = attr)
+  }
 
   final case class PartialModule(
     subModules: Set[Module],
@@ -98,12 +112,15 @@ private[akka] object StreamLayout {
     downstreams: Map[OutPort, InPort],
     upstreams: Map[InPort, OutPort]) extends Layout {
 
-    def module(): Module = CompositeModule(
+    def module(attributes: OperationAttributes): Module = CompositeModule(
       subModules,
       inPorts,
       outPorts,
       downstreams,
-      upstreams)
+      upstreams,
+      attributes)
+
+    def module(): Module = module(OperationAttributes.none)
   }
 
 }

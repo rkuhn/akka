@@ -3,15 +3,20 @@
  */
 package akka.stream.impl
 
+import akka.stream.scaladsl._
 import akka.stream.testkit.AkkaSpec
 import org.reactivestreams.{ Subscription, Subscriber, Publisher }
 
 class StreamLayoutSpec extends AkkaSpec {
   import StreamLayout._
 
-  def testAtomic(inPortCount: Int, outPortCount: Int): AtomicModule = AtomicModule(
-    List.fill(inPortCount)(new InPort).toSet,
-    List.fill(outPortCount)(new OutPort).toSet)
+  def testAtomic(inPortCount: Int, outPortCount: Int): AtomicModule = new AtomicModule {
+    override def attributes: OperationAttributes = ???
+    override def withAttributes(attr: OperationAttributes): Module = ???
+
+    override val inPorts: Set[InPort] = List.fill(inPortCount)(new InPort).toSet
+    override val outPorts: Set[OutPort] = List.fill(outPortCount)(new OutPort).toSet
+  }
 
   def testStage(): AtomicModule = testAtomic(1, 1)
   def testSource(): AtomicModule = testAtomic(0, 1)
@@ -30,7 +35,7 @@ class StreamLayoutSpec extends AkkaSpec {
       stage1.isSource should be(false)
 
       val stage2 = testStage()
-      val flow12 = stage1.composeConnect(stage1.outPorts.head, stage2, stage2.inPorts.head).module
+      val flow12 = stage1.composeConnect(stage1.outPorts.head, stage2, stage2.inPorts.head).module()
 
       flow12.inPorts should be(stage1.inPorts)
       flow12.outPorts should be(stage2.outPorts)
@@ -55,7 +60,7 @@ class StreamLayoutSpec extends AkkaSpec {
       sink3.isSink should be(true)
       sink3.isSource should be(false)
 
-      val source012 = source0.composeConnect(source0.outPorts.head, flow12, flow12.inPorts.head).module
+      val source012 = source0.composeConnect(source0.outPorts.head, flow12, flow12.inPorts.head).module()
       source012.inPorts.size should be(0)
       source012.outPorts should be(flow12.outPorts)
       source012.isRunnable should be(false)
@@ -63,7 +68,7 @@ class StreamLayoutSpec extends AkkaSpec {
       source012.isSink should be(false)
       source012.isSource should be(true)
 
-      val sink123 = flow12.composeConnect(flow12.outPorts.head, sink3, sink3.inPorts.head).module
+      val sink123 = flow12.composeConnect(flow12.outPorts.head, sink3, sink3.inPorts.head).module()
       sink123.inPorts should be(flow12.inPorts)
       sink123.outPorts.size should be(0)
       sink123.isRunnable should be(false)
@@ -71,13 +76,13 @@ class StreamLayoutSpec extends AkkaSpec {
       sink123.isSink should be(true)
       sink123.isSource should be(false)
 
-      val runnable0123a = source0.composeConnect(source0.outPorts.head, sink123, sink123.inPorts.head).module
-      val runnable0123b = source012.composeConnect(source012.outPorts.head, sink3, sink3.inPorts.head).module
+      val runnable0123a = source0.composeConnect(source0.outPorts.head, sink123, sink123.inPorts.head).module()
+      val runnable0123b = source012.composeConnect(source012.outPorts.head, sink3, sink3.inPorts.head).module()
       val runnable0123c =
         source0
           .composeConnect(source0.outPorts.head, flow12, flow12.inPorts.head)
           .composeConnect(flow12.outPorts.head, sink3, sink3.inPorts.head)
-          .module
+          .module()
 
       runnable0123a should be(runnable0123b)
       runnable0123a should be(runnable0123c)
