@@ -69,6 +69,7 @@ private[akka] object StreamLayout {
     def subModules: Set[Module]
 
     def downstreams: Map[OutPort, InPort]
+
     def upstreams: Map[InPort, OutPort]
 
   }
@@ -105,117 +106,13 @@ private[akka] object StreamLayout {
       upstreams)
   }
 
-  val guard = AtomicModule(Set.empty, Set.empty)
-  val SparesenessFactor = 16
-
-  case class Record(label: Int, previous: AtomicModule, next: AtomicModule)
-
-  case class TopologicOrder(
-    records: Map[AtomicModule, Record] = Map(guard -> Record(0, next = guard, previous = guard))) {
-
-    def insert(insertAfter: AtomicModule, newElem: AtomicModule): TopologicOrder = {
-      TopologicOrder(internalInsert(newElem, insertAfter, records(insertAfter).label + 1, records))
-    }
-
-    def insertFirst(newElem: AtomicModule): TopologicOrder = insert(guard, newElem)
-    def insertLast(newElem: AtomicModule): TopologicOrder = insert(records(guard).previous, newElem)
-
-    @tailrec private def internalInsert(insertElem: AtomicModule, previousElem: AtomicModule, atLabel: Int, wip: Map[AtomicModule, Record]): Map[AtomicModule, Record] = {
-      val previousRecord = wip(previousElem)
-      val nextElem = previousRecord.next
-      val nextRecord = wip(nextElem)
-
-      if (nextRecord.label > atLabel || nextElem == guard) {
-        val step1 = wip
-          .updated(previousElem, previousRecord.copy(next = insertElem))
-          .updated(insertElem, Record(atLabel, previousElem, nextElem))
-        step1
-          .updated(nextElem, step1(nextElem).copy(previous = insertElem))
-      } else {
-        val relabelNextTo = atLabel + SparesenessFactor
-        val newWip = wip
-          .updated(previousElem, previousRecord.copy(next = insertElem))
-          .updated(insertElem, Record(atLabel, previousElem, nextRecord.next))
-        internalInsert(nextElem, insertElem, relabelNextTo, newWip)
-      }
-    }
-
-    def order(elem1: AtomicModule, elem2: AtomicModule): Boolean =
-      records(elem1).label < records(elem2).label
-
-    def delete(elem: AtomicModule): Unit = {
-      val label = records(elem)
-    }
-
-    def modules: Iterable[AtomicModule] = new Iterable[AtomicModule] {
-      override def iterator: Iterator[AtomicModule] = new Iterator[AtomicModule] {
-        private var current = records(guard).next
-
-        override def hasNext: Boolean = current != guard
-        override def next(): AtomicModule = {
-          if (!hasNext) Iterator.empty.next()
-          val result = current
-          current = records(current).next
-          result
-        }
-      }
-    }
-
-    override def toString: String =
-      modules.map(module ⇒ s"Label: ${records(module).label} module: $module").mkString("\n")
-
-  }
-
-  class DagNode(
-    var parents: Set[DagNode] = Set.empty,
-    var children: Set[DagNode] = Set.empty)
-
-  // TODO: Path compress
-  case class ConnectedComponents(components: Map[AtomicModule, DagNode] = Map.empty) {
-
-    def add(atomic: AtomicModule): ConnectedComponents = {
-      assert(!components.isDefinedAt(atomic))
-      this.copy(components.updated(atomic, new DagNode()))
-    }
-
-    // FIXME: Test merge
-    def merge(that: ConnectedComponents): ConnectedComponents = this.copy(this.components ++ that.components)
-
-    def link(from: AtomicModule, to: AtomicModule): ConnectedComponents = {
-      val nodeFrom = components(from)
-      val nodeTo = components(to)
-
-      // Parallel edges do not matter for cycle detection and connected components
-      nodeFrom.children += nodeTo
-      nodeTo.parents += nodeFrom
-
-      val parentFrom = resolve(nodeFrom)
-      val parentTo = resolve(nodeTo)
-      if (parentFrom ne parentTo) {
-        val synthetic = new DagNode(children = Set(parentFrom, parentTo))
-        parentFrom.parents += synthetic
-        parentTo.parents += synthetic
-      }
-
-      this
-    }
-
-    def inSameComponent(atomic1: AtomicModule, atomic2: AtomicModule): Boolean =
-      resolve(components(atomic1)) eq resolve(components(atomic2))
-
-    @tailrec private def resolve(node: DagNode): DagNode = {
-      if (node.parents.isEmpty) node
-      else resolve(node.parents.head)
-    }
-  }
-
 }
 
 abstract class MaterializerSession(val topLevel: StreamLayout.Module) {
   import StreamLayout._
 
-  private val subscribers = scala.collection.mutable.HashMap[InPort, Subscriber[Any]]().withDefaultValue(null)
-  private val publishers = scala.collection.mutable.HashMap[OutPort, Publisher[Any]]().withDefaultValue(null)
+  private val subscribers = collection.mutable.HashMap[InPort, Subscriber[Any]]().withDefaultValue(null)
+  private val publishers = collection.mutable.HashMap[OutPort, Publisher[Any]]().withDefaultValue(null)
 
   final def materialize(): Unit = {
     assert(topLevel.isRunnable)
