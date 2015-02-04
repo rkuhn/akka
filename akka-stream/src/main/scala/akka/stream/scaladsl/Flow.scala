@@ -23,7 +23,9 @@ import akka.stream.impl.{ Stages, StreamLayout, FlowModule }
  * A `Flow` is a set of stream processing steps that has one open input and one open output.
  */
 final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPort, p2: StreamLayout.OutPort)
-  extends FlowOps[Out, Mat] {
+  extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.FlowPorts[In, Out], Mat] {
+  
+  override val ports = Graphs.FlowPorts(new Graphs.InputPort("FIXME"), new Graphs.OutputPort("FIXME"))
 
   private[stream] val module: StreamLayout.Module = m
   private[stream] val backwardPort: StreamLayout.InPort = p1

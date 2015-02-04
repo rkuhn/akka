@@ -10,9 +10,9 @@ import akka.stream.impl.{ PublisherSink, SubscriberSource, StreamLayout }
  */
 trait Materializable {
   type MaterializedType
-
-  /**
-   * Every materializable element must be backed by a stream layout module
-   */
-  private[stream] def module: StreamLayout.Module = ??? // FIXME make abstract
+//
+//  /**
+//   * Every materializable element must be backed by a stream layout module
+//   */
+//  private[stream] def module: StreamLayout.Module = ??? // FIXME make abstract
 }

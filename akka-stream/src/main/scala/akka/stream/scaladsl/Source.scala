@@ -27,9 +27,12 @@ import org.reactivestreams.Subscriber
  * Can be used as a `Publisher`
  */
 final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: OutPort)
-  extends FlowOps[Out, Mat] {
+  extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.SourcePorts[Out], Mat] {
   private[stream] val module: StreamLayout.Module = m
   private val forwardPort: StreamLayout.OutPort = p
+  
+  // FIXME: this port must be hooked up with p from above, they are the same thing
+  override val ports = SourcePorts[Out](new Graphs.OutputPort("FIXME"))
 
   def this(sourceModule: SourceModule[Out @uncheckedVariance, Mat]) = this(sourceModule, sourceModule.outPort)
 
