@@ -4,6 +4,8 @@
 
 package akka.http.engine.server
 
+import akka.stream.impl.BlackholeSink
+
 import scala.util.control.NonFatal
 import akka.actor.{ ActorRef, Props }
 import akka.util.ByteString
