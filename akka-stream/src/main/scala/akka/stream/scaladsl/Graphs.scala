@@ -84,9 +84,11 @@ object Graphs {
    *
    * To be extended to higher arities using the boilerplate plugin.
    */
-  def source[Mat, T](g1: Graph[_, _], g2: Graph[_, _])(
+  def source[T, Mat](g1: Graph[_, _], g2: Graph[_, _])(
     combineMat: (g1.MaterializedType, g2.MaterializedType) ⇒ Mat)(
       f: FlowGraphBuilder ⇒ (g1.Ports, g2.Ports) ⇒ OutputPort[T]): Source[T, Mat] = ???
+
+  def source[T]()(f: FlowGraphBuilder => OutputPort[T]): Source[T, Unit] = ???
 
   def example(g1: Source[Int, Future[Unit]], g2: Flow[Int, String, Unit]) =
     source(g1, g2)((f, _) ⇒ f) { implicit b ⇒
@@ -99,7 +101,10 @@ object Graphs {
   class FlowGraphBuilder
 
   object FlowGraphImplicits {
-    implicit class arrow[T](val from: OutputPort[T]) extends AnyVal {
+    implicit class portArrow[T](val from: OutputPort[T]) extends AnyVal {
+      def ~>(to: InputPort[T])(implicit b: FlowGraphBuilder): Unit = ???
+    }
+    implicit class sourceArrow[T](val from: Source[T, _]) extends AnyVal {
       def ~>(to: InputPort[T])(implicit b: FlowGraphBuilder): Unit = ???
     }
   }
@@ -116,8 +121,17 @@ object Graphs {
     ???
   }
 
-  final case class MergePorts[T](in: Vector[InputPort[T]], outlet: OutputPort[T]) extends Ports {
+  final case class MergePorts[T](in: Vector[InputPort[T]], out: OutputPort[T]) extends Ports {
     override val inlets: Set[InputPort[_]] = in.toSet
-    override val outlets: Set[OutputPort[_]] = Set(outlet)
+    override val outlets: Set[OutputPort[_]] = Set(out)
   }
+
+  def mergeExample =
+    source() { implicit b =>
+      import FlowGraphImplicits._
+      val m = merge[Int](2)
+      Source.empty[Int] ~> m.in(0)
+      Source.empty[Int] ~> m.in(1)
+      m.out
+    }
 }
