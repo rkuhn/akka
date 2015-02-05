@@ -4,7 +4,7 @@
 package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
-import akka.stream.impl.StreamLayout.OutPort
+import akka.stream.impl.StreamLayout.{ InPort, OutPort, Module }
 import akka.stream.scaladsl.Graphs.SourcePorts
 
 import scala.annotation.unchecked.uncheckedVariance
@@ -26,17 +26,20 @@ import org.reactivestreams.Subscriber
  * A `Source` is a set of stream processing steps that has one open output and an attached input.
  * Can be used as a `Publisher`
  */
-final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: OutPort)
+final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: Graphs.OutputPort[Out])
   extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.SourcePorts[Out], Mat] {
-  private[stream] val module: StreamLayout.Module = m
-  private val forwardPort: StreamLayout.OutPort = p
-  
-  // FIXME: this port must be hooked up with p from above, they are the same thing
-  override val ports = SourcePorts[Out](new Graphs.OutputPort("FIXME"))
+  private[stream] val module: Module = m
+  private val forwardPort: Graphs.OutputPort[Out] = p
+
+  override val ports = SourcePorts(p)
 
   def this(sourceModule: SourceModule[Out @uncheckedVariance, Mat]) = this(sourceModule, sourceModule.outPort)
 
   override type Repr[+O, +M] = Source[O, M]
+
+  import language.implicitConversions
+  private implicit def typedInPort[T](in: InPort): Graphs.InputPort[T] = in.asInstanceOf[Graphs.InputPort[T]]
+  private implicit def typedOutPort[T](out: OutPort): Graphs.OutputPort[T] = out.asInstanceOf[Graphs.OutputPort[T]]
 
   /**
    * Transform this [[akka.stream.scaladsl.Source]] by appending the given processing stages.

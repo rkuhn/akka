@@ -11,7 +11,6 @@ import akka.stream.scaladsl.OperationAttributes
 import org.reactivestreams.Publisher
 import org.reactivestreams.Subscriber
 import org.reactivestreams.{ Subscription, Publisher, Subscriber }
-
 import scala.annotation.unchecked.uncheckedVariance
 import scala.annotation.tailrec
 import scala.collection.immutable
@@ -19,14 +18,17 @@ import scala.concurrent.{ Promise, ExecutionContext, Future }
 import scala.concurrent.duration.FiniteDuration
 import scala.util.control.NonFatal
 import scala.util.{ Success, Failure }
+import akka.stream.scaladsl.Graphs
 
-trait SourceModule[+Out, Mat] extends StreamLayout.Module {
+abstract class SourceModule[+Out, Mat](val outPort: Graphs.OutputPort[Out]) extends StreamLayout.Module {
+
+  def this() = this(new Graphs.OutputPort[Out]("FIXME"))
+
   override def subModules = Set.empty
   override def upstreams = Map.empty
   override def downstreams = Map.empty
-  override def inPorts = Set.empty
-  val outPort = new StreamLayout.OutPort
-  override val outPorts = Set(outPort)
+  override def inPorts: Set[StreamLayout.InPort] = Set.empty
+  override val outPorts: Set[StreamLayout.OutPort] = Set(outPort)
 
   /**
    * Attach this source to the given [[org.reactivestreams.Subscriber]]. Using the given

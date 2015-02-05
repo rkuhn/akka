@@ -5,11 +5,12 @@ package akka.stream.scaladsl
 
 import scala.concurrent.Future
 import akka.util.ByteString
+import akka.stream.impl.StreamLayout
 
 object Graphs {
 
-  final class InputPort[-T](override val toString: String)
-  final class OutputPort[+T](override val toString: String)
+  final class InputPort[-T](override val toString: String) extends StreamLayout.InPort
+  final class OutputPort[+T](override val toString: String) extends StreamLayout.OutPort
 
   trait Ports {
     def inlets: Set[InputPort[_]]
@@ -53,17 +54,17 @@ object Graphs {
   }
 
   implicit class GraphMat[P <: Ports, M](val g: Graph[P, M]) extends AnyVal {
-    def <*>[M2](f: M => M2): Graph[P, M2] = ???
+    def <*>[M2](f: M ⇒ M2): Graph[P, M2] = ???
   }
 
   implicit class RunnableMat[M](val r: RunnableFlow[M]) extends AnyVal {
-    def <*>[M2](f: M => M2): RunnableFlow[M2] = ???
+    def <*>[M2](f: M ⇒ M2): RunnableFlow[M2] = ???
   }
 
   def bidiExample(left: Flow[ByteString, ByteString, Future[Unit]],
                   middle: Graph[BidiPorts[ByteString, String, Int, ByteString], Unit],
                   right: Flow[String, Int, Long]) = {
-    val closed1: RunnableFlow[Future[Unit]] = left <~> middle <~> right <*> { case ((f, _), _) => f }
+    val closed1: RunnableFlow[Future[Unit]] = left <~> middle <~> right <*> { case ((f, _), _) ⇒ f }
     val closed2: RunnableFlow[Future[Unit]] = left <~> middle <*> (_._1) <~> right <*> (_._1)
     val closed3: RunnableFlow[Long] = left <~>> middle <~>> right
     val closed4: RunnableFlow[(Future[Unit], Long)] = left <<~> middle <~> right
@@ -85,10 +86,10 @@ object Graphs {
    */
   def source[Mat, T](g1: Graph[_, _], g2: Graph[_, _])(
     combineMat: (g1.MaterializedType, g2.MaterializedType) ⇒ Mat)(
-      f: FlowGraphBuilder => (g1.Ports, g2.Ports) ⇒ OutputPort[T]): Source[T, Mat] = ???
+      f: FlowGraphBuilder ⇒ (g1.Ports, g2.Ports) ⇒ OutputPort[T]): Source[T, Mat] = ???
 
   def example(g1: Source[Int, Future[Unit]], g2: Flow[Int, String, Unit]) =
-    source(g1, g2)((f, _) ⇒ f) { implicit b =>
+    source(g1, g2)((f, _) ⇒ f) { implicit b ⇒
       (p1: SourcePorts[Int], p2: FlowPorts[Int, String]) ⇒
         import FlowGraphImplicits._
         p1.outlet ~> p2.inlet
@@ -101,5 +102,22 @@ object Graphs {
     implicit class arrow[T](val from: OutputPort[T]) extends AnyVal {
       def ~>(to: InputPort[T])(implicit b: FlowGraphBuilder): Unit = ???
     }
+  }
+
+  /*
+   * Sketch for Junctions
+   */
+  def merge[T](n: Int)(implicit b: FlowGraphBuilder): MergePorts[T] = {
+    /*
+     * construct a MergeModule with MergePorts, add it to the layout and expose the ports
+     * 
+     * There is no DSL element like for Flow because this blueprint is generated and not passed around.
+     */
+    ???
+  }
+
+  final case class MergePorts[T](in: Vector[InputPort[T]], outlet: OutputPort[T]) extends Ports {
+    override val inlets: Set[InputPort[_]] = in.toSet
+    override val outlets: Set[OutputPort[_]] = Set(outlet)
   }
 }

@@ -5,8 +5,8 @@ package akka.stream.impl
 
 import akka.stream.scaladsl.OperationAttributes
 import org.reactivestreams.{ Subscription, Publisher, Subscriber }
-
 import scala.annotation.tailrec
+import akka.stream.scaladsl.Graphs
 
 /**
  * INTERNAL API

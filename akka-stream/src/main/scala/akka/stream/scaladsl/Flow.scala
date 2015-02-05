@@ -22,14 +22,14 @@ import akka.stream.impl.{ Stages, StreamLayout, FlowModule }
 /**
  * A `Flow` is a set of stream processing steps that has one open input and one open output.
  */
-final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPort, p2: StreamLayout.OutPort)
+final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: Graphs.InputPort[In], p2: Graphs.OutputPort[Out])
   extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.FlowPorts[In, Out], Mat] {
-  
-  override val ports = Graphs.FlowPorts(new Graphs.InputPort("FIXME"), new Graphs.OutputPort("FIXME"))
+
+  override val ports = Graphs.FlowPorts(p1, p2)
 
   private[stream] val module: StreamLayout.Module = m
-  private[stream] val backwardPort: StreamLayout.InPort = p1
-  private[stream] val forwardPort: StreamLayout.OutPort = p2
+  private[stream] val backwardPort: Graphs.InputPort[In] = p1
+  private[stream] val forwardPort: Graphs.OutputPort[Out] = p2
 
   private[stream] def this(module: FlowModule[In @uncheckedVariance, Out @uncheckedVariance, Mat]) =
     this(module, module.inPort, module.outPort)
@@ -37,6 +37,10 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPor
   override type Repr[+O, +M] = Flow[In @uncheckedVariance, O, M]
 
   def via[T, Mat2](flow: Flow[Out, T, Mat2]): Flow[In, T, Mat2] = via(flow, (f1: Mat, f2: Mat2) ⇒ f2)
+
+  import language.implicitConversions
+  private implicit def typedInPort[T](in: InPort): Graphs.InputPort[T] = in.asInstanceOf[Graphs.InputPort[T]]
+  private implicit def typedOutPort[T](out: OutPort): Graphs.OutputPort[T] = out.asInstanceOf[Graphs.OutputPort[T]]
 
   /**
    * Transform this [[Flow]] by appending the given processing steps.
@@ -111,7 +115,7 @@ object Flow {
   def empty[T]: Flow[T, T, Unit] = {
     // FIXME: This creates unused elements
     val identity = Stages.Map(x ⇒ x)
-    new Flow[T, T, Unit](identity, identity.inPort, identity.outPort)
+    new Flow[T, T, Unit](identity, identity.inPort.asInstanceOf[Graphs.InputPort[T]], identity.outPort.asInstanceOf[Graphs.OutputPort[T]])
   }
 
   /**
