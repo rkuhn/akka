@@ -20,6 +20,8 @@ class FlowSectionSpec extends AkkaSpec(FlowSectionSpec.config) {
   "A flow" can {
 
     "have an op with a name" in {
+      //FIXME: Flow has no simple toString anymore
+      pending
       val n = "Converter to Int"
       val f = Flow[Int].section(name(n))(_.map(_.toInt))
       f.toString should include(n)
@@ -36,6 +38,8 @@ class FlowSectionSpec extends AkkaSpec(FlowSectionSpec.config) {
     }
 
     "have an op section with a name" in {
+      //FIXME: Flow has no simple toString anymore
+      pending
       val n = "Uppercase reverser"
       val f = Flow[String].
         map(_.toLowerCase()).

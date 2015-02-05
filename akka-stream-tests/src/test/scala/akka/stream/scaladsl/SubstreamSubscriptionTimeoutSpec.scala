@@ -41,7 +41,7 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
     "timeout and cancel substream publishers when no-one subscribes to them after some time (time them out)" in {
       val publisherProbe = StreamTestKit.PublisherProbe[Int]()
       val publisher = Source(publisherProbe).groupBy(_ % 3).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbe.expectSubscription()
@@ -79,7 +79,7 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
     "timeout and stop groupBy parent actor if none of the substreams are actually consumed" in {
       val publisherProbe = StreamTestKit.PublisherProbe[Int]()
       val publisher = Source(publisherProbe).groupBy(_ % 2).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbe.expectSubscription()
@@ -104,7 +104,7 @@ class SubstreamSubscriptionTimeoutSpec(conf: String) extends AkkaSpec(conf) {
     "not timeout and cancel substream publishers when they have been subscribed to" in {
       val publisherProbe = StreamTestKit.PublisherProbe[Int]()
       val publisher = Source(publisherProbe).groupBy(_ % 2).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbe.expectSubscription()

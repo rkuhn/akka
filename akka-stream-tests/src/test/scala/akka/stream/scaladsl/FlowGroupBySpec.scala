@@ -34,17 +34,17 @@ class FlowGroupBySpec extends AkkaSpec {
   class SubstreamsSupport(groupCount: Int = 2, elementCount: Int = 6) {
     val source = Source(1 to elementCount).runWith(Sink.publisher)
     val groupStream = Source(source).groupBy(_ % groupCount).runWith(Sink.publisher)
-    val masterSubscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+    val masterSubscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, _])]()
 
     groupStream.subscribe(masterSubscriber)
     val masterSubscription = masterSubscriber.expectSubscription()
 
-    def getSubFlow(expectedKey: Int): Source[Int] = {
+    def getSubFlow(expectedKey: Int): Source[Int, _] = {
       masterSubscription.request(1)
       expectSubFlow(expectedKey)
     }
 
-    def expectSubFlow(expectedKey: Int): Source[Int] = {
+    def expectSubFlow(expectedKey: Int): Source[Int, _] = {
       val (key, substream) = masterSubscriber.expectNext()
       key should be(expectedKey)
       substream
@@ -111,7 +111,7 @@ class FlowGroupBySpec extends AkkaSpec {
     "accept cancellation of master stream when not consumed anything" in {
       val publisherProbeProbe = StreamTestKit.PublisherProbe[Int]()
       val publisher = Source(publisherProbeProbe).groupBy(_ % 2).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbeProbe.expectSubscription()
@@ -140,7 +140,7 @@ class FlowGroupBySpec extends AkkaSpec {
 
     "work with empty input stream" in {
       val publisher = Source(List.empty[Int]).groupBy(_ % 2).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       subscriber.expectCompletedOrSubscriptionFollowedByComplete()
@@ -149,7 +149,7 @@ class FlowGroupBySpec extends AkkaSpec {
     "abort on onError from upstream" in {
       val publisherProbeProbe = StreamTestKit.PublisherProbe[Int]()
       val publisher = Source(publisherProbeProbe).groupBy(_ % 2).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbeProbe.expectSubscription()
@@ -166,7 +166,7 @@ class FlowGroupBySpec extends AkkaSpec {
     "abort on onError from upstream when substreams are running" in {
       val publisherProbeProbe = StreamTestKit.PublisherProbe[Int]()
       val publisher = Source(publisherProbeProbe).groupBy(_ % 2).runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, _])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbeProbe.expectSubscription()

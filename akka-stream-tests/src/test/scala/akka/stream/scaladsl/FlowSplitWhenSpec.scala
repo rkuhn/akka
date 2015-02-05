@@ -33,17 +33,17 @@ class FlowSplitWhenSpec extends AkkaSpec {
   class SubstreamsSupport(splitWhen: Int = 3, elementCount: Int = 6) {
     val source = Source(1 to elementCount)
     val groupStream = source.splitWhen(_ == splitWhen).runWith(Sink.publisher)
-    val masterSubscriber = StreamTestKit.SubscriberProbe[Source[Int]]()
+    val masterSubscriber = StreamTestKit.SubscriberProbe[Source[Int, _]]()
 
     groupStream.subscribe(masterSubscriber)
     val masterSubscription = masterSubscriber.expectSubscription()
 
-    def getSubFlow(): Source[Int] = {
+    def getSubFlow(): Source[Int, _] = {
       masterSubscription.request(1)
       expectSubPublisher()
     }
 
-    def expectSubPublisher(): Source[Int] = {
+    def expectSubPublisher(): Source[Int, _] = {
       val substream = masterSubscriber.expectNext()
       substream
     }

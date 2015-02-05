@@ -3,6 +3,8 @@
  */
 package akka.stream.scaladsl
 
+import org.reactivestreams.Subscriber
+
 import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -36,12 +38,13 @@ class HeadSinkSpec extends AkkaSpec with ScriptedTest {
       val p = StreamTestKit.PublisherProbe[Int]()
       val f = Sink.head[Int]
       val s = Source.subscriber[Int]
-      val m = s.to(f).run()
-      p.subscribe(m.get(s))
+      val (subscriber, future) = s.to(f, (sub, fut: Future[Int]) ⇒ (sub, fut)).run()
+
+      p.subscribe(subscriber)
       val proc = p.expectSubscription
       proc.expectRequest()
       proc.sendNext(42)
-      Await.result(m.get(f), 100.millis) should be(42)
+      Await.result(future, 100.millis) should be(42)
       proc.expectCancellation()
     }
 

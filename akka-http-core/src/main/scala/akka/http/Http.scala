@@ -5,6 +5,7 @@
 package akka.http
 
 import java.net.InetSocketAddress
+import akka.stream.impl.ForeachSink
 import com.typesafe.config.Config
 import scala.collection.immutable
 import scala.concurrent.Future

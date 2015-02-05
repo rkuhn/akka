@@ -3,8 +3,13 @@
  */
 package akka.stream.scaladsl
 
-import scala.language.higherKinds
+import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
+import akka.stream.impl.StreamLayout.OutPort
+import akka.stream.scaladsl.Graphs.SourcePorts
+import akka.stream.stage.{ TerminationDirective, Directive, Context, PushPullStage }
 
+import scala.annotation.unchecked.uncheckedVariance
+import scala.language.higherKinds
 import akka.actor.Props
 import akka.stream.impl.{ EmptyPublisher, ErrorPublisher, SynchronousIterablePublisher }
 import org.reactivestreams.Publisher
@@ -12,30 +17,68 @@ import scala.collection.immutable
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ ExecutionContext, Future }
 import akka.stream.FlowMaterializer
+import akka.stream.impl._
+import akka.actor.Cancellable
+import akka.actor.ActorRef
+import scala.concurrent.Promise
+import org.reactivestreams.Subscriber
 
 /**
  * A `Source` is a set of stream processing steps that has one open output and an attached input.
  * Can be used as a `Publisher`
  */
-trait Source[+Out] extends FlowOps[Out] with Materializable {
-  override type Repr[+O] <: Source[O]
+final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: OutPort)
+  extends FlowOps[Out, Mat] {
+  private[stream] val module: StreamLayout.Module = m
+  private val forwardPort: StreamLayout.OutPort = p
+
+  def this(sourceModule: SourceModule[Out @uncheckedVariance, Mat]) = this(sourceModule, sourceModule.outPort)
+
+  override type Repr[+O, +M] = Source[O, M]
+
+  def via[T, Mat2](flow: Flow[Out, T, Mat2]): Source[T, Mat2] =
+    via(flow, (sourcem: Mat, flowm: Mat2) ⇒ flowm)
 
   /**
    * Transform this [[akka.stream.scaladsl.Source]] by appending the given processing stages.
    */
-  def via[T](flow: Flow[Out, T]): Source[T]
+  def via[T, Mat2, Mat3](flow: Flow[Out, T, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Source[T, Mat3] = {
+    val flowCopy = flow.module.carbonCopy()
+    new Source(module
+      .grow(flowCopy.module, combine)
+      .connect(forwardPort, flowCopy.inPorts(flow.backwardPort)), flowCopy.outPorts(flow.forwardPort))
+  }
+
+  def to[Mat2](sink: Sink[Out, Mat2]): RunnableFlow[Mat2] =
+    to(sink, (sourcem: Mat, sinkm: Mat2) ⇒ sinkm)
 
   /**
    * Connect this [[akka.stream.scaladsl.Source]] to a [[akka.stream.scaladsl.Sink]],
    * concatenating the processing steps of both.
    */
-  def to(sink: Sink[Out]): RunnableFlow
+  def to[Mat2, Mat3](sink: Sink[Out, Mat2], combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
+    val sinkCopy = sink.module.carbonCopy()
+    RunnableFlow(module
+      .grow(sinkCopy.module, combine)
+      .connect(forwardPort, sinkCopy.inPorts(sink.backwardPort)))
+  }
+
+  /** INTERNAL API */
+  override private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat] = {
+    // No need to copy here, op is a fresh instance
+    // FIXME: currently combine ignores here
+    new Source(module.grow(op).connect(forwardPort, op.inPort), op.outPort)
+  }
+
+  override private[scaladsl] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
+    new Source(module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(forwardPort, op.inPort), op.outPort)
+  }
 
   /**
    * Connect this `Source` to a `Sink` and run it. The returned value is the materialized value
    * of the `Sink`, e.g. the `Publisher` of a [[akka.stream.scaladsl.Sink#publisher]].
    */
-  def runWith(sink: Sink[Out])(implicit materializer: FlowMaterializer): sink.MaterializedType = to(sink).run().get(sink)
+  def runWith[Mat2](sink: Sink[Out, Mat2])(implicit materializer: FlowMaterializer): Mat2 = to(sink).run()
 
   /**
    * Shortcut for running this `Source` with a fold function.
@@ -45,7 +88,8 @@ trait Source[+Out] extends FlowOps[Out] with Materializable {
    * function evaluation when the input stream ends, or completed with `Failure`
    * if there is an error is signaled in the stream.
    */
-  def runFold[U](zero: U)(f: (U, Out) ⇒ U)(implicit materializer: FlowMaterializer): Future[U] = runWith(FoldSink(zero)(f)) // FIXME why is fold always an end step?
+  def runFold[U](zero: U)(f: (U, Out) ⇒ U)(implicit materializer: FlowMaterializer): Future[U] =
+    runWith(Sink.fold(zero)(f)) // FIXME why is fold always an end step?
 
   /**
    * Shortcut for running this `Source` with a foreach procedure. The given procedure is invoked
@@ -54,14 +98,14 @@ trait Source[+Out] extends FlowOps[Out] with Materializable {
    * normal end of the stream, or completed with `Failure` if there is an error is signaled in
    * the stream.
    */
-  def runForeach(f: Out ⇒ Unit)(implicit materializer: FlowMaterializer): Future[Unit] = runWith(ForeachSink(f))
+  def runForeach(f: Out ⇒ Unit)(implicit materializer: FlowMaterializer): Future[Unit] = runWith(Sink.foreach(f))
 
   /**
    * Concatenates a second source so that the first element
    * emitted by that source is emitted after the last element of this
    * source.
    */
-  def concat[Out2 >: Out](second: Source[Out2]): Source[Out2] = Source.concat(this, second)
+  def concat[Out2 >: Out, Mat2](second: Source[Out2, Mat2]): Source[Out2, (Mat, Mat2)] = Source.concat(this, second)
 
   /**
    * Concatenates a second source so that the first element
@@ -70,24 +114,36 @@ trait Source[+Out] extends FlowOps[Out] with Materializable {
    *
    * This is a shorthand for [[concat]]
    */
-  def ++[Out2 >: Out](second: Source[Out2]): Source[Out2] = concat(second)
-
-  /**
-   * Add a key that will have a value available after materialization.
-   * The key can only use other keys if they have been added to the source
-   * before this key. This also includes the keyed source if applicable.
-   */
-  def withKey(key: Key[_]): Source[Out]
+  def ++[Out2 >: Out, Mat2](second: Source[Out2, Mat2]): Source[Out2, (Mat, Mat2)] = concat(second)
 
   /**
    * Applies given [[OperationAttributes]] to a given section.
    */
-  def section[T](attributes: OperationAttributes)(section: Source[Out] ⇒ Source[T]): Source[T] =
-    section(this.withAttributes(attributes)).withAttributes(OperationAttributes.none)
+  def section[O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Source[O, Mat3] = {
+    val submodule = section(Flow[O2]).withAttributes(attributes).module.wrap()
+    new Source(
+      module
+        .grow(submodule, combine)
+        .connect(forwardPort, submodule.inPorts.head),
+      submodule.outPorts.head)
+  }
+
+  def section[O, O2 >: Out, Mat2](attributes: OperationAttributes)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Source[O, Mat2] = {
+    this.section[O, O2, Mat2, Mat2](attributes, (parentm: Mat, subm: Mat2) ⇒ subm)(section)
+  }
+
+  /** INTERNAL API */
+  override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
+    val newModule = module.withAttributes(attr)
+    new Source(newModule, newModule.outPorts.head)
+  }
 
 }
 
 object Source {
+  private[stream] def apply[Out, Mat](module: SourceModule[Out, Mat]): Source[Out, Mat] =
+    new Source(module)
+
   /**
    * Helper to create [[Source]] from `Publisher`.
    *
@@ -96,7 +152,7 @@ object Source {
    * that mediate the flow of elements downstream and the propagation of
    * back-pressure upstream.
    */
-  def apply[T](publisher: Publisher[T]): Source[T] = PublisherSource(publisher)
+  def apply[T](publisher: Publisher[T]): Source[T, Unit] = new Source(new PublisherSource(publisher))
 
   /**
    * Helper to create [[Source]] from `Iterator`.
@@ -108,7 +164,11 @@ object Source {
    * Elements are pulled out of the iterator in accordance with the demand coming
    * from the downstream transformation steps.
    */
-  def apply[T](f: () ⇒ Iterator[T]): Source[T] = apply(new FuncIterable(f))
+  def apply[T](f: () ⇒ Iterator[T]): Source[T, Unit] = {
+    apply(new immutable.Iterable[T] {
+      override def iterator: Iterator[T] = f()
+    })
+  }
 
   /**
    * Helper to create [[Source]] from `Iterable`.
@@ -119,7 +179,39 @@ object Source {
    * stream will see an individual flow of elements (always starting from the
    * beginning) regardless of when they subscribed.
    */
-  def apply[T](iterable: immutable.Iterable[T]): Source[T] = IterableSource(iterable)
+  def apply[T](iterable: immutable.Iterable[T]): Source[T, Unit] = {
+
+    Source.empty.transform(() ⇒ {
+      new PushPullStage[Nothing, T] {
+        var iterator: Iterator[T] = null
+
+        // Delayed init so we onError instead of failing during construction of the Source
+        def initIterator(): Unit = if (iterator eq null) iterator = iterable.iterator
+
+        // Upstream is guaranteed to be empty
+        override def onPush(elem: Nothing, ctx: Context[T]): Directive =
+          throw new UnsupportedOperationException("The IterableSource stage cannot be pushed")
+
+        override def onUpstreamFinish(ctx: Context[T]): TerminationDirective = {
+          initIterator()
+          if (iterator.hasNext) ctx.absorbTermination()
+          else ctx.finish()
+        }
+
+        override def onPull(ctx: Context[T]): Directive = {
+          if (!ctx.isFinishing) {
+            initIterator()
+            ctx.pull()
+          } else {
+            val elem = iterator.next()
+            if (iterator.hasNext) ctx.push(elem)
+            else ctx.pushAndFinish(elem)
+          }
+        }
+      }
+
+    })
+  }
 
   /**
    * Start a new `Source` from the given `Future`. The stream will consist of
@@ -127,7 +219,7 @@ object Source {
    * may happen before or after materializing the `Flow`.
    * The stream terminates with an error if the `Future` is completed with a failure.
    */
-  def apply[T](future: Future[T]): Source[T] = FutureSource(future)
+  def apply[T](future: Future[T]): Source[T, Unit] = new Source(new FutureSource(future))
 
   /**
    * Elements are emitted periodically with the specified interval.
@@ -136,77 +228,72 @@ object Source {
    * element is produced it will not receive that tick element later. It will
    * receive new tick elements as soon as it has requested more elements.
    */
-  def apply[T](initialDelay: FiniteDuration, interval: FiniteDuration, tick: T): TickSource[T] =
-    TickSource(initialDelay, interval, tick)
+  def apply[T](initialDelay: FiniteDuration, interval: FiniteDuration, tick: T): Source[T, Cancellable] =
+    new Source(new TickSource(initialDelay, interval, tick))
 
   /**
    * Creates a `Source` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
    * returns the `UndefinedSink`.
    */
-  def apply[T]()(block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] =
-    createSourceFromBuilder(new FlowGraphBuilder(), block)
+  //  def apply[T]()(block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] =
+  //    createSourceFromBuilder(new FlowGraphBuilder(), block)
 
   /**
    * Creates a `Source` by using a [[FlowGraphBuilder]] from this [[PartialFlowGraph]] on a block that expects
    * a [[FlowGraphBuilder]] and returns the `UndefinedSink`.
    */
-  def apply[T](graph: PartialFlowGraph)(block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] =
-    createSourceFromBuilder(new FlowGraphBuilder(graph), block)
+  //  def apply[T](graph: PartialFlowGraph)(block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] =
+  //    createSourceFromBuilder(new FlowGraphBuilder(graph), block)
 
-  private def createSourceFromBuilder[T](builder: FlowGraphBuilder, block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] = {
-    val out = block(builder)
-    builder.partialBuild().toSource(out)
-  }
+  //  private def createSourceFromBuilder[T](builder: FlowGraphBuilder, block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] = {
+  //    val out = block(builder)
+  //    builder.partialBuild().toSource(out)
+  //  }
 
   /**
    * Creates a `Source` that is materialized to an [[akka.actor.ActorRef]] which points to an Actor
    * created according to the passed in [[akka.actor.Props]]. Actor created by the `props` should
    * be [[akka.stream.actor.ActorPublisher]].
    */
-  def apply[T](props: Props): PropsSource[T] = PropsSource(props)
+  def apply[T](props: Props): Source[T, ActorRef] = new Source(new PropsSource(props))
 
   /**
    * Create a `Source` with one element.
    * Every connected `Sink` of this stream will see an individual stream consisting of one element.
    */
-  def single[T](element: T): Source[T] = apply(SynchronousIterablePublisher(List(element), "single")) // FIXME optimize
+  def single[T](element: T): Source[T, Unit] = apply(SynchronousIterablePublisher(List(element), "single")) // FIXME optimize
 
   /**
    * A `Source` with no elements, i.e. an empty stream that is completed immediately for every connected `Sink`.
    */
-  def empty[T](): Source[T] = _empty
-  private[this] val _empty: Source[Nothing] = apply(EmptyPublisher)
+  def empty[T](): Source[T, Unit] = _empty
+  private[this] val _empty: Source[Nothing, Unit] = apply(EmptyPublisher)
+
+  /**
+   * Create a `Source` with no elements, which does not complete its downstream,
+   * until externally triggered to do so.
+   *
+   * It materializes a [[scala.concurrent.Promise]] which will be completed
+   * when the downstream stage of this source cancels. This promise can also
+   * be used to externally trigger completion, which the source then signalls
+   * to its downstream.
+   */
+  def lazyEmpty[T](): Source[T, Promise[Unit]] = new Source(new LazyEmptySource[T]())
 
   /**
    * Create a `Source` that immediately ends the stream with the `cause` error to every connected `Sink`.
    */
-  def failed[T](cause: Throwable): Source[T] = apply(ErrorPublisher(cause, "failed"))
+  def failed[T](cause: Throwable): Source[T, Unit] = apply(ErrorPublisher(cause, "failed"))
 
   /**
    * Concatenates two sources so that the first element
    * emitted by the second source is emitted after the last element of the first
    * source.
    */
-  def concat[T](source1: Source[T], source2: Source[T]): Source[T] = {
-    val output = UndefinedSink[T]
-    val concat = Concat[T]
-    Source() { b ⇒
-      b.addEdge(source1, Pipe.empty[T], concat.first)
-        .addEdge(source2, Pipe.empty[T], concat.second)
-        .addEdge(concat.out, Pipe.empty[T], output)
-      output
-    }
-  }
+  def concat[T, Mat1, Mat2](source1: Source[T, Mat1], source2: Source[T, Mat2]): Source[T, (Mat1, Mat2)] = ??? // FIXME
 
   /**
    * Creates a `Source` that is materialized as a [[org.reactivestreams.Subscriber]]
    */
-  def subscriber[T]: SubscriberSource[T] = SubscriberSource[T]
+  def subscriber[T]: Source[T, Subscriber[T]] = new Source(new SubscriberSource[T])
 }
-
-/**
- * A `Source` that will create an object during materialization that the user will need
- * to retrieve in order to access aspects of this source (could be a Subscriber, a
- * Future/Promise, etc.).
- */
-trait KeyedSource[+Out, M] extends Source[Out] with KeyedMaterializable[M]

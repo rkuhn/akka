@@ -3,10 +3,14 @@
  */
 package akka.stream.scaladsl
 
-import akka.stream.impl.Ast._
+import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
+import akka.stream.impl.StreamLayout.{ Module, OutPort, InPort }
+import akka.stream.scaladsl.Graphs.FlowPorts
 import akka.stream.scaladsl.OperationAttributes._
 import akka.stream.{ TimerTransformer, TransformerLike, OverflowStrategy }
 import akka.util.Collections.EmptyImmutableSeq
+import org.reactivestreams.Processor
+import scala.annotation.unchecked.uncheckedVariance
 import scala.collection.immutable
 import scala.concurrent.duration.{ Duration, FiniteDuration }
 import scala.concurrent.Future
@@ -14,144 +18,192 @@ import scala.language.higherKinds
 import akka.stream.FlowMaterializer
 import akka.stream.FlattenStrategy
 import akka.stream.stage._
+import akka.stream.impl.{ Stages, StreamLayout, FlowModule }
 
 /**
  * A `Flow` is a set of stream processing steps that has one open input and one open output.
  */
-trait Flow[-In, +Out] extends FlowOps[Out] {
-  override type Repr[+O] <: Flow[In, O]
+final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPort, p2: StreamLayout.OutPort)
+  extends FlowOps[Out, Mat] {
+
+  private[stream] val module: StreamLayout.Module = m
+  private[stream] val backwardPort: StreamLayout.InPort = p1
+  private[stream] val forwardPort: StreamLayout.OutPort = p2
+
+  private[stream] def this(module: FlowModule[In @uncheckedVariance, Out @uncheckedVariance, Mat]) =
+    this(module, module.inPort, module.outPort)
+
+  override type Repr[+O, +M] = Flow[In @uncheckedVariance, O, M]
+
+  def via[T, Mat2](flow: Flow[Out, T, Mat2]): Flow[In, T, Mat2] = via(flow, (f1: Mat, f2: Mat2) ⇒ f2)
 
   /**
    * Transform this [[Flow]] by appending the given processing steps.
    */
-  def via[T](flow: Flow[Out, T]): Flow[In, T]
+  def via[T, Mat2, Mat3](flow: Flow[Out, T, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
+    val flowCopy = flow.module.carbonCopy()
+    new Flow(
+      module
+        .grow(flowCopy.module, combine)
+        .connect(forwardPort, flowCopy.inPorts(flow.backwardPort)),
+      this.backwardPort,
+      flowCopy.outPorts(flow.forwardPort))
+  }
+
+  def to[Mat2, Mat3 >: Mat](sink: Sink[Out, Mat2]): Sink[In, Mat3] = {
+    to(sink, (flowm: Mat, sinkm: Mat2) ⇒ flowm)
+  }
 
   /**
    * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
    */
-  def to(sink: Sink[Out]): Sink[In]
+  def to[Mat2, Mat3](sink: Sink[Out, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Sink[In, Mat3] = {
+    val sinkCopy = sink.module.carbonCopy()
+    new Sink(module
+      .grow(sinkCopy.module, combine)
+      .connect(forwardPort, sinkCopy.inPorts(sink.backwardPort)),
+      this.backwardPort)
+  }
 
   /**
    * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
    */
-  def join(flow: Flow[Out, In]): RunnableFlow
+  def join[Mat2, Mat3](flow: Flow[Out, In, Mat2], combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
+    val flowCopy = flow.module.carbonCopy()
+    RunnableFlow(
+      module.grow(flowCopy.module, combine)
+        .connect(this.forwardPort, flowCopy.inPorts(flow.backwardPort))
+        .connect(flowCopy.outPorts(flow.forwardPort), this.backwardPort))
+  }
+
+  def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[Unit] = {
+    join(flow, (_: Mat, _: Mat2) ⇒ ())
+  }
+
+  /** INTERNAL API */
+  override private[stream] def andThen[U](op: StageModule): Repr[U, Mat] = {
+    //No need to copy here, op is a fresh instance
+    new Flow[In, U, Mat](module.grow(op).connect(forwardPort, op.inPort), backwardPort, op.outPort)
+  }
+
+  private[stream] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
+    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(forwardPort, op.inPort), backwardPort, op.outPort)
+  }
+
+  private[stream] def andThenMat[U, Mat2, O >: Out](processorFactory: () ⇒ (Processor[O, U], Mat2)): Repr[U, Mat2] = {
+    val op = Stages.DirectProcessor(processorFactory.asInstanceOf[() ⇒ (Processor[Any, Any], Any)])
+    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(forwardPort, op.inPort), backwardPort, op.outPort)
+  }
+
+  /** INTERNAL API */
+  override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
+    val newModule = module.withAttributes(attr)
+    new Flow(newModule, newModule.inPorts.head, newModule.outPorts.head)
+  }
 
   /**
-   *
    * Connect the `Source` to this `Flow` and then connect it to the `Sink` and run it. The returned tuple contains
    * the materialized values of the `Source` and `Sink`, e.g. the `Subscriber` of a [[SubscriberSource]] and
    * and `Publisher` of a [[PublisherSink]].
    */
-  def runWith(source: Source[In], sink: Sink[Out])(implicit materializer: FlowMaterializer): (source.MaterializedType, sink.MaterializedType) = {
-    val m = source.via(this).to(sink).run()
-    (m.get(source), m.get(sink))
+  def runWith[Mat1, Mat2](source: Source[In, Mat1], sink: Sink[Out, Mat2])(implicit materializer: FlowMaterializer): (Mat1, Mat2) = {
+    source.via(this, (sm: Mat1, fm: Mat) ⇒ sm).to(sink, (sourcem: Mat1, sinkm: Mat2) ⇒ (sourcem, sinkm)).run()
   }
 
-  /**
-   * Returns a new `Flow` that concatenates a secondary `Source` to this flow so that,
-   * the first element emitted by the given ("second") source is emitted after the last element of this Flow.
-   */
-  def concat(second: Source[In]): Flow[In, Out] = {
-    Flow() { b ⇒
-      val concatter = Concat[Out]
-      val source = UndefinedSource[In]
-      val sink = UndefinedSink[Out]
-
-      b.addEdge(source, this, concatter.first)
-        .addEdge(second, this, concatter.second)
-        .addEdge(concatter.out, sink)
-
-      source → sink
-    }
+  def section[I <: In, O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[I, O, Mat3] = {
+    val submodule = section(Flow[O2]).withAttributes(attributes).module.wrap()
+    new Flow(
+      module
+        .grow(submodule, combine)
+        .connect(forwardPort, submodule.inPorts.head),
+      this.backwardPort,
+      submodule.outPorts.head)
   }
-
-  /**
-   * Add a key that will have a value available after materialization.
-   * The key can only use other keys if they have been added to the flow
-   * before this key.
-   */
-  def withKey(key: Key[_]): Flow[In, Out]
 
   /**
    * Applies given [[OperationAttributes]] to a given section.
    */
-  def section[I <: In, O](attributes: OperationAttributes)(section: Flow[In, Out] ⇒ Flow[I, O]): Flow[I, O] =
-    section(this.withAttributes(attributes)).withAttributes(OperationAttributes.none)
+  def section[I <: In, O, O2 >: Out, Mat2](attributes: OperationAttributes)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[I, O, Mat2] = {
+    this.section[I, O, O2, Mat2, Mat2](attributes, (parentm: Mat, subm: Mat2) ⇒ subm)(section)
+  }
 
 }
 
 object Flow {
+
   /**
    * Creates an empty `Flow` of type `T`
    */
-  def empty[T]: Flow[T, T] = Pipe.empty[T]
+  def empty[T]: Flow[T, T, Unit] = {
+    // FIXME: This creates unused elements
+    val identity = Stages.Identity()
+    new Flow[T, T, Unit](identity, identity.inPort, identity.outPort)
+  }
 
   /**
    * Helper to create `Flow` without a [[Source]] or a [[Sink]].
    * Example usage: `Flow[Int]`
    */
-  def apply[T]: Flow[T, T] = Pipe.empty[T]
+  def apply[T]: Flow[T, T, Unit] = empty
 
-  /**
-   * Creates a `Flow` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
-   * returns the `UndefinedSource` and `UndefinedSink`.
-   */
-  def apply[I, O]()(block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] =
-    createFlowFromBuilder(new FlowGraphBuilder(), block)
-
-  /**
-   * Creates a `Flow` by using a [[FlowGraphBuilder]] from this [[PartialFlowGraph]] on a block that expects
-   * a [[FlowGraphBuilder]] and returns the `UndefinedSource` and `UndefinedSink`.
-   */
-  def apply[I, O](graph: PartialFlowGraph)(block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] =
-    createFlowFromBuilder(new FlowGraphBuilder(graph), block)
-
-  private def createFlowFromBuilder[I, O](builder: FlowGraphBuilder,
-                                          block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] = {
-    val (in, out) = block(builder)
-    builder.partialBuild().toFlow(in, out)
-  }
-
-  /**
-   * Create a [[Flow]] from a seemingly disconnected [[Source]] and [[Sink]] pair.
-   */
-  def apply[I, O](sink: Sink[I], source: Source[O]): Flow[I, O] = GraphFlow(sink, source)
+  //  /**
+  //   * Creates a `Flow` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
+  //   * returns the `UndefinedSource` and `UndefinedSink`.
+  //   */
+  //  def apply[I, O]()(block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] =
+  //    createFlowFromBuilder(new FlowGraphBuilder(), block)
+  //
+  //  /**
+  //   * Creates a `Flow` by using a [[FlowGraphBuilder]] from this [[PartialFlowGraph]] on a block that expects
+  //   * a [[FlowGraphBuilder]] and returns the `UndefinedSource` and `UndefinedSink`.
+  //   */
+  //  def apply[I, O](graph: PartialFlowGraph)(block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] =
+  //    createFlowFromBuilder(new FlowGraphBuilder(graph), block)
+  //
+  //  private def createFlowFromBuilder[I, O](builder: FlowGraphBuilder,
+  //                                          block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] = {
+  //    val (in, out) = block(builder)
+  //    builder.partialBuild().toFlow(in, out)
+  //  }
+  //
+  //  /**
+  //   * Create a [[Flow]] from a seemingly disconnected [[Source]] and [[Sink]] pair.
+  //   */
+  //  def apply[I, O](sink: Sink[I], source: Source[O]): Flow[I, O] = GraphBackedFlow(sink, source)
 }
 
 /**
  * Flow with attached input and output, can be executed.
  */
-trait RunnableFlow {
+case class RunnableFlow[Mat](private[stream] val module: StreamLayout.Module) {
+  assert(module.isRunnable)
+
   /**
    * Run this flow and return the [[MaterializedMap]] containing the values for the [[KeyedMaterializable]] of the flow.
    */
-  def run()(implicit materializer: FlowMaterializer): MaterializedMap
+  def run()(implicit materializer: FlowMaterializer): Mat = materializer.materialize(this)
 
-  /**
-   * Run this flow and return the value of the [[KeyedMaterializable]].
-   */
-  def runWith(key: KeyedMaterializable[_])(implicit materializer: FlowMaterializer): key.MaterializedType =
-    this.run().get(key)
 }
 
 /**
  * Scala API: Operations offered by Sources and Flows with a free output side: the DSL flows left-to-right only.
  */
-trait FlowOps[+Out] {
+trait FlowOps[+Out, +Mat] {
+  import akka.stream.impl.Stages._
   import FlowOps._
-  type Repr[+O] <: FlowOps[O]
+  type Repr[+O, +Mat] <: FlowOps[O, Mat]
 
   /**
    * Transform this stream by applying the given function to each of the elements
    * as they pass through this processing step.
    */
-  def map[T](f: Out ⇒ T): Repr[T] = andThen(Map(f.asInstanceOf[Any ⇒ Any]))
+  def map[T](f: Out ⇒ T): Repr[T, Mat] = andThen(Map(f.asInstanceOf[Any ⇒ Any]))
 
   /**
    * Transform each input element into a sequence of output elements that is
    * then flattened into the output stream.
    */
-  def mapConcat[T](f: Out ⇒ immutable.Seq[T]): Repr[T] = andThen(MapConcat(f.asInstanceOf[Any ⇒ immutable.Seq[Any]]))
+  def mapConcat[T](f: Out ⇒ immutable.Seq[T]): Repr[T, Mat] = andThen(MapConcat(f.asInstanceOf[Any ⇒ immutable.Seq[Any]]))
 
   /**
    * Transform this stream by applying the given function to each of the elements
@@ -162,7 +214,7 @@ trait FlowOps[+Out] {
    *
    * @see [[#mapAsyncUnordered]]
    */
-  def mapAsync[T](f: Out ⇒ Future[T]): Repr[T] =
+  def mapAsync[T](f: Out ⇒ Future[T]): Repr[T, Mat] =
     andThen(MapAsync(f.asInstanceOf[Any ⇒ Future[Any]]))
 
   /**
@@ -175,20 +227,20 @@ trait FlowOps[+Out] {
    *
    * @see [[#mapAsync]]
    */
-  def mapAsyncUnordered[T](f: Out ⇒ Future[T]): Repr[T] =
+  def mapAsyncUnordered[T](f: Out ⇒ Future[T]): Repr[T, Mat] =
     andThen(MapAsyncUnordered(f.asInstanceOf[Any ⇒ Future[Any]]))
 
   /**
    * Only pass on those elements that satisfy the given predicate.
    */
-  def filter(p: Out ⇒ Boolean): Repr[Out] = andThen(Filter(p.asInstanceOf[Any ⇒ Boolean]))
+  def filter(p: Out ⇒ Boolean): Repr[Out, Mat] = andThen(Filter(p.asInstanceOf[Any ⇒ Boolean]))
 
   /**
    * Transform this stream by applying the given partial function to each of the elements
    * on which the function is defined as they pass through this processing step.
    * Non-matching elements are filtered out.
    */
-  def collect[T](pf: PartialFunction[Out, T]): Repr[T] = andThen(Collect(pf.asInstanceOf[PartialFunction[Any, Any]]))
+  def collect[T](pf: PartialFunction[Out, T]): Repr[T, Mat] = andThen(Collect(pf.asInstanceOf[PartialFunction[Any, Any]]))
 
   /**
    * Chunk up this stream into groups of the given size, with the last group
@@ -196,7 +248,7 @@ trait FlowOps[+Out] {
    *
    * `n` must be positive, otherwise IllegalArgumentException is thrown.
    */
-  def grouped(n: Int): Repr[immutable.Seq[Out]] = andThen(Grouped(n))
+  def grouped(n: Int): Repr[immutable.Seq[Out], Mat] = andThen(Grouped(n))
 
   /**
    * Similar to `fold` but is not a terminal operation,
@@ -204,7 +256,7 @@ trait FlowOps[+Out] {
    * applies the current and next value to the given function `f`,
    * emitting the next current value.
    */
-  def scan[T](zero: T)(f: (T, Out) ⇒ T): Repr[T] = andThen(Scan(zero, f.asInstanceOf[(Any, Any) ⇒ Any]))
+  def scan[T](zero: T)(f: (T, Out) ⇒ T): Repr[T, Mat] = andThen(Scan(zero, f.asInstanceOf[(Any, Any) ⇒ Any]))
 
   /**
    * Chunk up this stream into groups of elements received within a time window,
@@ -216,7 +268,7 @@ trait FlowOps[+Out] {
    * `n` must be positive, and `d` must be greater than 0 seconds, otherwise
    * IllegalArgumentException is thrown.
    */
-  def groupedWithin(n: Int, d: FiniteDuration): Repr[Out]#Repr[immutable.Seq[Out]] = {
+  def groupedWithin(n: Int, d: FiniteDuration): Repr[Out, Mat]#Repr[immutable.Seq[Out], Mat] = {
     require(n > 0, "n must be greater than 0")
     require(d > Duration.Zero)
     withAttributes(name("groupedWithin")).timerTransform(() ⇒ new TimerTransformer[Out, immutable.Seq[Out]] {
@@ -247,12 +299,12 @@ trait FlowOps[+Out] {
    * Discard the given number of elements at the beginning of the stream.
    * No elements will be dropped if `n` is zero or negative.
    */
-  def drop(n: Int): Repr[Out] = andThen(Drop(n))
+  def drop(n: Int): Repr[Out, Mat] = andThen(Drop(n))
 
   /**
    * Discard the elements received within the given duration at beginning of the stream.
    */
-  def dropWithin(d: FiniteDuration): Repr[Out]#Repr[Out] =
+  def dropWithin(d: FiniteDuration): Repr[Out, Mat]#Repr[Out, Mat] =
     withAttributes(name("dropWithin")).timerTransform(() ⇒ new TimerTransformer[Out, Out] {
       scheduleOnce(DropWithinTimerKey, d)
 
@@ -277,7 +329,7 @@ trait FlowOps[+Out] {
    * The stream will be completed without producing any elements if `n` is zero
    * or negative.
    */
-  def take(n: Int): Repr[Out] = andThen(Take(n))
+  def take(n: Int): Repr[Out, Mat] = andThen(Take(n))
 
   /**
    * Terminate processing (and cancel the upstream publisher) after the given
@@ -288,7 +340,7 @@ trait FlowOps[+Out] {
    * Note that this can be combined with [[#take]] to limit the number of elements
    * within the duration.
    */
-  def takeWithin(d: FiniteDuration): Repr[Out]#Repr[Out] =
+  def takeWithin(d: FiniteDuration): Repr[Out, Mat]#Repr[Out, Mat] =
     withAttributes(name("takeWithin")).timerTransform(() ⇒ new TimerTransformer[Out, Out] {
       scheduleOnce(TakeWithinTimerKey, d)
 
@@ -313,7 +365,7 @@ trait FlowOps[+Out] {
    * @param seed Provides the first state for a conflated value using the first unconsumed element as a start
    * @param aggregate Takes the currently aggregated value and the current pending element to produce a new aggregate
    */
-  def conflate[S](seed: Out ⇒ S)(aggregate: (S, Out) ⇒ S): Repr[S] =
+  def conflate[S](seed: Out ⇒ S)(aggregate: (S, Out) ⇒ S): Repr[S, Mat] =
     andThen(Conflate(seed.asInstanceOf[Any ⇒ Any], aggregate.asInstanceOf[(Any, Any) ⇒ Any]))
 
   /**
@@ -329,7 +381,7 @@ trait FlowOps[+Out] {
    * @param extrapolate Takes the current extrapolation state to produce an output element and the next extrapolation
    *                    state.
    */
-  def expand[S, U](seed: Out ⇒ S)(extrapolate: S ⇒ (U, S)): Repr[U] =
+  def expand[S, U](seed: Out ⇒ S)(extrapolate: S ⇒ (U, S)): Repr[U, Mat] =
     andThen(Expand(seed.asInstanceOf[Any ⇒ Any], extrapolate.asInstanceOf[Any ⇒ (Any, Any)]))
 
   /**
@@ -340,7 +392,7 @@ trait FlowOps[+Out] {
    * @param size The size of the buffer in element count
    * @param overflowStrategy Strategy that is used when incoming elements cannot fit inside the buffer
    */
-  def buffer(size: Int, overflowStrategy: OverflowStrategy): Repr[Out] =
+  def buffer(size: Int, overflowStrategy: OverflowStrategy): Repr[Out, Mat] =
     andThen(Buffer(size, overflowStrategy))
 
   /**
@@ -348,15 +400,18 @@ trait FlowOps[+Out] {
    * This operator makes it possible to extend the `Flow` API when there is no specialized
    * operator that performs the transformation.
    */
-  def transform[T](mkStage: () ⇒ Stage[Out, T]): Repr[T] =
+  def transform[T](mkStage: () ⇒ Stage[Out, T]): Repr[T, Mat] =
     andThen(StageFactory(mkStage))
+
+  private[akka] def transformMaterializing[T, Mat](mkStageAndMaterialized: () ⇒ (Stage[Out, T], Mat)): Repr[T, Mat] =
+    andThenMat(MaterializingStageFactory(mkStageAndMaterialized))
 
   /**
    * Takes up to `n` elements from the stream and returns a pair containing a strict sequence of the taken element
    * and a stream representing the remaining elements. If ''n'' is zero or negative, then this will return a pair
    * of an empty collection and a stream containing the whole upstream unchanged.
    */
-  def prefixAndTail[U >: Out](n: Int): Repr[(immutable.Seq[Out], Source[U])] =
+  def prefixAndTail[U >: Out](n: Int): Repr[(immutable.Seq[Out], Source[U, Unit]), Mat] =
     andThen(PrefixAndTail(n))
 
   /**
@@ -370,7 +425,7 @@ trait FlowOps[+Out] {
    * care to unblock (or cancel) all of the produced streams even if you want
    * to consume only one of them.
    */
-  def groupBy[K, U >: Out](f: Out ⇒ K): Repr[(K, Source[U])] =
+  def groupBy[K, U >: Out](f: Out ⇒ K): Repr[(K, Source[U, Unit]), Mat] =
     andThen(GroupBy(f.asInstanceOf[Any ⇒ Any]))
 
   /**
@@ -386,14 +441,14 @@ trait FlowOps[+Out] {
    * true, false, false // elements go into third substream
    * }}}
    */
-  def splitWhen[U >: Out](p: Out ⇒ Boolean): Repr[Source[U]] =
+  def splitWhen[U >: Out](p: Out ⇒ Boolean): Repr[Source[U, Unit], Mat] =
     andThen(SplitWhen(p.asInstanceOf[Any ⇒ Boolean]))
 
   /**
    * Transforms a stream of streams into a contiguous stream of elements using the provided flattening strategy.
    * This operation can be used on a stream of element type [[akka.stream.scaladsl.Source]].
    */
-  def flatten[U](strategy: akka.stream.FlattenStrategy[Out, U]): Repr[U] = strategy match {
+  def flatten[U](strategy: akka.stream.FlattenStrategy[Out, U]): Repr[U, Mat] = strategy match {
     case _: FlattenStrategy.Concat[Out] ⇒ andThen(ConcatAll())
     case _ ⇒
       throw new IllegalArgumentException(s"Unsupported flattening strategy [${strategy.getClass.getName}]")
@@ -425,15 +480,16 @@ trait FlowOps[+Out] {
    *
    * Note that you can use [[#transform]] if you just need to transform elements time plays no role in the transformation.
    */
-  private[akka] def timerTransform[U](mkStage: () ⇒ TimerTransformer[Out, U]): Repr[U] =
+  private[akka] def timerTransform[U](mkStage: () ⇒ TimerTransformer[Out, U]): Repr[U, Mat] =
     andThen(TimerTransform(mkStage.asInstanceOf[() ⇒ TimerTransformer[Any, Any]]))
 
   /** INTERNAL API */
-  private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out]
+  private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat]
 
   /** INTERNAL API */
-  // Storing ops in reverse order
-  private[scaladsl] def andThen[U](op: AstNode): Repr[U]
+  private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat]
+
+  private[scaladsl] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2]
 }
 
 /**
@@ -456,7 +512,4 @@ private[stream] object FlowOps {
   def completedTransformer[T]: TransformerLike[T, T] = CompletedTransformer.asInstanceOf[TransformerLike[T, T]]
   def identityTransformer[T]: TransformerLike[T, T] = IdentityTransformer.asInstanceOf[TransformerLike[T, T]]
 
-  def identityStage[T]: Stage[T, T] = new PushStage[T, T] {
-    override def onPush(elem: T, ctx: Context[T]): Directive = ctx.push(elem)
-  }
 }

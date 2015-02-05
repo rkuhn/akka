@@ -16,13 +16,13 @@ import akka.stream.testkit.StreamTestKit.OnNext
 
 class FlowIteratorSpec extends AbstractFlowIteratorSpec {
   override def testName = "A Flow based on an iterator producing function"
-  override def createSource[T](iterable: immutable.Iterable[T]): Source[T] =
+  override def createSource[T](iterable: immutable.Iterable[T]): Source[T, Unit] =
     Source(() ⇒ iterable.iterator)
 }
 
 class FlowIterableSpec extends AbstractFlowIteratorSpec {
   override def testName = "A Flow based on an iterable"
-  override def createSource[T](iterable: immutable.Iterable[T]): Source[T] =
+  override def createSource[T](iterable: immutable.Iterable[T]): Source[T, Unit] =
     Source(iterable)
 }
 
@@ -35,7 +35,7 @@ abstract class AbstractFlowIteratorSpec extends AkkaSpec {
 
   def testName: String
 
-  def createSource[T](iterable: immutable.Iterable[T]): Source[T]
+  def createSource[T](iterable: immutable.Iterable[T]): Source[T, Unit]
 
   testName must {
     "produce elements" in {
