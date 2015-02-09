@@ -23,15 +23,23 @@ import akka.stream.impl.{ Stages, StreamLayout, FlowModule }
 /**
  * A `Flow` is a set of stream processing steps that has one open input and one open output.
  */
-final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPort, p2: StreamLayout.OutPort)
-  extends FlowOps[Out, Mat] {
+final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPort[In], val outlet: Graphs.OutPort[Out])
+  extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.FlowPorts[In, Out], Mat] {
 
-  private[stream] val module: StreamLayout.Module = m
-  private[stream] val backwardPort: StreamLayout.InPort = p1
-  private[stream] val forwardPort: StreamLayout.OutPort = p2
+  private[stream] override val module: StreamLayout.Module = m
 
   private[stream] def this(module: FlowModule[In @uncheckedVariance, Out @uncheckedVariance, Mat]) =
     this(module, module.inPort, module.outPort)
+
+  override val ports: FlowPorts[In, Out] = FlowPorts(inlet, outlet)
+
+  private[stream] def carbonCopy(): Flow[In, Out, Mat] = {
+    val flowCopy = this.module.carbonCopy()
+    new Flow(
+      flowCopy.module,
+      flowCopy.inPorts(inlet).asInstanceOf[Graphs.InPort[In]],
+      flowCopy.outPorts(outlet).asInstanceOf[Graphs.OutPort[Out]])
+  }
 
   override type Repr[+O, +M] = Flow[In @uncheckedVariance, O, M]
 
@@ -41,13 +49,13 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPor
    * Transform this [[Flow]] by appending the given processing steps.
    */
   def via[T, Mat2, Mat3](flow: Flow[Out, T, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
-    val flowCopy = flow.module.carbonCopy()
+    val flowCopy = flow.carbonCopy()
     new Flow(
       module
         .grow(flowCopy.module, combine)
-        .connect(forwardPort, flowCopy.inPorts(flow.backwardPort)),
-      this.backwardPort,
-      flowCopy.outPorts(flow.forwardPort))
+        .connect(outlet, flowCopy.ports.inlet),
+      this.inlet,
+      flowCopy.ports.outlet)
   }
 
   def to[Mat2, Mat3 >: Mat](sink: Sink[Out, Mat2]): Sink[In, Mat3] = {
@@ -61,19 +69,19 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPor
     val sinkCopy = sink.module.carbonCopy()
     new Sink(module
       .grow(sinkCopy.module, combine)
-      .connect(forwardPort, sinkCopy.inPorts(sink.backwardPort)),
-      this.backwardPort)
+      .connect(outlet, sinkCopy.inPorts(sink.backwardPort)),
+      this.inlet)
   }
 
   /**
    * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
    */
   def join[Mat2, Mat3](flow: Flow[Out, In, Mat2], combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
-    val flowCopy = flow.module.carbonCopy()
+    val flowCopy = flow.carbonCopy()
     RunnableFlow(
       module.grow(flowCopy.module, combine)
-        .connect(this.forwardPort, flowCopy.inPorts(flow.backwardPort))
-        .connect(flowCopy.outPorts(flow.forwardPort), this.backwardPort))
+        .connect(this.outlet, flowCopy.ports.inlet)
+        .connect(flowCopy.ports.outlet, this.inlet))
   }
 
   def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[Unit] = {
@@ -83,22 +91,22 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPor
   /** INTERNAL API */
   override private[stream] def andThen[U](op: StageModule): Repr[U, Mat] = {
     //No need to copy here, op is a fresh instance
-    new Flow[In, U, Mat](module.grow(op).connect(forwardPort, op.inPort), backwardPort, op.outPort)
+    new Flow[In, U, Mat](module.grow(op).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Graphs.OutPort[U]])
   }
 
   private[stream] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
-    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(forwardPort, op.inPort), backwardPort, op.outPort)
+    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Graphs.OutPort[U]])
   }
 
   private[stream] def andThenMat[U, Mat2, O >: Out](processorFactory: () ⇒ (Processor[O, U], Mat2)): Repr[U, Mat2] = {
     val op = Stages.DirectProcessor(processorFactory.asInstanceOf[() ⇒ (Processor[Any, Any], Any)])
-    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(forwardPort, op.inPort), backwardPort, op.outPort)
+    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Graphs.OutPort[U]])
   }
 
   /** INTERNAL API */
   override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
     val newModule = module.withAttributes(attr)
-    new Flow(newModule, newModule.inPorts.head, newModule.outPorts.head)
+    new Flow(newModule, this.inlet, this.outlet)
   }
 
   /**
@@ -111,13 +119,13 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, p1: StreamLayout.InPor
   }
 
   def section[I <: In, O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[I, O, Mat3] = {
-    val submodule = section(Flow[O2]).withAttributes(attributes).module.wrap()
+    val subFlow = section(Flow[O2]).withAttributes(attributes).carbonCopy()
     new Flow(
       module
-        .grow(submodule, combine)
-        .connect(forwardPort, submodule.inPorts.head),
-      this.backwardPort,
-      submodule.outPorts.head)
+        .grow(subFlow.module.wrap(), combine)
+        .connect(outlet, subFlow.ports.inlet),
+      this.inlet,
+      subFlow.ports.outlet)
   }
 
   /**
@@ -137,7 +145,7 @@ object Flow {
   def empty[T]: Flow[T, T, Unit] = {
     // FIXME: This creates unused elements
     val identity = Stages.Identity()
-    new Flow[T, T, Unit](identity, identity.inPort, identity.outPort)
+    new Flow[Any, Any, Any](identity, identity.inPort, identity.outPort).asInstanceOf[Flow[T, T, Unit]]
   }
 
   /**

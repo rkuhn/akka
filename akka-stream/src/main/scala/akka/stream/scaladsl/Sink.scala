@@ -5,9 +5,7 @@ package akka.stream.scaladsl
 
 import akka.actor.{ ActorRef, Props }
 import akka.stream.impl._
-import akka.stream.scaladsl.Graphs.SinkPorts
 import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.scaladsl.Source
 import akka.stream.stage.{ TerminationDirective, Directive, Context, PushStage }
 import org.reactivestreams.{ Publisher, Subscriber }
 import scala.annotation.unchecked.uncheckedVariance

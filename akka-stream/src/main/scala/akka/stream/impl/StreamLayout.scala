@@ -6,8 +6,6 @@ package akka.stream.impl
 import akka.stream.scaladsl.OperationAttributes
 import org.reactivestreams.{ Subscription, Publisher, Subscriber }
 
-import scala.annotation.tailrec
-
 /**
  * INTERNAL API
  */
@@ -36,7 +34,7 @@ private[akka] object StreamLayout {
     def isSource: Boolean = (outPorts.size == 1) && inPorts.isEmpty
     def isFlow: Boolean = (inPorts.size == 1) && (outPorts.size == 1)
 
-    def connect(from: OutPort, to: InPort): Module = {
+    def connect[A, B](from: OutPort, to: InPort): Module = {
       assert(outPorts(from))
       assert(inPorts(to))
 
@@ -114,23 +112,44 @@ private[akka] object StreamLayout {
     }
 
     def subModules: Set[Module]
-
     def isAtomic: Boolean = subModules.isEmpty
 
     def downstreams: Map[OutPort, InPort]
-
     def upstreams: Map[InPort, OutPort]
 
     def materializedValueComputation: MaterializedValueNode = Atomic(this)
-
     def carbonCopy: () ⇒ Mapping
 
     def attributes: OperationAttributes
-
     def withAttributes(attributes: OperationAttributes): Module
 
     final override def hashCode(): Int = super.hashCode()
     final override def equals(obj: scala.Any): Boolean = super.equals(obj)
+  }
+
+  object EmptyModule extends Module {
+    override def subModules: Set[Module] = Set.empty
+
+    override def inPorts: Set[InPort] = Set.empty
+    override def outPorts: Set[OutPort] = Set.empty
+
+    override def downstreams: Map[OutPort, InPort] = Map.empty
+    override def upstreams: Map[InPort, OutPort] = Map.empty
+
+    override def withAttributes(attributes: OperationAttributes): Module = this
+    override def attributes: OperationAttributes = OperationAttributes.none
+
+    private val emptyMapping = Mapping(this, Map.empty, Map.empty)
+    override val carbonCopy: () ⇒ Mapping = () ⇒ emptyMapping
+
+    override def isRunnable: Boolean = false
+
+    override def grow(that: Module): Module = that
+
+    override def grow[A, B, C](that: Module, f: (A, B) ⇒ C): Module =
+      throw new UnsupportedOperationException("Cannot grow empty module with materialization combiner")
+
+    override def wrap(): Module = this
   }
 
   final case class CompositeModule(

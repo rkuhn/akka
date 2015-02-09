@@ -4,7 +4,6 @@
 package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
-import akka.stream.impl.StreamLayout.OutPort
 import akka.stream.scaladsl.Graphs.SourcePorts
 import akka.stream.stage.{ TerminationDirective, Directive, Context, PushPullStage }
 
@@ -27,14 +26,15 @@ import org.reactivestreams.Subscriber
  * A `Source` is a set of stream processing steps that has one open output and an attached input.
  * Can be used as a `Publisher`
  */
-final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: OutPort)
-  extends FlowOps[Out, Mat] {
-  private[stream] val module: StreamLayout.Module = m
-  private val forwardPort: StreamLayout.OutPort = p
+final class Source[+Out, +Mat] private (m: StreamLayout.Module, val outlet: Graphs.OutPort[Out])
+  extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.SourcePorts[Out], Mat] {
+  private[stream] override val module: StreamLayout.Module = m
 
   def this(sourceModule: SourceModule[Out @uncheckedVariance, Mat]) = this(sourceModule, sourceModule.outPort)
 
   override type Repr[+O, +M] = Source[O, M]
+
+  override val ports = SourcePorts[Out](outlet)
 
   def via[T, Mat2](flow: Flow[Out, T, Mat2]): Source[T, Mat2] =
     via(flow, (sourcem: Mat, flowm: Mat2) ⇒ flowm)
@@ -43,10 +43,10 @@ final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: OutPort)
    * Transform this [[akka.stream.scaladsl.Source]] by appending the given processing stages.
    */
   def via[T, Mat2, Mat3](flow: Flow[Out, T, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Source[T, Mat3] = {
-    val flowCopy = flow.module.carbonCopy()
-    new Source(module
-      .grow(flowCopy.module, combine)
-      .connect(forwardPort, flowCopy.inPorts(flow.backwardPort)), flowCopy.outPorts(flow.forwardPort))
+    val flowCopy = flow.carbonCopy()
+    new Source(
+      module.grow(flowCopy.module, combine)
+        .connect(outlet, flowCopy.ports.inlet), flow.ports.outlet)
   }
 
   def to[Mat2](sink: Sink[Out, Mat2]): RunnableFlow[Mat2] =
@@ -60,18 +60,18 @@ final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: OutPort)
     val sinkCopy = sink.module.carbonCopy()
     RunnableFlow(module
       .grow(sinkCopy.module, combine)
-      .connect(forwardPort, sinkCopy.inPorts(sink.backwardPort)))
+      .connect(outlet, sinkCopy.inPorts(sink.backwardPort)))
   }
 
   /** INTERNAL API */
   override private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat] = {
     // No need to copy here, op is a fresh instance
     // FIXME: currently combine ignores here
-    new Source(module.grow(op).connect(forwardPort, op.inPort), op.outPort)
+    new Source(module.grow(op).connect(outlet, op.inPort), op.outPort.asInstanceOf[Graphs.OutPort[U]])
   }
 
   override private[scaladsl] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
-    new Source(module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(forwardPort, op.inPort), op.outPort)
+    new Source(module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), op.outPort.asInstanceOf[Graphs.OutPort[U]])
   }
 
   /**
@@ -120,12 +120,12 @@ final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: OutPort)
    * Applies given [[OperationAttributes]] to a given section.
    */
   def section[O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Source[O, Mat3] = {
-    val submodule = section(Flow[O2]).withAttributes(attributes).module.wrap()
+    val subFlow = section(Flow[O2]).withAttributes(attributes).carbonCopy()
     new Source(
       module
-        .grow(submodule, combine)
-        .connect(forwardPort, submodule.inPorts.head),
-      submodule.outPorts.head)
+        .grow(subFlow.module.wrap(), combine)
+        .connect(outlet, subFlow.ports.inlet),
+      subFlow.ports.outlet)
   }
 
   def section[O, O2 >: Out, Mat2](attributes: OperationAttributes)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Source[O, Mat2] = {
@@ -135,7 +135,7 @@ final class Source[+Out, +Mat] private (m: StreamLayout.Module, p: OutPort)
   /** INTERNAL API */
   override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
     val newModule = module.withAttributes(attr)
-    new Source(newModule, newModule.outPorts.head)
+    new Source(newModule, outlet)
   }
 
 }

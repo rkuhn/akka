@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import akka.actor.{ PoisonPill, Cancellable, Props, ActorRef }
 import akka.stream.FlowMaterializer
 import akka.stream.impl.StreamLayout.{ Mapping, Module }
-import akka.stream.scaladsl.OperationAttributes
+import akka.stream.scaladsl.{ Graphs, OperationAttributes }
 import org.reactivestreams._
 
 import scala.annotation.unchecked.uncheckedVariance
@@ -23,8 +23,8 @@ trait SourceModule[+Out, Mat] extends StreamLayout.Module {
   override def upstreams = Map.empty
   override def downstreams = Map.empty
   override def inPorts = Set.empty
-  val outPort = new StreamLayout.OutPort
-  override val outPorts = Set(outPort)
+  val outPort: Graphs.OutPort[Out] = new Graphs.OutPort[Out]("FIXME")
+  override val outPorts: Set[StreamLayout.OutPort] = Set(outPort)
 
   /**
    * This method is only used for Sources that return true from [[#isActive]], which then must

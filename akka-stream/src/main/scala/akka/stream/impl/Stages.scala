@@ -56,15 +56,7 @@ private[akka] object Stages {
 
   import Defaults._
 
-  sealed trait StageModule extends Module {
-    val inPort = new StreamLayout.InPort
-    val outPort = new StreamLayout.OutPort
-    override val inPorts = Set(inPort)
-    override val outPorts = Set(outPort)
-
-    override def subModules: Set[Module] = Set.empty
-    override def downstreams: collection.immutable.Map[OutPort, InPort] = collection.immutable.Map.empty
-    override def upstreams: collection.immutable.Map[InPort, OutPort] = collection.immutable.Map.empty
+  sealed trait StageModule extends FlowModule[Any, Any, Any] {
 
     def attributes: OperationAttributes
     def withAttributes(attributes: OperationAttributes): StageModule
