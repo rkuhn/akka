@@ -53,9 +53,9 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
     new Flow(
       module
         .grow(flowCopy.module, combine)
-        .connect(outlet, flowCopy.ports.inlet),
+        .connect(outlet, flowCopy.inlet),
       this.inlet,
-      flowCopy.ports.outlet)
+      flowCopy.outlet)
   }
 
   def to[Mat2, Mat3 >: Mat](sink: Sink[Out, Mat2]): Sink[In, Mat3] = {
@@ -66,11 +66,11 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
    * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
    */
   def to[Mat2, Mat3](sink: Sink[Out, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Sink[In, Mat3] = {
-    val sinkCopy = sink.module.carbonCopy()
+    val sinkCopy = sink.carbonCopy()
     new Sink(module
       .grow(sinkCopy.module, combine)
-      .connect(outlet, sinkCopy.inPorts(sink.backwardPort)),
-      this.inlet)
+      .connect(outlet, sinkCopy.inlet),
+      inlet)
   }
 
   /**
@@ -80,8 +80,8 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
     val flowCopy = flow.carbonCopy()
     RunnableFlow(
       module.grow(flowCopy.module, combine)
-        .connect(this.outlet, flowCopy.ports.inlet)
-        .connect(flowCopy.ports.outlet, this.inlet))
+        .connect(this.outlet, flowCopy.inlet)
+        .connect(flowCopy.outlet, this.inlet))
   }
 
   def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[Unit] = {
@@ -106,7 +106,7 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
   /** INTERNAL API */
   override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
     val newModule = module.withAttributes(attr)
-    new Flow(newModule, this.inlet, this.outlet)
+    new Flow(newModule, newModule.inPorts.head.asInstanceOf[Graphs.InPort[In]], newModule.outPorts.head.asInstanceOf[Graphs.OutPort[Out]])
   }
 
   /**
@@ -123,9 +123,9 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
     new Flow(
       module
         .grow(subFlow.module.wrap(), combine)
-        .connect(outlet, subFlow.ports.inlet),
+        .connect(outlet, subFlow.inlet),
       this.inlet,
-      subFlow.ports.outlet)
+      subFlow.outlet)
   }
 
   /**

@@ -46,7 +46,7 @@ final class Source[+Out, +Mat] private (m: StreamLayout.Module, val outlet: Grap
     val flowCopy = flow.carbonCopy()
     new Source(
       module.grow(flowCopy.module, combine)
-        .connect(outlet, flowCopy.ports.inlet), flow.ports.outlet)
+        .connect(outlet, flowCopy.inlet), flowCopy.outlet)
   }
 
   def to[Mat2](sink: Sink[Out, Mat2]): RunnableFlow[Mat2] =
@@ -57,10 +57,10 @@ final class Source[+Out, +Mat] private (m: StreamLayout.Module, val outlet: Grap
    * concatenating the processing steps of both.
    */
   def to[Mat2, Mat3](sink: Sink[Out, Mat2], combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
-    val sinkCopy = sink.module.carbonCopy()
+    val sinkCopy = sink.carbonCopy()
     RunnableFlow(module
       .grow(sinkCopy.module, combine)
-      .connect(outlet, sinkCopy.inPorts(sink.backwardPort)))
+      .connect(outlet, sinkCopy.inlet))
   }
 
   /** INTERNAL API */
@@ -135,7 +135,7 @@ final class Source[+Out, +Mat] private (m: StreamLayout.Module, val outlet: Grap
   /** INTERNAL API */
   override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
     val newModule = module.withAttributes(attr)
-    new Source(newModule, outlet)
+    new Source(newModule, newModule.outPorts.head.asInstanceOf[Graphs.OutPort[Out]])
   }
 
 }

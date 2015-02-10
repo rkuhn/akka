@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicReference
 import akka.actor.{ ActorRef, Props }
 import akka.stream.impl.StreamLayout.{ Mapping, Module, OutPort, InPort }
 import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.scaladsl.{ Sink, OperationAttributes, Source }
+import akka.stream.scaladsl.{ Graphs, Sink, OperationAttributes, Source }
 import akka.stream.stage._
 import org.reactivestreams.{ Processor, Publisher, Subscriber, Subscription }
 
@@ -34,7 +34,7 @@ trait SinkModule[-In, Mat] extends StreamLayout.Module {
   override def downstreams: Map[OutPort, InPort] = Map.empty
   override def upstreams: Map[InPort, OutPort] = Map.empty
 
-  val inPort: InPort = new InPort
+  val inPort: Graphs.InPort[In] = new Graphs.InPort[In]("FIXME")
   override def inPorts: Set[InPort] = Set(inPort)
   override def outPorts: Set[OutPort] = Set.empty
 

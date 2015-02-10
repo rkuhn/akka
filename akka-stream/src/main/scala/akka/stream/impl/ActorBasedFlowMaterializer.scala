@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicLong
 
 import akka.dispatch.Dispatchers
 import akka.event.Logging
+import akka.stream.impl.Junctions.{ MergeModule, JunctionModule }
 import akka.stream.impl.Stages.StageModule
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl.fusing.ActorInterpreter
@@ -80,6 +81,9 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
           assignPort(stage.inPort, processor)
           assignPort(stage.outPort, processor)
           mat
+
+        case junction: JunctionModule ⇒ materializeJunction(junction, effectiveAttributes)
+
       }
 
       private def processorFor(op: StageModule, effectiveAttributes: OperationAttributes): (Processor[Any, Any], Any) = op match {
@@ -91,6 +95,20 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
             stageName(effectiveAttributes),
             effectiveAttributes.settings(settings).dispatcher))
           processor -> mat
+      }
+
+      private def materializeJunction(op: JunctionModule, effectiveAttributes: OperationAttributes): Unit = op match {
+        case MergeModule(ins, out, _) ⇒
+          val impl = actorOf(
+            FairMerge.props(effectiveAttributes.settings(settings), ins.size),
+            stageName(effectiveAttributes),
+            effectiveAttributes.settings(settings).dispatcher)
+          val publisher = new ActorPublisher[Any](impl)
+          impl ! ExposedPublisher(publisher)
+          for ((in, id) ← ins.zipWithIndex) {
+            assignPort(in, FanIn.SubInput[Any](impl, id))
+          }
+          assignPort(out, publisher)
       }
 
     }
@@ -105,9 +123,6 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
 
   private[akka] def actorOf(props: Props, name: String): ActorRef =
     actorOf(props, name, settings.dispatcher)
-
-  private[akka] def actorOf(props: Props, name: String, stage: StageModule): ActorRef =
-    actorOf(props, name, stage.attributes.settings(settings).dispatcher)
 
   private[akka] def actorOf(props: Props, name: String, dispatcher: String): ActorRef = supervisor match {
     case ref: LocalActorRef ⇒
