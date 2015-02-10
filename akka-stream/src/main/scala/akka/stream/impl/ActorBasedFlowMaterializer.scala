@@ -6,23 +6,16 @@ package akka.stream.impl
 import java.util.concurrent.atomic.AtomicLong
 
 import akka.dispatch.Dispatchers
-import akka.event.Logging
-import akka.stream.impl.Junctions.{ MergeModule, JunctionModule }
-import akka.stream.impl.Stages.StageModule
+import akka.stream.actor.ActorSubscriber
+import akka.stream.impl.Junctions._
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl.fusing.ActorInterpreter
-import akka.stream.scaladsl.OperationAttributes._
-import scala.annotation.tailrec
-import scala.collection.immutable
-import scala.concurrent.{ Promise, ExecutionContext, Await, Future }
+import scala.concurrent.{ ExecutionContext, Await }
 import akka.actor._
-import akka.stream.{ FlowMaterializer, MaterializerSettings, OverflowStrategy, TimerTransformer }
-import akka.stream.MaterializationException
-import akka.stream.actor.ActorSubscriber
+import akka.stream.{ FlowMaterializer, MaterializerSettings }
 import akka.stream.scaladsl._
-import akka.stream.stage._
 import akka.pattern.ask
-import org.reactivestreams.{ Processor, Publisher, Subscriber }
+import org.reactivestreams._
 
 /**
  * INTERNAL API
@@ -97,18 +90,45 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
           processor -> mat
       }
 
-      private def materializeJunction(op: JunctionModule, effectiveAttributes: OperationAttributes): Unit = op match {
-        case MergeModule(ins, out, _) ⇒
-          val impl = actorOf(
-            FairMerge.props(effectiveAttributes.settings(settings), ins.size),
-            stageName(effectiveAttributes),
-            effectiveAttributes.settings(settings).dispatcher)
-          val publisher = new ActorPublisher[Any](impl)
-          impl ! ExposedPublisher(publisher)
-          for ((in, id) ← ins.zipWithIndex) {
-            assignPort(in, FanIn.SubInput[Any](impl, id))
-          }
-          assignPort(out, publisher)
+      private def materializeJunction(op: JunctionModule, effectiveAttributes: OperationAttributes): Unit = {
+        op match {
+          case fanin: FaninModule ⇒
+            val (props, ins, out) = fanin match {
+              case MergeModule(ins, out, _) ⇒
+                (FairMerge.props(effectiveAttributes.settings(settings), ins.size), ins, out)
+              case MergePreferredModule(preferred, ins, out, _) ⇒
+                (UnfairMerge.props(effectiveAttributes.settings(settings), ins.size + 1), preferred +: ins, out)
+              case ConcatModule(first, second, out, _) ⇒
+                (Concat.props(effectiveAttributes.settings(settings)), List(first, second), out)
+            }
+            val impl = actorOf(props, stageName(effectiveAttributes), effectiveAttributes.settings(settings).dispatcher)
+            val publisher = new ActorPublisher[Any](impl)
+            impl ! ExposedPublisher(publisher)
+            for ((in, id) ← ins.zipWithIndex) {
+              assignPort(in, FanIn.SubInput[Any](impl, id))
+            }
+            assignPort(out, publisher)
+
+          case fanout: FanoutModule ⇒
+            val (props, in, outs) = fanout match {
+              case BroadcastModule(in, outs, _) ⇒
+                (Broadcast.props(effectiveAttributes.settings(settings), outs.size), in, outs)
+              case BalanceModule(in, outs, waitForDownstreams, _) ⇒
+                (Balance.props(effectiveAttributes.settings(settings), outs.size, waitForDownstreams), in, outs)
+              case UnzipModule(in, left, right, _) ⇒
+                (Unzip.props(effectiveAttributes.settings(settings)), in, List(left, right))
+            }
+            val impl = actorOf(props, stageName(effectiveAttributes), effectiveAttributes.settings(settings).dispatcher)
+            val publishers = Vector.tabulate(outs.size)(id ⇒ new ActorPublisher[Any](impl) { // FIXME switch to List.tabulate for inputCount < 8?
+              override val wakeUpMsg = FanOut.SubstreamSubscribePending(id)
+            })
+            impl ! FanOut.ExposedPublishers(publishers)
+
+            publishers.zip(outs).foreach { case (pub, out) ⇒ assignPort(out, pub) }
+            val subscriber = ActorSubscriber[Any](impl)
+            assignPort(in, subscriber)
+
+        }
       }
 
     }

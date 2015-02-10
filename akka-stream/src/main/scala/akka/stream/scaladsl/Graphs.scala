@@ -18,7 +18,7 @@ object Graphs {
   }
 
   final case class SourcePorts[+T](outlet: OutPort[T]) extends Ports {
-    override def inlets: Set[InPort[_]] = Set.empty
+    override val inlets: Set[InPort[_]] = Set.empty
     override val outlets: Set[OutPort[_]] = Set(outlet)
   }
 
@@ -28,7 +28,7 @@ object Graphs {
   }
 
   final case class SinkPorts[-T](inlet: InPort[T]) extends Ports {
-    override def inlets: Set[InPort[_]] = Set(inlet)
+    override val inlets: Set[InPort[_]] = Set(inlet)
     override val outlets: Set[OutPort[_]] = Set.empty
   }
 
