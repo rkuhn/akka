@@ -6,7 +6,9 @@ package akka.stream.scaladsl
 import akka.stream.FlowMaterializer
 
 import akka.stream.testkit.AkkaSpec
-import org.scalatest.concurrent.ScalaFutures._
+import scala.concurrent.duration._
+
+import scala.concurrent.Await
 
 class PublisherSinkSpec extends AkkaSpec {
 
@@ -15,8 +17,6 @@ class PublisherSinkSpec extends AkkaSpec {
   "A PublisherSink" must {
 
     "be unique when created twice" in {
-      val p1 = Sink.publisher[Int]
-      val p2 = Sink.publisher[Int]
 
       val (pub1, pub2) = FlowGraph(Sink.publisher[Int], Sink.publisher[Int])(Pair.apply) { implicit b ⇒
         (p1, p2) ⇒
@@ -29,8 +29,11 @@ class PublisherSinkSpec extends AkkaSpec {
           bcast.out(1) ~> p2.inlet
       }.run()
 
-      Source(pub1).map(identity).runFold(0)(_ + _) should be(30)
-      Source(pub2).map(identity).runFold(0)(_ + _) should be(15)
+      val f1 = Source(pub1).map(identity).runFold(0)(_ + _)
+      val f2 = Source(pub2).map(identity).runFold(0)(_ + _)
+
+      Await.result(f1, 3.seconds) should be(30)
+      Await.result(f2, 3.seconds) should be(15)
 
     }
   }
