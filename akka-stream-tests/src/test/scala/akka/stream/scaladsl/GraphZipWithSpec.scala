@@ -1,6 +1,8 @@
 package akka.stream.scaladsl
 
-import akka.stream.scaladsl.FlowGraphImplicits._
+import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
+import akka.stream.scaladsl.FlowGraph.Implicits._
+import akka.stream.scaladsl.Graphs.{ OutPort, InPort }
 import akka.stream.testkit.StreamTestKit
 import akka.stream.testkit.TwoStreamsSetup
 import scala.concurrent.duration._
@@ -8,9 +10,13 @@ import scala.concurrent.duration._
 class GraphZipWithSpec extends TwoStreamsSetup {
 
   override type Outputs = Int
-  val op = ZipWith((_: Int) + (_: Int))
-  override def operationUnderTestLeft() = op.left
-  override def operationUnderTestRight() = op.right
+
+  override def fixture(b: FlowGraphBuilder): Fixture = new Fixture(b: FlowGraphBuilder) {
+    val zip = ZipWith((_: Int) + (_: Int))(b)
+    override def left: InPort[Int] = zip.in1
+    override def right: InPort[Int] = zip.in2
+    override def out: OutPort[Int] = zip.out
+  }
 
   "ZipWith" must {
 
@@ -19,9 +25,8 @@ class GraphZipWithSpec extends TwoStreamsSetup {
 
       FlowGraph { implicit b ⇒
         val zip = ZipWith((_: Int) + (_: Int))
-
-        Source(1 to 4) ~> zip.left
-        Source(10 to 40 by 10) ~> zip.right
+        Source(1 to 4) ~> zip.in1
+        Source(10 to 40 by 10) ~> zip.in2
 
         zip.out ~> Sink(probe)
       }.run()
@@ -46,8 +51,8 @@ class GraphZipWithSpec extends TwoStreamsSetup {
       FlowGraph { implicit b ⇒
         val zip = ZipWith[Int, Int, Int]((_: Int) / (_: Int))
 
-        Source(1 to 4) ~> zip.left
-        Source(-2 to 2) ~> zip.right
+        Source(1 to 4) ~> zip.in1
+        Source(-2 to 2) ~> zip.in2
 
         zip.out ~> Sink(probe)
       }.run()
@@ -107,9 +112,9 @@ class GraphZipWithSpec extends TwoStreamsSetup {
       FlowGraph { implicit b ⇒
         val zip = ZipWith(Person.apply _)
 
-        Source.single("Caplin") ~> zip.input1
-        Source.single("Capybara") ~> zip.input2
-        Source.single(3) ~> zip.input3
+        Source.single("Caplin") ~> zip.in1
+        Source.single("Capybara") ~> zip.in2
+        Source.single(3) ~> zip.in3
 
         zip.out ~> Sink(probe)
       }.run()
@@ -127,40 +132,33 @@ class GraphZipWithSpec extends TwoStreamsSetup {
 
       FlowGraph { implicit b ⇒
 
-        val sum22 = (v1: Int, v2: String, v3: Int, v4: String, v5: Int, v6: String, v7: Int, v8: String, v9: Int, v10: String,
-          v11: Int, v12: String, v13: Int, v14: String, v15: Int, v16: String, v17: Int, v18: String, v19: Int,
-          v20: String, v21: Int, v22: String) ⇒
+        val sum19 = (v1: Int, v2: String, v3: Int, v4: String, v5: Int, v6: String, v7: Int, v8: String, v9: Int, v10: String,
+          v11: Int, v12: String, v13: Int, v14: String, v15: Int, v16: String, v17: Int, v18: String, v19: Int) ⇒
           v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 +
-            v11 + v12 + v13 + v14 + v15 + v16 + v17 + v18 + v19 + v20 +
-            v21 + v22
+            v11 + v12 + v13 + v14 + v15 + v16 + v17 + v18 + v19
 
         // odd input ports will be Int, even input ports will be String
-        val zip = ZipWith(sum22)
+        val zip = ZipWith(sum19)
 
-        val one = Source.single(1)
-
-        one ~> zip.input1
-        one.map(_.toString) ~> zip.input2
-        one ~> zip.input3
-        one.map(_.toString) ~> zip.input4
-        one ~> zip.input5
-        one.map(_.toString) ~> zip.input6
-        one ~> zip.input7
-        one.map(_.toString) ~> zip.input8
-        one ~> zip.input9
-        one.map(_.toString) ~> zip.input10
-        one ~> zip.input11
-        one.map(_.toString) ~> zip.input12
-        one ~> zip.input13
-        one.map(_.toString) ~> zip.input14
-        one ~> zip.input15
-        one.map(_.toString) ~> zip.input16
-        one ~> zip.input17
-        one.map(_.toString) ~> zip.input18
-        one ~> zip.input19
-        one.map(_.toString) ~> zip.input20
-        one ~> zip.input21
-        one.map(_.toString) ~> zip.input22
+        Source.single(1) ~> zip.in1
+        Source.single(2).map(_.toString) ~> zip.in2
+        Source.single(3) ~> zip.in3
+        Source.single(4).map(_.toString) ~> zip.in4
+        Source.single(5) ~> zip.in5
+        Source.single(6).map(_.toString) ~> zip.in6
+        Source.single(7) ~> zip.in7
+        Source.single(8).map(_.toString) ~> zip.in8
+        Source.single(9) ~> zip.in9
+        Source.single(10).map(_.toString) ~> zip.in10
+        Source.single(11) ~> zip.in11
+        Source.single(12).map(_.toString) ~> zip.in12
+        Source.single(13) ~> zip.in13
+        Source.single(14).map(_.toString) ~> zip.in14
+        Source.single(15) ~> zip.in15
+        Source.single(16).map(_.toString) ~> zip.in16
+        Source.single(17) ~> zip.in17
+        Source.single(18).map(_.toString) ~> zip.in18
+        Source.single(19) ~> zip.in19
 
         zip.out ~> Sink(probe)
       }.run()
@@ -168,7 +166,7 @@ class GraphZipWithSpec extends TwoStreamsSetup {
       val subscription = probe.expectSubscription()
 
       subscription.request(1)
-      probe.expectNext("1" * 22)
+      probe.expectNext((1 to 19).mkString(""))
 
       probe.expectComplete()
 

@@ -1,0 +1,58 @@
+/**
+ * Copyright (C) 2014-2015 Typesafe Inc. <http://www.typesafe.com>
+ */
+package akka.stream.impl
+
+import akka.actor.Props
+import akka.stream.MaterializerSettings
+import akka.stream.impl.Junctions.FaninModule
+import akka.stream.impl.StreamLayout.{ Mapping, OutPort, InPort, Module }
+import akka.stream.scaladsl.{ Graphs, OperationAttributes }
+import akka.stream.scaladsl.OperationAttributes._
+
+/** Boilerplate generated Junctions */
+object GenJunctions {
+
+  sealed trait ZipWithModule {
+    /** Allows hiding the boilerplate Props creation from the materializer */
+    def props(settings: MaterializerSettings): Props
+
+    /**
+     * In addition to the Set based view onto the ports in this module,
+     * we must maintain an ordered collection for materialization purposes.
+     */
+    def ins: Vector[InPort]
+  }
+
+  [2..19#
+  final case class ZipWith1Module[[#A1#], B](
+    [#in1: Graphs.InPort[A1],#
+    ]
+    out: Graphs.OutPort[B],
+    f: ([#A1#]) ⇒ B,
+    override val attributes: OperationAttributes = name("zipWith1")) extends FaninModule with ZipWithModule {
+
+    override val ins: Vector[InPort] = Vector([#in1#])
+
+    override val inPorts: Set[InPort] = Set([#in1#])
+    override val outPorts: Set[OutPort] = Set(out)
+
+    override def withAttributes(attr: OperationAttributes): Module = copy(attributes = attr)
+
+    override def carbonCopy: () ⇒ Mapping = () ⇒ {
+      val newZip = ZipWith1Module(
+        [#new Graphs.InPort[A1](in1.toString),#
+        ]
+        new Graphs.OutPort[B](out.toString),
+        f,
+        attributes)
+
+      Mapping(newZip, Map([#in1 -> newZip.in1#]), Map(out -> newZip.out))
+    }
+
+    override def props(settings: MaterializerSettings): Props =
+      Props(new Zip1With(settings, f.asInstanceOf[Function1[[#Any#], Any]]))
+  }#
+  ]
+
+}
