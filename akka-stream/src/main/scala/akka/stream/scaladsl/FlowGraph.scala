@@ -316,6 +316,8 @@ object FlowGraph {
       new RunnableFlow[Unit](moduleInProgress)
     }
 
+    private[stream] def module: Module = moduleInProgress
+
   }
 
   object Implicits {

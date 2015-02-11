@@ -3,6 +3,8 @@
  */
 package akka.stream.scaladsl
 
+import akka.actor.Cancellable
+
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
 import akka.stream.FlowMaterializer
@@ -67,7 +69,7 @@ class TickSourceSpec extends AkkaSpec {
       val c = StreamTestKit.SubscriberProbe[Int]()
 
       FlowGraph { implicit b ⇒
-        import FlowGraphImplicits._
+        import FlowGraph.Implicits._
         val zip = Zip[Int, String]
         Source(1 to 100) ~> zip.left
         Source(1.second, 1.second, "tick") ~> zip.right
@@ -86,8 +88,7 @@ class TickSourceSpec extends AkkaSpec {
     "be possible to cancel" in {
       val c = StreamTestKit.SubscriberProbe[String]()
       val tickSource = Source(1.second, 500.millis, "tick")
-      val m = tickSource.to(Sink(c)).run()
-      val cancellable = m.get(tickSource)
+      val cancellable = tickSource.to(Sink(c), (c: Cancellable, _: Unit) ⇒ c).run()
       val sub = c.expectSubscription()
       sub.request(3)
       c.expectNoMsg(600.millis)

@@ -5,6 +5,7 @@ package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
 import akka.stream.impl.StreamLayout.{ Module, OutPort, InPort }
+import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
 import akka.stream.scaladsl.Graphs.FlowPorts
 import akka.stream.scaladsl.OperationAttributes._
 import akka.stream.{ TimerTransformer, TransformerLike, OverflowStrategy }
@@ -154,30 +155,23 @@ object Flow {
    */
   def apply[T]: Flow[T, T, Unit] = empty
 
-  //  /**
-  //   * Creates a `Flow` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
-  //   * returns the `UndefinedSource` and `UndefinedSink`.
-  //   */
-  //  def apply[I, O]()(block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] =
-  //    createFlowFromBuilder(new FlowGraphBuilder(), block)
-  //
-  //  /**
-  //   * Creates a `Flow` by using a [[FlowGraphBuilder]] from this [[PartialFlowGraph]] on a block that expects
-  //   * a [[FlowGraphBuilder]] and returns the `UndefinedSource` and `UndefinedSink`.
-  //   */
-  //  def apply[I, O](graph: PartialFlowGraph)(block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] =
-  //    createFlowFromBuilder(new FlowGraphBuilder(graph), block)
-  //
-  //  private def createFlowFromBuilder[I, O](builder: FlowGraphBuilder,
-  //                                          block: FlowGraphBuilder ⇒ (UndefinedSource[I], UndefinedSink[O])): Flow[I, O] = {
-  //    val (in, out) = block(builder)
-  //    builder.partialBuild().toFlow(in, out)
-  //  }
-  //
-  //  /**
-  //   * Create a [[Flow]] from a seemingly disconnected [[Source]] and [[Sink]] pair.
-  //   */
-  //  def apply[I, O](sink: Sink[I], source: Source[O]): Flow[I, O] = GraphBackedFlow(sink, source)
+  /**
+   * Creates a `Flow` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
+   * returns the `UndefinedSource` and `UndefinedSink`.
+   */
+  def apply[I, O]()(block: FlowGraphBuilder ⇒ (Graphs.InPort[I], Graphs.OutPort[O])): Flow[I, O, Unit] = {
+    val builder = new FlowGraphBuilder
+    val (inlet, outlet) = block(builder)
+    val module = builder.module
+    if (!module.isFlow)
+      throw new IllegalStateException("The flow must have exactly one unconnected input and output ports")
+    if (!module.outPorts(outlet))
+      throw new IllegalStateException(s"The output port must be unconnected but it was connected to ${module.downstreams(outlet)}")
+    if (!module.inPorts(inlet))
+      throw new IllegalStateException(s"The input port must be unconnected but it was connected to ${module.upstreams(inlet)}")
+    new Flow(module, inlet, outlet)
+  }
+
 }
 
 /**

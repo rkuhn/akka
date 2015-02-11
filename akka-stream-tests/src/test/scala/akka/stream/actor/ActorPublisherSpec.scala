@@ -9,7 +9,6 @@ import akka.actor.Props
 import akka.stream.scaladsl.Broadcast
 import akka.stream.scaladsl.Flow
 import akka.stream.scaladsl.FlowGraph
-import akka.stream.scaladsl.FlowGraphImplicits
 import akka.stream.scaladsl.Merge
 import akka.stream.FlowMaterializer
 import akka.stream.scaladsl.Sink
@@ -262,12 +261,9 @@ class ActorPublisherSpec extends AkkaSpec with ImplicitSender {
       val source = Source[Int](senderProps)
       val sink = Sink[String](receiverProps(probe.ref))
 
-      val mat = source.collect {
+      val (snd, rcv) = source.collect {
         case n if n % 2 == 0 ⇒ "elem-" + n
-      }.to(sink).run()
-
-      val snd = mat.get(source)
-      val rcv = mat.get(sink)
+      }.to(sink, Pair.apply[ActorRef, ActorRef]).run()
 
       (1 to 3) foreach { snd ! _ }
       probe.expectMsg("elem-2")
@@ -291,27 +287,25 @@ class ActorPublisherSpec extends AkkaSpec with ImplicitSender {
 
       val senderRef1 = system.actorOf(senderProps)
       val source1 = Source(ActorPublisher[Int](senderRef1))
-      val source2 = Source[Int](senderProps)
 
       val sink1 = Sink(ActorSubscriber[String](system.actorOf(receiverProps(probe1.ref))))
       val sink2 = Sink[String](receiverProps(probe2.ref))
 
-      val mat = FlowGraph { implicit b ⇒
-        import FlowGraphImplicits._
+      val senderRef2 = FlowGraph(Source[Int](senderProps))(identity) { implicit b ⇒
+        (source2) ⇒
+          import FlowGraph.Implicits._
 
-        val merge = Merge[Int]
-        val bcast = Broadcast[String]
+          val merge = Merge[Int](2)
+          val bcast = Broadcast[String](2)
 
-        source1 ~> merge
-        source2 ~> merge
+          source1 ~> merge.in(0)
+          source2.outlet ~> merge.in(1)
 
-        merge ~> Flow[Int].map(_.toString) ~> bcast
+          merge.out.map(_.toString) ~> bcast.in
 
-        bcast ~> Flow[String].map(_ + "mark") ~> sink1
-        bcast ~> sink2
+          bcast.out(0).map(_ + "mark") ~> sink1
+          bcast.out(1) ~> sink2
       }.run()
-
-      val senderRef2 = mat.get(source2)
 
       (0 to 10).foreach {
         senderRef1 ! _
