@@ -1,6 +1,6 @@
 package akka.stream.scaladsl
 
-import scala.concurrent.Await
+import scala.concurrent.{ Future, Await }
 import scala.concurrent.duration._
 
 import akka.stream.{ OverflowStrategy, MaterializerSettings }
@@ -46,29 +46,29 @@ class GraphBroadcastSpec extends AkkaSpec {
       c2.expectComplete()
     }
 
-    //    "work with n-way broadcast" in {
-    //      val f1 = Sink.head[Seq[Int]]
-    //      val f2 = Sink.head[Seq[Int]]
-    //      val f3 = Sink.head[Seq[Int]]
-    //      val f4 = Sink.head[Seq[Int]]
-    //      val f5 = Sink.head[Seq[Int]]
-    //
-    //      val g = FlowGraph { implicit b ⇒
-    //        val bcast = Broadcast[Int](5)
-    //        Source(List(1, 2, 3)) ~> bcast.in
-    //        bcast.out(0) ~> Flow[Int].grouped(5) ~> f1
-    //        bcast.out(1) ~> Flow[Int].grouped(5) ~> f2
-    //        bcast.out(2) ~> Flow[Int].grouped(5) ~> f3
-    //        bcast.out(3) ~> Flow[Int].grouped(5) ~> f4
-    //        bcast.out(4) ~> Flow[Int].grouped(5) ~> f5
-    //      }.run()
-    //
-    //      Await.result(g.get(f1), 3.seconds) should be(List(1, 2, 3))
-    //      Await.result(g.get(f2), 3.seconds) should be(List(1, 2, 3))
-    //      Await.result(g.get(f3), 3.seconds) should be(List(1, 2, 3))
-    //      Await.result(g.get(f4), 3.seconds) should be(List(1, 2, 3))
-    //      Await.result(g.get(f5), 3.seconds) should be(List(1, 2, 3))
-    //    }
+    "work with n-way broadcast" in {
+      val headSink = Sink.head[Seq[Int]]
+
+      import system.dispatcher
+      val result = FlowGraph(
+        headSink,
+        headSink,
+        headSink,
+        headSink,
+        headSink)(
+          (fut1, fut2, fut3, fut4, fut5) ⇒ Future.sequence(List(fut1, fut2, fut3, fut4, fut5))) { implicit b ⇒
+            (p1, p2, p3, p4, p5) ⇒
+              val bcast = Broadcast[Int](5)
+              Source(List(1, 2, 3)) ~> bcast.in
+              bcast.out(0).grouped(5) ~> p1.inlet
+              bcast.out(1).grouped(5) ~> p2.inlet
+              bcast.out(2).grouped(5) ~> p3.inlet
+              bcast.out(3).grouped(5) ~> p4.inlet
+              bcast.out(4).grouped(5) ~> p5.inlet
+          }.run()
+
+      Await.result(result, 3.seconds) should be(List.fill(5)(List(1, 2, 3)))
+    }
 
     "produce to other even though downstream cancels" in {
       val c1 = StreamTestKit.SubscriberProbe[Int]()

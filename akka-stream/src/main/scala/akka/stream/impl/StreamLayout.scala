@@ -19,9 +19,10 @@ private[akka] object StreamLayout {
   // TODO: Special case linear composites
   // TODO: Cycles
 
-  trait MaterializedValueNode
+  sealed trait MaterializedValueNode
   case class Combine(f: (Any, Any) ⇒ Any, dep1: MaterializedValueNode, dep2: MaterializedValueNode) extends MaterializedValueNode
   case class Atomic(module: Module) extends MaterializedValueNode
+  case object Ignore extends MaterializedValueNode
 
   case class Mapping(module: Module, inPorts: Map[InPort, InPort], outPorts: Map[OutPort, OutPort])
 
@@ -143,11 +144,10 @@ private[akka] object StreamLayout {
     override val carbonCopy: () ⇒ Mapping = () ⇒ emptyMapping
 
     override def isRunnable: Boolean = false
+    override def isAtomic: Boolean = false
+    override def materializedValueComputation: MaterializedValueNode = Ignore
 
     override def grow(that: Module): Module = that
-
-    override def grow[A, B, C](that: Module, f: (A, B) ⇒ C): Module =
-      throw new UnsupportedOperationException("Cannot grow empty module with materialization combiner")
 
     override def wrap(): Module = this
   }
@@ -217,6 +217,7 @@ abstract class MaterializerSession(val topLevel: StreamLayout.Module) {
   private def resolveMaterialized(matNode: MaterializedValueNode, materializedValues: collection.Map[Module, Any]): Any = matNode match {
     case Atomic(m)          ⇒ materializedValues(m)
     case Combine(f, d1, d2) ⇒ f(resolveMaterialized(d1, materializedValues), resolveMaterialized(d2, materializedValues))
+    case Ignore             ⇒ ()
   }
 
   private def attach(p: Publisher[Any], s: Subscriber[Any]) = s match {

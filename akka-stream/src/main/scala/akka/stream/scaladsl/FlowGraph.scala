@@ -5,13 +5,17 @@ import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
 import akka.stream.impl.StreamLayout
 import akka.stream.impl.StreamLayout._
 import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ InPort, OutPort }
+import akka.stream.scaladsl.Graphs.{ Ports, InPort, OutPort }
+
+import scala.collection.immutable
 
 object Merge {
 
   final case class MergePorts[T](in: Vector[InPort[T]], out: OutPort[T]) extends Graphs.Ports {
-    override val inlets: Set[InPort[_]] = in.toSet
-    override val outlets: Set[OutPort[_]] = Set(out)
+    override val inlets: immutable.Seq[InPort[_]] = in
+    override val outlets: immutable.Seq[OutPort[_]] = List(out)
+
+    override def deepCopy(): MergePorts[T] = MergePorts(in.map(i ⇒ new InPort[T](i.toString)), new OutPort(out.toString))
   }
 
   def apply[T](inputPorts: Int)(implicit b: FlowGraphBuilder): MergePorts[T] = {
@@ -26,8 +30,11 @@ object Merge {
 
 object MergePreferred {
   final case class MergePreferredPorts[T](preferred: InPort[T], in: Vector[InPort[T]], out: OutPort[T]) extends Graphs.Ports {
-    override val inlets: Set[InPort[_]] = in.toSet + preferred
-    override val outlets: Set[OutPort[_]] = Set(out)
+    override val inlets: immutable.Seq[InPort[_]] = in :+ preferred
+    override val outlets: immutable.Seq[OutPort[_]] = List(out)
+
+    override def deepCopy(): MergePreferredPorts[T] =
+      MergePreferredPorts(new InPort(preferred.toString), in.map(i ⇒ new InPort[T](i.toString)), new OutPort(out.toString))
   }
 
   def apply[T](secondaryPorts: Int)(implicit b: FlowGraphBuilder): MergePreferredPorts[T] = {
@@ -43,8 +50,11 @@ object MergePreferred {
 object Broadcast {
 
   final case class BroadcastPorts[T](in: InPort[T], out: Vector[OutPort[T]]) extends Graphs.Ports {
-    override val inlets: Set[InPort[_]] = Set(in)
-    override val outlets: Set[OutPort[_]] = out.toSet
+    override val inlets: immutable.Seq[InPort[_]] = List(in)
+    override val outlets: immutable.Seq[OutPort[_]] = out
+
+    override def deepCopy(): BroadcastPorts[T] =
+      BroadcastPorts(new InPort(in.toString), out.map(o ⇒ new OutPort[T](o.toString)))
   }
 
   def apply[T](outputPorts: Int)(implicit b: FlowGraphBuilder): BroadcastPorts[T] = {
@@ -59,8 +69,11 @@ object Broadcast {
 object Balance {
 
   final case class BalancePorts[T](in: InPort[T], out: Vector[OutPort[T]]) extends Graphs.Ports {
-    override val inlets: Set[InPort[_]] = Set(in)
-    override val outlets: Set[OutPort[_]] = out.toSet
+    override val inlets: immutable.Seq[InPort[_]] = List(in)
+    override val outlets: immutable.Seq[OutPort[_]] = out
+
+    override def deepCopy(): BalancePorts[T] =
+      BalancePorts(new InPort(in.toString), out.map(o ⇒ new OutPort[T](o.toString)))
   }
 
   def apply[T](outputPorts: Int, waitForAllDownstreams: Boolean = false)(implicit b: FlowGraphBuilder): BalancePorts[T] = {
@@ -77,8 +90,11 @@ object Balance {
 object ZipWith2 {
 
   final case class ZipWith2Ports[A1, A2, B](in1: InPort[A1], in2: InPort[A2], out: OutPort[B]) extends Graphs.Ports {
-    override val inlets: Set[InPort[_]] = Set(in1, in2)
-    override val outlets: Set[OutPort[_]] = Set(out)
+    override val inlets: immutable.Seq[InPort[_]] = List(in1, in2)
+    override val outlets: immutable.Seq[OutPort[_]] = List(out)
+
+    override def deepCopy(): ZipWith2Ports[A1, A2, B] =
+      ZipWith2Ports(new InPort(in1.toString), new InPort(in2.toString), new OutPort(out.toString))
   }
 
   def apply[A1, A2, B](zipper: (A1, A2) ⇒ B)(implicit b: FlowGraphBuilder): ZipWith2Ports[A1, A2, B] = {
@@ -96,8 +112,11 @@ object ZipWith2 {
 object Zip {
 
   final case class ZipPorts[A, B](left: InPort[A], right: InPort[B], out: OutPort[(A, B)]) extends Graphs.Ports {
-    override val inlets: Set[InPort[_]] = Set(left, right)
-    override val outlets: Set[OutPort[_]] = Set(out)
+    override val inlets: immutable.Seq[InPort[_]] = List(left, right)
+    override val outlets: immutable.Seq[OutPort[_]] = List(out)
+
+    override def deepCopy(): ZipPorts[A, B] =
+      ZipPorts(new InPort(left.toString), new InPort(right.toString), new OutPort(out.toString))
   }
 
   def apply[A, B](implicit b: FlowGraphBuilder): ZipPorts[A, B] = {
@@ -115,8 +134,11 @@ object Zip {
 object Unzip {
 
   final case class UnzipPorts[A, B](in: InPort[(A, B)], left: OutPort[A], right: OutPort[B]) extends Graphs.Ports {
-    override def inlets: Set[InPort[_]] = Set(in)
-    override def outlets: Set[OutPort[_]] = Set(left, right)
+    override def inlets: immutable.Seq[InPort[_]] = List(in)
+    override def outlets: immutable.Seq[OutPort[_]] = List(left, right)
+
+    override def deepCopy(): UnzipPorts[A, B] =
+      UnzipPorts(new InPort(in.toString), new OutPort(left.toString), new OutPort(right.toString))
   }
 
   def apply[A, B](implicit b: FlowGraphBuilder): UnzipPorts[A, B] = {
@@ -132,8 +154,11 @@ object Unzip {
 object Concat {
 
   final case class ConcatPorts[A](first: InPort[A], second: InPort[A], out: OutPort[A]) extends Graphs.Ports {
-    override val inlets: Set[InPort[_]] = Set(first, second)
-    override val outlets: Set[OutPort[_]] = Set(out)
+    override val inlets: immutable.Seq[InPort[_]] = List(first, second)
+    override val outlets: immutable.Seq[OutPort[_]] = List(out)
+
+    override def deepCopy(): ConcatPorts[A] =
+      ConcatPorts(new InPort(first.toString), new InPort(second.toString), new OutPort(out.toString))
   }
 
   def apply[A](implicit b: FlowGraphBuilder): ConcatPorts[A] = {
@@ -156,15 +181,67 @@ object FlowGraph {
     builder.buildRunnable()
   }
 
+  def apply[Mat, M1](g1: Graph[Ports, M1])(combineMat: (M1) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ combineMat(m1))
+    buildBlock(builder)(p1)
+    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+  }
+
+  // FIXME: Boilerplatify
+  def apply[Mat, M1, M2](g1: Graph[Ports, M1], g2: Graph[Ports, M2])(combineMat: (M1, M2) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val curried = combineMat.curried
+    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
+    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
+    buildBlock(builder)(p1, p2)
+    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+  }
+
+  def apply[Mat, M1, M2, M3](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3])(combineMat: (M1, M2, M3) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val curried = combineMat.curried
+    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
+    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
+    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
+    buildBlock(builder)(p1, p2, p3)
+    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+  }
+
+  def apply[Mat, M1, M2, M3, M4](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3], g4: Graph[Ports, M4])(combineMat: (M1, M2, M3, M4) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports, g4.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val curried = combineMat.curried
+    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
+    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
+    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
+    val p4 = builder.importGraph(g4, (f: (M4) ⇒ Any, m4: M4) ⇒ f(m4))
+    buildBlock(builder)(p1, p2, p3, p4)
+    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+  }
+
+  def apply[Mat, M1, M2, M3, M4, M5](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3], g4: Graph[Ports, M4], g5: Graph[Ports, M5])(combineMat: (M1, M2, M3, M4, M5) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports, g4.Ports, g5.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val curried = combineMat.curried
+    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
+    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
+    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
+    val p4 = builder.importGraph(g4, (f: (M4) ⇒ Any, m4: M4) ⇒ f(m4))
+    val p5 = builder.importGraph(g5, (f: (M5) ⇒ Any, m5: M5) ⇒ f(m5))
+    buildBlock(builder)(p1, p2, p3, p4, p5)
+    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+  }
+
   class FlowGraphBuilder private[stream] () {
-    private[stream] var moduleInProgress: Module = EmptyModule
+    private var moduleInProgress: Module = EmptyModule
+    private var inPortMapping = Map.empty[StreamLayout.InPort, StreamLayout.InPort]
+    private var outPortMapping = Map.empty[StreamLayout.OutPort, StreamLayout.OutPort]
 
     private[stream] def chainEdge[A, B](from: OutPort[A], via: Flow[A, B, _]): OutPort[B] = {
       val flowCopy = via.carbonCopy()
       moduleInProgress =
         moduleInProgress
           .grow(flowCopy.module)
-          .connect(from, flowCopy.inlet)
+          .connect(resolvePort(from), flowCopy.inlet)
       flowCopy.outlet
     }
 
@@ -173,12 +250,12 @@ object FlowGraph {
       moduleInProgress =
         moduleInProgress
           .grow(flowCopy.module)
-          .connect(from, flowCopy.inlet)
-          .connect(flowCopy.outlet, to)
+          .connect(resolvePort(from), flowCopy.inlet)
+          .connect(flowCopy.outlet, resolvePort(to))
     }
 
     def addEdge[T](from: OutPort[T], to: InPort[T]): Unit = {
-      moduleInProgress = moduleInProgress.connect(from, to)
+      moduleInProgress = moduleInProgress.connect(resolvePort(from), resolvePort(to))
     }
 
     // Assumes that junction is a new instance, so no copying needed here
@@ -192,10 +269,42 @@ object FlowGraph {
       moduleCopy
     }
 
-    private[stream] def importModule(module: Module, combine: (Any, Any) ⇒ Any): Mapping = {
-      val moduleCopy = module.carbonCopy()
-      moduleInProgress = moduleInProgress.grow(moduleCopy.module, combine)
-      moduleCopy
+    private[stream] def remapPorts[M1, M2](graph: Graph[Ports, _], moduleCopy: Mapping): Ports = {
+      val ports = graph.ports.deepCopy()
+
+      val newInPortMap = ports.inlets.zip(graph.ports.inlets) map {
+        case (newGraphPort, oldGraphPort) ⇒
+          newGraphPort -> moduleCopy.inPorts(oldGraphPort)
+      }
+      val newOutPortMap = ports.outlets.zip(graph.ports.outlets) map {
+        case (newGraphPort, oldGraphPort) ⇒
+          newGraphPort -> moduleCopy.outPorts(oldGraphPort)
+      }
+      inPortMapping ++= newInPortMap
+      outPortMapping ++= newOutPortMap
+      ports
+    }
+
+    private[stream] def importGraph[M1, M2](graph: Graph[Ports, _], combine: (M1, M2) ⇒ Any): Ports = {
+      val moduleCopy = graph.module.carbonCopy()
+      moduleInProgress = moduleInProgress.grow(
+        moduleCopy.module,
+        (m1: Any, m2: Any) ⇒ combine.asInstanceOf[(Any, Any) ⇒ Any](m1, m2))
+
+      remapPorts(graph, moduleCopy)
+    }
+
+    private[stream] def resolvePort[T](port: StreamLayout.InPort): StreamLayout.InPort = {
+      inPortMapping.getOrElse(port, port)
+    }
+
+    private[stream] def resolvePort[T](port: StreamLayout.OutPort): StreamLayout.OutPort = {
+      outPortMapping.getOrElse(port, port)
+    }
+
+    private[stream] def andThen(port: StreamLayout.OutPort, op: StageModule): Unit = {
+      addModule(op)
+      moduleInProgress = moduleInProgress.connect(resolvePort(port), op.inPort)
     }
 
     private[stream] def buildRunnable(): RunnableFlow[Unit] = {
@@ -236,13 +345,13 @@ object FlowGraph {
         throw new UnsupportedOperationException("Cannot set attributes on chained ops from a junction output port")
 
       override private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat] = {
-        b.addModule(op)
-        b.moduleInProgress = b.moduleInProgress.connect(port, op.inPort)
+        b.andThen(port, op)
         new PortOps(op.outPort, b)
       }
 
       override private[scaladsl] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
-        b.moduleInProgress = b.moduleInProgress.grow(op, (m: Unit, m2: Mat2) ⇒ m2).connect(port, op.inPort)
+        // We don't track materialization here
+        b.andThen(port, op)
         new PortOps(op.outPort, b)
       }
 
