@@ -212,63 +212,13 @@ object Concat {
 
 }
 
-object FlowGraph {
+object FlowGraph extends FlowGraphApply {
   import akka.stream.scaladsl.Graphs._
 
   def apply(buildBlock: (FlowGraphBuilder) ⇒ Unit): RunnableFlow[Unit] = {
     val builder = new FlowGraphBuilder
     buildBlock(builder)
     builder.buildRunnable()
-  }
-
-  def apply[Mat, M1](g1: Graph[Ports, M1])(combineMat: (M1) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ combineMat(m1))
-    buildBlock(builder)(p1)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  // FIXME: Boilerplatify
-  def apply[Mat, M1, M2](g1: Graph[Ports, M1], g2: Graph[Ports, M2])(combineMat: (M1, M2) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
-    buildBlock(builder)(p1, p2)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  def apply[Mat, M1, M2, M3](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3])(combineMat: (M1, M2, M3) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
-    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
-    buildBlock(builder)(p1, p2, p3)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  def apply[Mat, M1, M2, M3, M4](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3], g4: Graph[Ports, M4])(combineMat: (M1, M2, M3, M4) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports, g4.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
-    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
-    val p4 = builder.importGraph(g4, (f: (M4) ⇒ Any, m4: M4) ⇒ f(m4))
-    buildBlock(builder)(p1, p2, p3, p4)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  def apply[Mat, M1, M2, M3, M4, M5](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3], g4: Graph[Ports, M4], g5: Graph[Ports, M5])(combineMat: (M1, M2, M3, M4, M5) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports, g4.Ports, g5.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
-    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
-    val p4 = builder.importGraph(g4, (f: (M4) ⇒ Any, m4: M4) ⇒ f(m4))
-    val p5 = builder.importGraph(g5, (f: (M5) ⇒ Any, m5: M5) ⇒ f(m5))
-    buildBlock(builder)(p1, p2, p3, p4, p5)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
   }
 
   class FlowGraphBuilder private[stream] () {

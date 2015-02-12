@@ -1,0 +1,31 @@
+/**
+ * Copyright (C) 2014-2015 Typesafe Inc. <http://www.typesafe.com>
+ */
+package akka.stream.scaladsl
+
+import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
+import akka.stream.scaladsl.Graphs.{ Graph, Ports }
+
+trait FlowGraphApply {
+
+
+  def apply[Mat, M1](g1: Graph[Ports, M1])(combineMat: (M1) ⇒ Mat)(buildBlock: FlowGraphBuilder ⇒ (g1.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ combineMat(m1))
+    buildBlock(builder)(p1)
+    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+  }
+
+  [2..#def apply[Mat, [#M1#]]([#g1: Graph[Ports, M1]#])(combineMat: ([#M1#]) ⇒ Mat)(buildBlock: FlowGraphBuilder ⇒ ([#g1.Ports#]) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val curried = combineMat.curried
+    val p##1 = builder.importGraph(g##1, (_: Any, m##1: M##1) ⇒ curried(m##1))
+    [2..#val p1 = builder.importGraph(g1, (f: M1 ⇒ Any, m1: M1) ⇒ f(m1))#
+    ]
+    buildBlock(builder)([#p1#])
+    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+  }#
+
+  ]
+
+}
