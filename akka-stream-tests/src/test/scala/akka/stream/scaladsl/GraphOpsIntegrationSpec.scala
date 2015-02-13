@@ -1,6 +1,7 @@
 package akka.stream.scaladsl
 
-import scala.concurrent.Await
+import scala.collection.immutable
+import scala.concurrent.{ Future, Await }
 import scala.concurrent.duration._
 
 import akka.stream.FlowMaterializer
@@ -11,24 +12,47 @@ import akka.stream.testkit.StreamTestKit.{ OnNext, SubscriberProbe }
 import akka.util.ByteString
 
 object GraphOpsIntegrationSpec {
+  import Graphs._
 
-  //  object Lego {
-  //    def apply(pipeline: Flow[String, String]): Lego = {
-  //      val in = UndefinedSource[String]
-  //      val out = UndefinedSink[ByteString]
-  //      val graph = PartialFlowGraph { implicit builder ⇒
-  //        val balance = Balance[String]
-  //        val merge = Merge[String]
-  //        in ~> Flow[String].map(_.trim) ~> balance
-  //        balance ~> pipeline ~> merge
-  //        balance ~> pipeline ~> merge
-  //        balance ~> pipeline ~> merge
-  //        merge ~> Flow[String].map(_.trim).map(ByteString.fromString) ~> out
+  object Shuffle {
+
+    case class ShufflePorts[In, Out](in1: InPort[In], in2: InPort[In], out1: OutPort[Out], out2: OutPort[Out]) extends Graphs.Ports {
+      override def inlets: immutable.Seq[InPort[_]] = List(in1, in2)
+      override def outlets: immutable.Seq[OutPort[_]] = List(out1, out2)
+
+      override def deepCopy(): Ports = ShufflePorts(
+        new InPort[In](in1.toString), new InPort[In](in2.toString),
+        new OutPort[Out](out1.toString), new OutPort[Out](out2.toString))
+    }
+
+    def apply[In, Out](pipeline: Flow[In, Out, _]): Graph[ShufflePorts[In, Out], Unit] = {
+      FlowGraph.partial { implicit builder ⇒
+        val merge = Merge[In](2)
+        val balance = Balance[Out](2)
+        merge.out ~> pipeline ~> balance.in
+        ShufflePorts(merge.in(0), merge.in(1), balance.out(0), balance.out(1))
+      }
+    }
+
+  }
+
+  //    object Lego {
+  //      def apply(pipeline: Flow[String, String, _]): Lego = {
+  //        val in = UndefinedSource[String]
+  //        val out = UndefinedSink[ByteString]
+  //        val graph = PartialFlowGraph { implicit builder ⇒
+  //          val balance = Balance[String]
+  //          val merge = Merge[String]
+  //          in ~> Flow[String].map(_.trim) ~> balance
+  //          balance ~> pipeline ~> merge
+  //          balance ~> pipeline ~> merge
+  //          balance ~> pipeline ~> merge
+  //          merge ~> Flow[String].map(_.trim).map(ByteString.fromString) ~> out
+  //        }
+  //        new Lego(in, out, graph)
   //      }
-  //      new Lego(in, out, graph)
   //    }
-  //  }
-  //
+
   //  class Lego private (
   //    private val in: UndefinedSource[String],
   //    private val out: UndefinedSink[ByteString],
@@ -206,22 +230,39 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
     //      s2.expectComplete()
     //    }
 
-    //    "be possible to use as lego bricks" in {
-    //      val lego1 = Lego(Flow[String].filter(_.length > 3).map(s ⇒ s" $s "))
-    //      val lego2 = Lego(Flow[String].map(_.toUpperCase))
-    //      val lego3 = lego1.connect(lego2, Flow[ByteString].map(_.utf8String))
-    //      val source = Source(List("green ", "blue", "red", "yellow", "black"))
-    //      val s = SubscriberProbe[ByteString]
-    //      val sink = Sink(s)
-    //      lego3.run(source, sink)
-    //      val sub = s.expectSubscription()
-    //      sub.request(100)
-    //      val result = (s.probe.receiveN(4) collect {
-    //        case OnNext(b: ByteString) ⇒ b.utf8String
-    //      }).sorted
-    //      result should be(Vector("BLACK", "BLUE", "GREEN", "YELLOW"))
-    //      s.expectComplete()
-    //    }
+    "be possible to use as lego bricks" in {
+      val shuffler = Shuffle(Flow[Int].map(_ + 1))
+
+      val f: Future[Seq[Int]] = FlowGraph(shuffler, shuffler, shuffler, Sink.head[Seq[Int]])((_, _, _, fut) ⇒ fut) { implicit builder ⇒
+        (s1, s2, s3, sink) ⇒
+          val merge = Merge[Int](2)
+
+          Source(List(1, 2, 3)) ~> s1.in1
+          Source(List(10, 11, 12)) ~> s1.in2
+
+          s1.out1 ~> s2.in1
+          s1.out2 ~> s2.in2
+
+          s2.out1 ~> s3.in1
+          s2.out2 ~> s3.in2
+
+          s3.out1 ~> merge.in(0)
+          s3.out2 ~> merge.in(1)
+
+          merge.out.grouped(1000) ~> sink.inlet
+      }.run()
+
+      val result = Await.result(f, 3.seconds)
+
+      result.sorted should be(List(4, 5, 6, 13, 14, 15))
+
+      result.indexOf(4) < result.indexOf(5) should be(true)
+      result.indexOf(5) < result.indexOf(6) should be(true)
+
+      result.indexOf(13) < result.indexOf(14) should be(true)
+      result.indexOf(14) < result.indexOf(15) should be(true)
+
+    }
 
   }
 
