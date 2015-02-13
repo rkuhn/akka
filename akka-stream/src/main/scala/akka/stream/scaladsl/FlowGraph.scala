@@ -163,7 +163,7 @@ object FlowGraph extends FlowGraphApply {
   def partial[P <: Ports](buildBlock: FlowGraphBuilder ⇒ P): Graph[P, Unit] = {
     val builder = new FlowGraphBuilder
     val p = buildBlock(builder)
-    val mod = builder.module
+    val mod = builder.module.wrap()
 
     if (p.inlets.toSet != mod.inPorts)
       throw new IllegalStateException("The input ports in the returned Ports instance must correspond to the unconnected ports")
