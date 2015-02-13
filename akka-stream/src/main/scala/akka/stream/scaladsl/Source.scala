@@ -23,8 +23,10 @@ import scala.concurrent.Promise
 import org.reactivestreams.Subscriber
 
 /**
- * A `Source` is a set of stream processing steps that has one open output and an attached input.
- * Can be used as a `Publisher`
+ * A `Source` is a set of stream processing steps that has one open output. It can comprise
+ * any number of internal sources and transformations that are wired together, or it can be
+ * an “atomic” source, e.g. from a collection or a file. Materialization turns a Source into
+ * a Reactive Streams `Publisher` (at least conceptually).
  */
 final class Source[+Out, +Mat] private (m: StreamLayout.Module, val outlet: Graphs.OutPort[Out])
   extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.SourcePorts[Out], Mat] {
