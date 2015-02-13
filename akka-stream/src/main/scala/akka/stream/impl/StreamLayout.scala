@@ -5,6 +5,7 @@ package akka.stream.impl
 
 import akka.stream.scaladsl.OperationAttributes
 import org.reactivestreams.{ Subscription, Publisher, Subscriber }
+import akka.stream.scaladsl.Keep
 
 /**
  * INTERNAL API
@@ -53,27 +54,7 @@ private[akka] object StreamLayout {
         attributes)
     }
 
-    def grow(that: Module): Module = {
-      assert(that ne this)
-      assert(!subModules(that))
-
-      val modules1 = if (this.isAtomic) Set(this) else this.subModules
-      val modules2 = if (that.isAtomic) Set(that) else that.subModules
-
-      CompositeModule(
-        modules1 ++ modules2,
-        this.inPorts ++ that.inPorts,
-        this.outPorts ++ that.outPorts,
-        this.downstreams ++ that.downstreams,
-        this.upstreams ++ that.upstreams,
-        materializedValueComputation,
-        carbonCopy = () ⇒ {
-          val copy1 = this.carbonCopy()
-          val copy2 = that.carbonCopy()
-          Mapping(copy1.module.grow(copy2.module), copy1.inPorts ++ copy2.inPorts, copy1.outPorts ++ copy2.outPorts)
-        },
-        attributes)
-    }
+    def grow(that: Module): Module = grow(that, Keep.left)
 
     def grow[A, B, C](that: Module, f: (A, B) ⇒ C): Module = {
       assert(that ne this)
@@ -88,7 +69,9 @@ private[akka] object StreamLayout {
         this.outPorts ++ that.outPorts,
         this.downstreams ++ that.downstreams,
         this.upstreams ++ that.upstreams,
-        Combine(f.asInstanceOf[(Any, Any) ⇒ Any], this.materializedValueComputation, that.materializedValueComputation),
+        if (f eq Keep.left) materializedValueComputation
+        else if (f eq Keep.right) that.materializedValueComputation
+        else Combine(f.asInstanceOf[(Any, Any) ⇒ Any], this.materializedValueComputation, that.materializedValueComputation),
         carbonCopy = () ⇒ {
           val copy1 = this.carbonCopy()
           val copy2 = that.carbonCopy()

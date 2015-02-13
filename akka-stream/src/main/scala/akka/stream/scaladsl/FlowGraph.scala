@@ -259,8 +259,12 @@ object FlowGraph extends FlowGraphApply {
       moduleCopy
     }
 
-    private[stream] def remapPorts[M1, M2](graph: Graph[Ports, _], moduleCopy: Mapping): Ports = {
-      val ports = graph.ports.deepCopy()
+    private[stream] def remapPorts[P <: Ports, M1, M2](graph: Graph[P, _], moduleCopy: Mapping): P = {
+      /*
+       * This cast should not be necessary if we could express the constraint
+       * that deepCopy returns the same type as its receiver has. Would’a, could’a.
+       */
+      val ports = graph.ports.deepCopy().asInstanceOf[P]
 
       val newInPortMap = ports.inlets.zip(graph.ports.inlets) map {
         case (newGraphPort, oldGraphPort) ⇒
@@ -275,7 +279,14 @@ object FlowGraph extends FlowGraphApply {
       ports
     }
 
-    private[stream] def importGraph[M1, M2](graph: Graph[Ports, _], combine: (M1, M2) ⇒ Any): Ports = {
+    /**
+     * Import a graph into this module, performing a deep copy, discarding its
+     * materialized value and returning the copied Ports that are now to be
+     * connected.
+     */
+    def importGraph[P <: Ports](graph: Graph[P, _]): P = importGraph(graph, Keep.left)
+
+    private[stream] def importGraph[P <: Ports, M1, M2](graph: Graph[P, _], combine: (M1, M2) ⇒ Any): P = {
       val moduleCopy = graph.module.carbonCopy()
       moduleInProgress = moduleInProgress.grow(
         moduleCopy.module,
@@ -304,6 +315,17 @@ object FlowGraph extends FlowGraphApply {
             (moduleInProgress.outPorts ++ moduleInProgress.inPorts).mkString(","))
       }
       new RunnableFlow[Unit](moduleInProgress)
+    }
+    
+    private[stream] def buildSource[T, Mat](outport: OutPort[T]): Source[T, Mat] = {
+      if (moduleInProgress.isRunnable)
+        throw new IllegalStateException("Cannot build the Source since no ports remain open")
+      if (!moduleInProgress.isSource)
+        throw new IllegalStateException(
+          s"Cannot build Source with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.inPorts.mkString(",")})")
+      if (moduleInProgress.outPorts.head != outport)
+        throw new IllegalStateException(s"provided OutPort $outport does not equal the module’s open OutPort ${moduleInProgress.outPorts.head}")
+      new Source(moduleInProgress, outport)
     }
 
     private[stream] def module: Module = moduleInProgress
