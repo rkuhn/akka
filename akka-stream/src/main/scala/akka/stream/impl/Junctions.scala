@@ -15,8 +15,9 @@ object Junctions {
 
   }
 
-  sealed trait FaninModule extends JunctionModule
-  sealed trait FanoutModule extends JunctionModule
+  // note: can't be sealed as we have boilerplate generated classes which must extend FaninModule/FanoutModule
+  private[akka] trait FaninModule extends JunctionModule
+  private[akka] trait FanoutModule extends JunctionModule
 
   final case class MergeModule[T](
     ins: Vector[Graphs.InPort[T]],
@@ -99,30 +100,6 @@ object Junctions {
         attributes)
 
       Mapping(newMerge, Map(in -> newMerge.in), outs.zip(newMerge.outs).toMap)
-    }
-  }
-
-  final case class ZipWithModule2[A1, A2, B](
-    in1: Graphs.InPort[A1],
-    in2: Graphs.InPort[A2],
-    out: Graphs.OutPort[B],
-    f: (A1, A2) ⇒ B,
-    override val attributes: OperationAttributes = name("zipWith2")) extends FaninModule {
-
-    override val inPorts: Set[InPort] = Set(in1, in2)
-    override val outPorts: Set[OutPort] = Set(out)
-
-    override def withAttributes(attr: OperationAttributes): Module = copy(attributes = attr)
-
-    override def carbonCopy: () ⇒ Mapping = () ⇒ {
-      val newZip2 = ZipWithModule2(
-        new Graphs.InPort[A1](in1.toString),
-        new Graphs.InPort[A1](in2.toString),
-        new Graphs.OutPort[B](out.toString),
-        f,
-        attributes)
-
-      Mapping(newZip2, Map(in1 -> newZip2.in1, in2 -> newZip2.in2), Map(out -> newZip2.out))
     }
   }
 

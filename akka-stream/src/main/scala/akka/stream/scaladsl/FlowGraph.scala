@@ -1,11 +1,15 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.stream.scaladsl
 
 import akka.stream.impl.Junctions._
+import akka.stream.impl.GenJunctions._
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
-import akka.stream.impl.StreamLayout
+import akka.stream.impl._
 import akka.stream.impl.StreamLayout._
 import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ Ports, InPort, OutPort }
+import akka.stream.scaladsl.Graphs.{ InPort, OutPort }
 
 import scala.collection.immutable
 
@@ -87,28 +91,6 @@ object Balance {
 
 }
 
-object ZipWith2 {
-
-  final case class ZipWith2Ports[A1, A2, B](in1: InPort[A1], in2: InPort[A2], out: OutPort[B]) extends Graphs.Ports {
-    override val inlets: immutable.Seq[InPort[_]] = List(in1, in2)
-    override val outlets: immutable.Seq[OutPort[_]] = List(out)
-
-    override def deepCopy(): ZipWith2Ports[A1, A2, B] =
-      ZipWith2Ports(new InPort(in1.toString), new InPort(in2.toString), new OutPort(out.toString))
-  }
-
-  def apply[A1, A2, B](zipper: (A1, A2) ⇒ B)(implicit b: FlowGraphBuilder): ZipWith2Ports[A1, A2, B] = {
-    val zipWithModule = new ZipWithModule2(
-      new InPort[A1]("ZipWith2.in1"),
-      new InPort[A2]("ZipWith2.in2"),
-      new OutPort[B]("ZipWith2.out"),
-      zipper)
-    b.addModule(zipWithModule)
-    ZipWith2Ports(zipWithModule.in1, zipWithModule.in2, zipWithModule.out)
-  }
-
-}
-
 object Zip {
 
   final case class ZipPorts[A, B](left: InPort[A], right: InPort[B], out: OutPort[(A, B)]) extends Graphs.Ports {
@@ -120,7 +102,7 @@ object Zip {
   }
 
   def apply[A, B](implicit b: FlowGraphBuilder): ZipPorts[A, B] = {
-    val zipWithModule = new ZipWithModule2(
+    val zipWithModule = new ZipWith2Module(
       new InPort[A]("Zip.left"),
       new InPort[B]("Zip.right"),
       new OutPort[(A, B)]("Zip.out"),
@@ -128,6 +110,64 @@ object Zip {
     b.addModule(zipWithModule)
     ZipPorts(zipWithModule.in1, zipWithModule.in2, zipWithModule.out)
   }
+
+}
+
+object ZipWith {
+
+  def apply[A1, A2, O](zipper: (A1, A2) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith2(zipper)
+
+  def apply[A1, A2, A3, O](zipper: (A1, A2, A3) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith3(zipper)
+
+  def apply[A1, A2, A3, A4, O](zipper: (A1, A2, A3, A4) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith4(zipper)
+
+  def apply[A1, A2, A3, A4, A5, O](zipper: (A1, A2, A3, A4, A5) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith5(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, O](zipper: (A1, A2, A3, A4, A5, A6) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith6(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, O](zipper: (A1, A2, A3, A4, A5, A6, A7) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith7(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith8(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith9(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith10(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith11(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith12(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith13(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith14(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith15(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith16(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith17(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith18(zipper)
+
+  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19) ⇒ O)(implicit b: FlowGraphBuilder) =
+    ZipWith19(zipper)
 
 }
 
@@ -172,63 +212,13 @@ object Concat {
 
 }
 
-object FlowGraph {
-  import Graphs._
+object FlowGraph extends FlowGraphApply {
+  import akka.stream.scaladsl.Graphs._
 
   def apply(buildBlock: (FlowGraphBuilder) ⇒ Unit): RunnableFlow[Unit] = {
     val builder = new FlowGraphBuilder
     buildBlock(builder)
     builder.buildRunnable()
-  }
-
-  def apply[Mat, M1](g1: Graph[Ports, M1])(combineMat: (M1) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ combineMat(m1))
-    buildBlock(builder)(p1)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  // FIXME: Boilerplatify
-  def apply[Mat, M1, M2](g1: Graph[Ports, M1], g2: Graph[Ports, M2])(combineMat: (M1, M2) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
-    buildBlock(builder)(p1, p2)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  def apply[Mat, M1, M2, M3](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3])(combineMat: (M1, M2, M3) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
-    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
-    buildBlock(builder)(p1, p2, p3)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  def apply[Mat, M1, M2, M3, M4](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3], g4: Graph[Ports, M4])(combineMat: (M1, M2, M3, M4) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports, g4.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
-    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
-    val p4 = builder.importGraph(g4, (f: (M4) ⇒ Any, m4: M4) ⇒ f(m4))
-    buildBlock(builder)(p1, p2, p3, p4)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  def apply[Mat, M1, M2, M3, M4, M5](g1: Graph[Ports, M1], g2: Graph[Ports, M2], g3: Graph[Ports, M3], g4: Graph[Ports, M4], g5: Graph[Ports, M5])(combineMat: (M1, M2, M3, M4, M5) ⇒ Mat)(buildBlock: (FlowGraphBuilder) ⇒ (g1.Ports, g2.Ports, g3.Ports, g4.Ports, g5.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: (M2) ⇒ Any, m2: M2) ⇒ f(m2))
-    val p3 = builder.importGraph(g3, (f: (M3) ⇒ Any, m3: M3) ⇒ f(m3))
-    val p4 = builder.importGraph(g4, (f: (M4) ⇒ Any, m4: M4) ⇒ f(m4))
-    val p5 = builder.importGraph(g5, (f: (M5) ⇒ Any, m5: M5) ⇒ f(m5))
-    buildBlock(builder)(p1, p2, p3, p4, p5)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
   }
 
   class FlowGraphBuilder private[stream] () {
@@ -360,7 +350,7 @@ object FlowGraph {
       override def importAndGetPort(b: FlowGraphBuilder): OutPort[Out] = port.asInstanceOf[Graphs.OutPort[Out]]
     }
 
-    import language.implicitConversions
+    import scala.language.implicitConversions
     implicit def port2flow[T](from: OutPort[T])(implicit b: FlowGraphBuilder): PortOps[T, Unit] = new PortOps(from, b)
 
     implicit class SourceArrow[T](val s: Source[T, _]) extends AnyVal with CombinerBase[T] {

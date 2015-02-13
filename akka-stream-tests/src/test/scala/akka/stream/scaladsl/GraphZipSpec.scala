@@ -1,15 +1,25 @@
+/**
+ * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ */
 package akka.stream.scaladsl
 
-import akka.stream.scaladsl.FlowGraphImplicits._
+import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
+import akka.stream.scaladsl.Graphs.{ OutPort, InPort }
+import akka.stream.scaladsl.FlowGraph.Implicits._
 import akka.stream.testkit.StreamTestKit
 import akka.stream.testkit.TwoStreamsSetup
 
 class GraphZipSpec extends TwoStreamsSetup {
 
   override type Outputs = (Int, Int)
-  val op = Zip[Int, Int]
-  override def operationUnderTestLeft() = op.left
-  override def operationUnderTestRight() = op.right
+
+  override def fixture(b: FlowGraphBuilder): Fixture = new Fixture(b: FlowGraphBuilder) {
+    val zip = Zip[Int, Int](b)
+
+    override def left: InPort[Int] = zip.left
+    override def right: InPort[Int] = zip.right
+    override def out: OutPort[(Int, Int)] = zip.out
+  }
 
   "Zip" must {
 

@@ -5,17 +5,19 @@ package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicLong
 
+import akka.actor._
 import akka.dispatch.Dispatchers
+import akka.pattern.ask
 import akka.stream.actor.ActorSubscriber
+import akka.stream.impl.GenJunctions.ZipWithModule
 import akka.stream.impl.Junctions._
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl.fusing.ActorInterpreter
-import scala.concurrent.{ ExecutionContext, Await }
-import akka.actor._
-import akka.stream.{ FlowMaterializer, MaterializerSettings }
 import akka.stream.scaladsl._
-import akka.pattern.ask
+import akka.stream.{ FlowMaterializer, MaterializerSettings }
 import org.reactivestreams._
+
+import scala.concurrent.{ Await, ExecutionContext }
 
 /**
  * INTERNAL API
@@ -41,7 +43,7 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
                                       namePrefix: String,
                                       optimizations: Optimizations)
   extends FlowMaterializer(settings) {
-  import Stages._
+  import akka.stream.impl.Stages._
 
   def withNamePrefix(name: String): FlowMaterializer = this.copy(namePrefix = name)
 
@@ -100,6 +102,7 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
                 (UnfairMerge.props(effectiveAttributes.settings(settings), ins.size + 1), preferred +: ins, out)
               case ConcatModule(first, second, out, _) ⇒
                 (Concat.props(effectiveAttributes.settings(settings)), List(first, second), out)
+              case zip: ZipWithModule ⇒ (zip.props(settings), zip.ins, zip.outPorts.head)
             }
             val impl = actorOf(props, stageName(effectiveAttributes), effectiveAttributes.settings(settings).dispatcher)
             val publisher = new ActorPublisher[Any](impl)
@@ -187,7 +190,7 @@ private[akka] object StreamSupervisor {
 }
 
 private[akka] class StreamSupervisor(settings: MaterializerSettings) extends Actor {
-  import StreamSupervisor._
+  import akka.stream.impl.StreamSupervisor._
 
   override def supervisorStrategy = SupervisorStrategy.stoppingStrategy
 
@@ -202,7 +205,7 @@ private[akka] class StreamSupervisor(settings: MaterializerSettings) extends Act
  * INTERNAL API
  */
 private[akka] object ActorProcessorFactory {
-  import Stages._
+  import akka.stream.impl.Stages._
 
   def props(materializer: FlowMaterializer, op: StageModule): (Props, Any) = {
     val settings = materializer.settings // USE THIS TO AVOID CLOSING OVER THE MATERIALIZER BELOW
