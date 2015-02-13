@@ -1,7 +1,7 @@
 package akka.stream.impl
 
 import akka.stream.impl.StreamLayout.{ Mapping, OutPort, InPort, Module }
-import akka.stream.scaladsl.{ Graphs, OperationAttributes }
+import akka.stream.scaladsl.{ FlexiPorts, Graphs, FlexiMerge, OperationAttributes }
 
 object Junctions {
 
@@ -78,7 +78,28 @@ object Junctions {
 
       Mapping(newMerge, (ins.zip(newMerge.ins) :+ (preferred -> newMerge.preferred)).toMap, Map(out -> newMerge.out))
     }
+  }
 
+  final case class FlexiMergeModule[T, P <: FlexiPorts[T]](
+    flexi: FlexiMerge[T, P], // TODO just the logic factory instead?
+    ins: Vector[Graphs.InPort[_]],
+    out: Graphs.OutPort[_],
+    override val attributes: OperationAttributes = name("flexiMerge")) extends FaninModule {
+    override val inPorts: Set[InPort] = ins.toSet
+    override val outPorts: Set[OutPort] = Set(out)
+
+    override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)
+
+    override def carbonCopy: () ⇒ Mapping = () ⇒ {
+      val newModule = new FlexiMergeModule(
+        flexi,
+        ins.map(i ⇒ new Graphs.InPort[Any](i.toString)),
+        new Graphs.OutPort[T](out.toString),
+        attributes)
+
+      println("carbonCopy = " + Map(ins.zip(newModule.ins): _*))
+      Mapping(newModule, Map(ins.zip(newModule.ins): _*), Map(out → newModule.out))
+    }
   }
 
   final case class BalanceModule[T](

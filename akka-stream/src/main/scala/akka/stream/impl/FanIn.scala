@@ -7,6 +7,9 @@ import akka.actor.{ ActorRef, ActorLogging, Actor }
 import akka.actor.Props
 import akka.stream.MaterializerSettings
 import akka.stream.actor.{ ActorSubscriberMessage, ActorSubscriber }
+import akka.stream.scaladsl.FlexiMerge.MergeLogic
+import akka.stream.scaladsl.FlexiPorts
+import akka.stream.scaladsl.Graphs.InPort
 import org.reactivestreams.{ Subscription, Subscriber }
 import akka.actor.DeadLetterSuppression
 
@@ -197,11 +200,11 @@ private[akka] object FanIn {
 /**
  * INTERNAL API
  */
-private[akka] abstract class FanIn(val settings: MaterializerSettings, val inputPorts: Int) extends Actor with ActorLogging with Pump {
+private[akka] abstract class FanIn(val settings: MaterializerSettings, val inputCount: Int) extends Actor with ActorLogging with Pump {
   import FanIn._
 
   protected val primaryOutputs: Outputs = new SimpleOutputs(self, this)
-  protected val inputBunch = new InputBunch(inputPorts, settings.maxInputBufferSize, this) {
+  protected val inputBunch = new InputBunch(inputCount, settings.maxInputBufferSize, this) {
     override def onError(input: Int, e: Throwable): Unit = fail(e)
   }
 
@@ -284,6 +287,14 @@ private[akka] final class UnfairMerge(_settings: MaterializerSettings,
 /**
  * INTERNAL API
  */
+private[akka] object FlexiMerge {
+  def props[T, P <: FlexiPorts[T]](settings: MaterializerSettings, inputPorts: Vector[InPort[_]], mergeLogic: MergeLogic[T]): Props =
+    Props(new FlexiMergeImpl(settings, inputPorts, mergeLogic))
+}
+
+/**
+ * INTERNAL API
+ */
 private[akka] object Concat {
   def props(settings: MaterializerSettings): Props = Props(new Concat(settings))
 }
@@ -291,7 +302,7 @@ private[akka] object Concat {
 /**
  * INTERNAL API
  */
-private[akka] final class Concat(_settings: MaterializerSettings) extends FanIn(_settings, inputPorts = 2) {
+private[akka] final class Concat(_settings: MaterializerSettings) extends FanIn(_settings, inputCount = 2) {
   val First = 0
   val Second = 1
 

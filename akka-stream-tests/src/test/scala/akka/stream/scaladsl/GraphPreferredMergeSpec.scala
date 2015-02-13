@@ -4,14 +4,11 @@
 package akka.stream.scaladsl
 
 import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ OutPort, InPort }
-import akka.stream.scaladsl.Sink
+import akka.stream.scaladsl.Graphs.{ InPort, OutPort }
+import akka.stream.testkit.TwoStreamsSetup
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
-
-import akka.stream.scaladsl.FlowGraph.Implicits._
-import akka.stream.testkit.TwoStreamsSetup
 
 class GraphPreferredMergeSpec extends TwoStreamsSetup {
 
@@ -37,8 +34,8 @@ class GraphPreferredMergeSpec extends TwoStreamsSetup {
       val preferred = Source(Stream.fill(numElements)(1))
       val aux = Source(Stream.fill(numElements)(2))
 
-      val result = FlowGraph(Sink.head[Seq[Int]])(identity) { implicit b ⇒
-        (sink) ⇒
+      val result = FlowGraph(Sink.head[Seq[Int]]) { implicit b ⇒
+        sink ⇒
           val merge = MergePreferred[Int](3)
           preferred ~> merge.preferred
 

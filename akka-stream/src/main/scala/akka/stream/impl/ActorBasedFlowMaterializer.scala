@@ -98,11 +98,19 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
             val (props, ins, out) = fanin match {
               case MergeModule(ins, out, _) ⇒
                 (FairMerge.props(effectiveAttributes.settings(settings), ins.size), ins, out)
+
+              case FlexiMergeModule(flexi, ins, out, _) ⇒
+                println("flexi materialization = " + flexi)
+                (FlexiMerge.props(effectiveAttributes.settings(settings), ins, flexi), ins, out) // TODO each materialization needs its own logic
+
               case MergePreferredModule(preferred, ins, out, _) ⇒
                 (UnfairMerge.props(effectiveAttributes.settings(settings), ins.size + 1), preferred +: ins, out)
+
               case ConcatModule(first, second, out, _) ⇒
                 (Concat.props(effectiveAttributes.settings(settings)), List(first, second), out)
-              case zip: ZipWithModule ⇒ (zip.props(settings), zip.ins, zip.outPorts.head)
+
+              case zip: ZipWithModule ⇒
+                (zip.props(effectiveAttributes.settings(settings)), zip.ins, zip.outPorts.head)
             }
             val impl = actorOf(props, stageName(effectiveAttributes), effectiveAttributes.settings(settings).dispatcher)
             val publisher = new ActorPublisher[Any](impl)

@@ -113,63 +113,7 @@ object Zip {
 
 }
 
-object ZipWith {
-
-  def apply[A1, A2, O](zipper: (A1, A2) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith2(zipper)
-
-  def apply[A1, A2, A3, O](zipper: (A1, A2, A3) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith3(zipper)
-
-  def apply[A1, A2, A3, A4, O](zipper: (A1, A2, A3, A4) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith4(zipper)
-
-  def apply[A1, A2, A3, A4, A5, O](zipper: (A1, A2, A3, A4, A5) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith5(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, O](zipper: (A1, A2, A3, A4, A5, A6) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith6(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, O](zipper: (A1, A2, A3, A4, A5, A6, A7) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith7(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith8(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith9(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith10(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith11(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith12(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith13(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith14(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith15(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith16(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith17(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith18(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith19(zipper)
-
-}
+object ZipWith extends ZipWithApply
 
 object Unzip {
 
@@ -214,6 +158,13 @@ object Concat {
 
 object FlowGraph extends FlowGraphApply {
   import akka.stream.scaladsl.Graphs._
+
+  def apply[Mat](g1: Graph[Ports, Mat])(buildBlock: FlowGraphBuilder ⇒ (g1.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val p1 = builder.importGraph(g1, (_: Any, m1: Mat) ⇒ m1)
+    buildBlock(builder)(p1)
+    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+  }
 
   def apply(buildBlock: (FlowGraphBuilder) ⇒ Unit): RunnableFlow[Unit] = {
     val builder = new FlowGraphBuilder
@@ -312,7 +263,7 @@ object FlowGraph extends FlowGraphApply {
       if (!moduleInProgress.isRunnable) {
         throw new IllegalStateException(
           "Cannot build the RunnableFlow because there are unconnected ports: " +
-            (moduleInProgress.outPorts ++ moduleInProgress.inPorts).mkString(","))
+            (moduleInProgress.outPorts ++ moduleInProgress.inPorts).mkString(", "))
       }
       new RunnableFlow[Unit](moduleInProgress)
     }

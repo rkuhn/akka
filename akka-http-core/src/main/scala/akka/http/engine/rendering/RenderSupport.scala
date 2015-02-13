@@ -5,7 +5,7 @@
 package akka.http.engine.rendering
 
 import akka.parboiled2.CharUtils
-import akka.stream.impl.{SimpleActorFlowSource, ActorBasedFlowMaterializer}
+import akka.stream.impl.{ SimpleActorFlowSource, ActorBasedFlowMaterializer }
 import akka.util.ByteString
 import akka.event.LoggingAdapter
 import akka.stream.scaladsl._
