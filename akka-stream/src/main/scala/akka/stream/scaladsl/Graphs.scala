@@ -16,6 +16,11 @@ object Graphs {
     def inlets: immutable.Seq[InPort[_]]
     def outlets: immutable.Seq[OutPort[_]]
 
+    /**
+     * Create a copy of this Ports object, returning the same type as the
+     * original; this constraint can unfortunately not be expressed in the
+     * type system.
+     */
     def deepCopy(): Ports
   }
 

@@ -28,7 +28,7 @@ import org.reactivestreams.Subscriber
  * an “atomic” source, e.g. from a collection or a file. Materialization turns a Source into
  * a Reactive Streams `Publisher` (at least conceptually).
  */
-final class Source[+Out, +Mat] private (m: StreamLayout.Module, val outlet: Graphs.OutPort[Out])
+final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPort[Out])
   extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.SourcePorts[Out], Mat] {
   private[stream] override val module: StreamLayout.Module = m
 
@@ -237,8 +237,24 @@ object Source {
    * Creates a `Source` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
    * returns the `UndefinedSink`.
    */
-  //  def apply[T]()(block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] =
-  //    createSourceFromBuilder(new FlowGraphBuilder(), block)
+  def apply[T]()(block: FlowGraph.FlowGraphBuilder ⇒ Graphs.OutPort[T]): Source[T, Unit] = {
+    val builder = new FlowGraph.FlowGraphBuilder
+    val port = block(builder)
+    builder.buildSource(port)
+  }
+
+  // to be boilerplate-ified
+  import Graphs._
+  import FlowGraph._
+  def apply[Mat, M1, M2, Out](g1: Graph[Ports, M1], g2: Graph[Ports, M2])(combineMat: (M1, M2) ⇒ Mat)(
+      buildBlock: FlowGraphBuilder ⇒ (g1.Ports, g2.Ports) ⇒ OutPort[Out]): Source[Out, Mat] = {
+    val builder = new FlowGraphBuilder
+    val curried = combineMat.curried
+    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
+    val p2 = builder.importGraph(g2, (f: M2 ⇒ Any, m2: M2) ⇒ f(m2))
+    val port = buildBlock(builder)(p1, p2)
+    builder.buildSource(port)
+  }
 
   /**
    * Creates a `Source` by using a [[FlowGraphBuilder]] from this [[PartialFlowGraph]] on a block that expects

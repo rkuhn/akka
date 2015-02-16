@@ -6,10 +6,8 @@ package akka.stream.impl
 import java.util.concurrent.atomic.AtomicBoolean
 import akka.actor.{ PoisonPill, Cancellable, Props, ActorRef }
 import akka.stream.FlowMaterializer
-import akka.stream.impl.StreamLayout.{ Mapping, Module }
 import akka.stream.scaladsl.{ Graphs, OperationAttributes }
 import org.reactivestreams._
-
 import scala.annotation.unchecked.uncheckedVariance
 import scala.annotation.tailrec
 import scala.collection.immutable
@@ -17,18 +15,25 @@ import scala.concurrent.{ Promise, ExecutionContext, Future }
 import scala.concurrent.duration.FiniteDuration
 import scala.util.control.NonFatal
 import scala.util.{ Success, Failure }
+import akka.stream.impl.StreamLayout.{ Module, Mapping }
 
-trait SourceModule[+Out, Mat] extends StreamLayout.Module {
-  override def subModules = Set.empty
-  override def upstreams = Map.empty
-  override def downstreams = Map.empty
-  override def inPorts = Set.empty
+trait SourceModule[+Out, +Mat] extends Module {
+
+  private type IP = StreamLayout.InPort
+  private type OP = StreamLayout.OutPort
+
+  override def subModules: Set[Module] = Set.empty
+  override def upstreams: Map[IP, OP] = Map.empty
+  override def downstreams: Map[OP, IP] = Map.empty
+  override def inPorts: Set[IP] = Set.empty
   val outPort: Graphs.OutPort[Out] = new Graphs.OutPort[Out]("FIXME")
-  override val outPorts: Set[StreamLayout.OutPort] = Set(outPort)
+  override val outPorts: Set[OP] = Set(outPort)
 
   /**
    * This method is only used for Sources that return true from [[#isActive]], which then must
    * implement it.
+   *
+   * FIXME: this is no longer true, right?
    */
   def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Publisher[Out] @uncheckedVariance, Mat)
 
