@@ -1,7 +1,8 @@
 package akka.stream.impl
 
 import akka.stream.impl.StreamLayout.{ Mapping, OutPort, InPort, Module }
-import akka.stream.scaladsl.{ FlexiPorts, Graphs, FlexiMerge, OperationAttributes }
+import akka.stream.scaladsl.{ Graphs, OperationAttributes }
+import akka.stream.scaladsl.FlexiMerge.MergeLogic
 
 object Junctions {
 
@@ -80,25 +81,21 @@ object Junctions {
     }
   }
 
-  final case class FlexiMergeModule[T, P <: FlexiPorts[T]](
-    flexi: FlexiMerge[T, P], // TODO just the logic factory instead?
-    ins: Vector[Graphs.InPort[_]],
-    out: Graphs.OutPort[_],
+  final case class FlexiMergeModule[T, P <: Graphs.Ports](
+    ports: P,
+    flexi: P ⇒ MergeLogic[T],
     override val attributes: OperationAttributes = name("flexiMerge")) extends FaninModule {
-    override val inPorts: Set[InPort] = ins.toSet
-    override val outPorts: Set[OutPort] = Set(out)
+
+    require(ports.outlets.size == 1, "FlexiMerge can have only one output port")
+
+    override val inPorts: Set[InPort] = ports.inlets.toSet
+    override val outPorts: Set[OutPort] = ports.outlets.toSet
 
     override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)
 
     override def carbonCopy: () ⇒ Mapping = () ⇒ {
-      val newModule = new FlexiMergeModule(
-        flexi,
-        ins.map(i ⇒ new Graphs.InPort[Any](i.toString)),
-        new Graphs.OutPort[T](out.toString),
-        attributes)
-
-      println("carbonCopy = " + Map(ins.zip(newModule.ins): _*))
-      Mapping(newModule, Map(ins.zip(newModule.ins): _*), Map(out → newModule.out))
+      val newModule = new FlexiMergeModule(ports.deepCopy().asInstanceOf[P], flexi, attributes)
+      Mapping(newModule, Map(ports.inlets.zip(newModule.ports.inlets): _*), Map(ports.outlets.head → newModule.ports.outlets.head))
     }
   }
 

@@ -101,12 +101,13 @@ object Zip {
       ZipPorts(new InPort(left.toString), new InPort(right.toString), new OutPort(out.toString))
   }
 
-  def apply[A, B](implicit b: FlowGraphBuilder): ZipPorts[A, B] = {
+  def apply[A, B](attributes: OperationAttributes = OperationAttributes.none)(implicit b: FlowGraphBuilder): ZipPorts[A, B] = {
     val zipWithModule = new ZipWith2Module(
       new InPort[A]("Zip.left"),
       new InPort[B]("Zip.right"),
       new OutPort[(A, B)]("Zip.out"),
-      (a: A, b: B) ⇒ (a, b))
+      (a: A, b: B) ⇒ (a, b),
+      attributes and OperationAttributes.name("Zip"))
     b.addModule(zipWithModule)
     ZipPorts(zipWithModule.in1, zipWithModule.in2, zipWithModule.out)
   }
@@ -241,7 +242,7 @@ object FlowGraph extends FlowGraphApply {
       val moduleCopy = graph.module.carbonCopy()
       moduleInProgress = moduleInProgress.grow(
         moduleCopy.module,
-        (m1: Any, m2: Any) ⇒ combine.asInstanceOf[(Any, Any) ⇒ Any](m1, m2))
+        combine.asInstanceOf[(Any, Any) ⇒ Any])
 
       remapPorts(graph, moduleCopy)
     }
@@ -267,7 +268,7 @@ object FlowGraph extends FlowGraphApply {
       }
       new RunnableFlow[Unit](moduleInProgress)
     }
-    
+
     private[stream] def buildSource[T, Mat](outport: OutPort[T]): Source[T, Mat] = {
       if (moduleInProgress.isRunnable)
         throw new IllegalStateException("Cannot build the Source since no ports remain open")

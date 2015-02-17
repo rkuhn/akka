@@ -62,25 +62,4 @@ object Graphs {
     type Ports = P
     def ports: P
   }
-
-  //  /**
-  //   * This imports g1 and g2 by copying into the builder before running the
-  //   * user code block. The user defines how to combine the materialized values
-  //   * of the parts, and the return value is the new source’s outlet port (which
-  //   * may have been imported with the graphs as well).
-  //   *
-  //   * To be extended to higher arities using the boilerplate plugin.
-  //   */
-  //  def source[G1 <: Graph[_, _], G2 <: Graph[_, _], Mat, T](g1: G1, g2: G2)(
-  //    combineMat: (G1#MaterializedType, G2#MaterializedType) ⇒ Mat)(
-  //      block: FlowGraphBuilder ⇒ (G1#Ports, G2#Ports) ⇒ Port[T]): Source[T, Mat] = ???
-  //
-  //  def example(g1: Source[Int, Future[Unit]], g2: Flow[Int, String, Unit]) =
-  //    source(g1, g2)((f, _) ⇒ f) { implicit b ⇒
-  //      (p1, p2) ⇒
-  //        import FlowGraphImplicits._
-  //
-  //        p1.outlet ~> p2.inlet
-  //        p2.outlet
-  //    }
 }

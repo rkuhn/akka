@@ -1,0 +1,34 @@
+/**
+ * Copyright (C) 2014-2015 Typesafe Inc. <http://www.typesafe.com>
+ */
+package akka.stream.scaladsl
+
+import akka.stream.scaladsl.Graphs.{ Graph, Ports, InPort, OutPort }
+import scala.collection.immutable
+
+abstract class FanInPorts[O] extends Ports {
+  final val out = new OutPort[O]("out")
+  
+  final override def outlets: immutable.Seq[OutPort[_]] = out :: Nil
+  final override def inlets: immutable.Seq[InPort[_]] = _inlets
+  
+  private var _inlets: List[InPort[_]] = Nil
+  protected def port[T](name: String) = {
+    val p = new InPort[T](name)
+    _inlets ::= p
+    p
+  }
+}
+
+class UniformFanIn[T, O](n: Int) extends FanInPorts[O] {
+  val in: Array[InPort[T]] = Array.tabulate(n)(i => port[T](s"in$i"))
+  override def deepCopy() = new UniformFanIn(n)
+}
+
+[2..#class FanIn1[[#T0#], O] extends FanInPorts[O] {
+  [#val in0 = port[T0]("in0")#
+  ]
+  override def deepCopy() = new FanIn1
+}#
+
+]

@@ -6,7 +6,7 @@ package akka.stream.scaladsl
 import akka.stream.impl.Junctions.FlexiMergeModule
 import akka.stream.scaladsl.FlexiMerge.MergeLogic
 import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ InPort, IndexedInPort, OutPort, Ports }
+import akka.stream.scaladsl.Graphs.{ InPort, Ports }
 import scala.collection.immutable
 import scala.collection.immutable.Seq
 import scala.language.higherKinds
@@ -16,18 +16,18 @@ import akka.stream.impl.StreamLayout
 
 object FlexiMerge {
 
-  def apply[T, P <: FlexiPorts[T]](ports: P)(createMergeLogic: P ⇒ FlexiMerge[T, P])(implicit b: FlowGraphBuilder): P = {
-    val flexi = createMergeLogic(ports)
-    val module = new FlexiMergeModule[T, P](flexi, ports.inlets, ports.out)
+  def apply[T, P <: Ports](ports: P)(createMergeLogic: P ⇒ MergeLogic[T])(implicit b: FlowGraphBuilder): P = {
+    val p = ports.deepCopy().asInstanceOf[P]
+    val module = new FlexiMergeModule(p, createMergeLogic)
     b.addModule(module)
-    flexi.ports
+    p
   }
-  
-  type OutP = StreamLayout.OutPort
-  type InP = StreamLayout.InPort
 
-  sealed trait ReadCondition
-  
+  private type OutP = StreamLayout.OutPort
+  private type InP = StreamLayout.InPort
+
+  sealed trait ReadCondition[T]
+
   /**
    * Read condition for the [[MergeLogic#State]] that will be
    * fulfilled when there are elements for one specific upstream
@@ -37,12 +37,13 @@ object FlexiMerge {
    * has been completed. `IllegalArgumentException` is thrown if
    * that is not obeyed.
    */
-  final case class Read[T](input: InPort[T]) extends ReadCondition
+  final case class Read[T](input: InPort[T]) extends ReadCondition[T]
 
   object ReadAny {
-    def apply(inputs: immutable.Seq[InPort[_]]): ReadAny = new ReadAny(inputs: _*)
+    def apply[T](inputs: immutable.Seq[InPort[T]]): ReadAny[T] = new ReadAny(inputs: _*)
+    def apply(p: Ports): ReadAny[Any] = new ReadAny(p.inlets.asInstanceOf[Seq[InPort[Any]]]: _*)
   }
-  
+
   /**
    * Read condition for the [[MergeLogic#State]] that will be
    * fulfilled when there are elements for any of the given upstream
@@ -51,15 +52,13 @@ object FlexiMerge {
    * Cancelled and completed inputs are not used, i.e. it is allowed
    * to specify them in the list of `inputs`.
    */
-  final case class ReadAny(inputs: InPort[_]*) extends ReadCondition
+  final case class ReadAny[T](inputs: InPort[T]*) extends ReadCondition[T]
 
   object ReadPreferred {
-    def apply(preferred: InPort[_])(secondaries: InPort[_]*): ReadPreferred =
-      new ReadPreferred(preferred, secondaries.toArray)
-
-    def apply(preferred: InPort[_], secondaries: immutable.Seq[InPort[_]]): ReadPreferred =
-      new ReadPreferred(preferred, secondaries.toArray)
+    def apply[T](preferred: InPort[T], secondaries: immutable.Seq[InPort[T]]): ReadPreferred[T] =
+      new ReadPreferred(preferred, secondaries: _*)
   }
+
   /**
    * Read condition for the [[MergeLogic#State]] that will be
    * fulfilled when there are elements for any of the given upstream
@@ -70,12 +69,13 @@ object FlexiMerge {
    * Cancelled and completed inputs are not used, i.e. it is allowed
    * to specify them in the list of `inputs`.
    */
-  final case class ReadPreferred(preferred: InPort[_], secondaries: Array[InPort[_]]) extends ReadCondition
+  final case class ReadPreferred[T](preferred: InPort[T], secondaries: InPort[T]*) extends ReadCondition[T]
 
   object ReadAll {
-    def apply(inputs: immutable.Seq[InPort[_]]): ReadAll = new ReadAll(ReadAllInputs, inputs: _*)
-    def apply(inputs: InPort[_]*): ReadAll = new ReadAll(ReadAllInputs, inputs: _*)
+    def apply[T](inputs: immutable.Seq[InPort[T]]): ReadAll[T] = new ReadAll(ReadAllInputs, inputs: _*)
+    def apply[T](inputs: InPort[T]*): ReadAll[T] = new ReadAll(ReadAllInputs, inputs: _*)
   }
+
   /**
    * Read condition for the [[MergeLogic#State]] that will be
    * fulfilled when there are elements for *all* of the given upstream
@@ -87,19 +87,19 @@ object FlexiMerge {
    * the resulting [[ReadAllInputs]] will then not contain values for this element, which can be
    * handled via supplying a default value instead of the value from the (now cancelled) input.
    */
-  final case class ReadAll(mkResult: immutable.Map[InPort[_], Any] ⇒ ReadAllInputsBase, inputs: InPort[_]*) extends ReadCondition
+  final case class ReadAll[T](mkResult: immutable.Map[InP, Any] ⇒ ReadAllInputsBase, inputs: InPort[T]*) extends ReadCondition[ReadAllInputs]
+
   /** INTERNAL API */
-  private[stream] trait ReadAllInputsBase
+  sealed private[stream] trait ReadAllInputsBase
+
   /**
    * Provides typesafe accessors to values from inputs supplied to [[ReadAll]].
    */
-  final case class ReadAllInputs(map: immutable.Map[InPort[_], Any]) extends ReadAllInputsBase {
+  final case class ReadAllInputs(map: immutable.Map[InP, Any]) extends ReadAllInputsBase {
     def apply[T](input: InPort[T]): T = map(input).asInstanceOf[T]
     def get[T](input: InPort[T]): Option[T] = map.get(input).asInstanceOf[Option[T]]
-    def getOrElse[T, B >: T](input: InPort[T], default: ⇒ B): T = map.getOrElse(input, default).asInstanceOf[T]
+    def getOrElse[T](input: InPort[T], default: ⇒ T): T = map.getOrElse(input, default).asInstanceOf[T]
   }
-
-  import scala.language.higherKinds
 
   /**
    * The possibly stateful logic that reads from input via the defined [[MergeLogic#State]] and
@@ -108,8 +108,6 @@ object FlexiMerge {
    * Concrete instance is supposed to be created by implementing [[FlexiMerge#createMergeLogic]].
    */
   abstract class MergeLogic[Out] {
-
-    def inputHandles(inputCount: Int): immutable.IndexedSeq[InPort[_]]
 
     def initialState: State[_]
     def initialCompletionHandling: CompletionHandling = defaultCompletionHandling
@@ -145,7 +143,7 @@ object FlexiMerge {
       /**
        * Cancel a specific upstream input stream.
        */
-      def cancel(input: InPort[_]): Unit
+      def cancel(input: InP): Unit
 
       /**
        * Replace current [[CompletionHandling]].
@@ -162,8 +160,8 @@ object FlexiMerge {
      * The `onInput` function is called when an `element` was read from the `input`.
      * The function returns next behavior or [[#SameState]] to keep current behavior.
      */
-    sealed case class State[In](condition: ReadCondition)(
-      val onInput: (MergeLogicContext, InPort[_], In) ⇒ State[_])
+    sealed case class State[In](condition: ReadCondition[In])(
+      val onInput: (MergeLogicContext, InP, In) ⇒ State[_])
 
     /**
      * Return this from [[State]] `onInput` to use same state for next element.
@@ -193,8 +191,8 @@ object FlexiMerge {
      * or it can be swallowed to continue with remaining inputs.
      */
     sealed case class CompletionHandling(
-      onComplete: (MergeLogicContext, InPort[_]) ⇒ State[_],
-      onError: (MergeLogicContext, InPort[_], Throwable) ⇒ State[_])
+      onComplete: (MergeLogicContext, InP) ⇒ State[_],
+      onError: (MergeLogicContext, InP, Throwable) ⇒ State[_])
 
     /**
      * Will continue to operate until a read becomes unsatisfiable, then it completes.
@@ -215,43 +213,6 @@ object FlexiMerge {
 
 }
 
-class FlexiPorts[+Out]() extends Graphs.Ports {
-  private var inputCount = 0
-  private var _inlets = Vector.empty[InPort[_]]
-
-  def namePrefix: String = "Flexi"
-
-  val out = new OutPort[Out](s"$namePrefix.out")
-
-  /**
-   * Concrete subclass is supposed to define one or more input ports and
-   * they are created by calling this method. Each [[InPort]] can be
-   * connected to a [[Source]] with the [[akka.stream.scaladsl.FlowGraph.FlowGraphBuilder]].
-   * The `InputPort` is also an [[InPort]], which is passed as parameter
-   * to [[FlexiMerge#MergeLogic#State]] `onInput` when an input element has been read so that you
-   * can know exactly from which input the element was read.
-   */
-  protected final def createInputPort[T](): InPort[T] = {
-    createInputPort(s"in$inputCount")
-  }
-
-  protected final def createInputPort[T](name: String): InPort[T] = {
-    val idx = inputCount
-    inputCount += 1
-    val in = new IndexedInPort(idx, s"$namePrefix.$name")
-    // TOOD exposing Indexed may not be a bad idea, or even better path dependents here?
-    _inlets :+= in
-    in
-  }
-
-  override def inlets = _inlets
-
-  override def deepCopy(): Ports = ???
-
-  override def outlets: Seq[OutPort[_]] = Vector(out)
-
-}
-
 /**
  * Base class for implementing custom merge junctions.
  * Such a junction always has one [[#out]] port and one or more input ports.
@@ -269,11 +230,15 @@ class FlexiPorts[+Out]() extends Graphs.Ports {
  * @param ports ports that this junction exposes
  * @param attributes optional attributes for this vertex
  */
-abstract class FlexiMerge[Out, P <: FlexiPorts[Out]](
-  val ports: P,
-  val attributes: OperationAttributes = OperationAttributes.name("FlexiMerge")) extends MergeLogic[Out] {
+abstract class FlexiMerge[Out, P <: Ports](ports: P, attributes: OperationAttributes) {
 
-  def inputHandles(inputCount: Int): immutable.IndexedSeq[InPort[_]] = ports.inlets
+  type PortT = P
+  type InP = StreamLayout.InPort
+
+  def createMergeLogic(p: P): MergeLogic[Out]
+
+  // TODO this name is not yet good
+  def add(implicit b: FlowGraphBuilder): P = FlexiMerge(ports)(createMergeLogic)
 
   override def toString = attributes.nameLifted match {
     case Some(n) ⇒ n

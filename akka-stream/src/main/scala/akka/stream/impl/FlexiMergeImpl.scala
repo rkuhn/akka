@@ -4,36 +4,39 @@
 package akka.stream.impl
 
 import akka.stream.scaladsl.FlexiMerge.{ Read, ReadAll, ReadAny, ReadPreferred }
-import akka.stream.scaladsl.FlexiPorts
-import akka.stream.scaladsl.Graphs.{ IndexedInPort, InPort }
+import akka.stream.scaladsl.Graphs.{ Ports, InPort }
 import akka.stream.{ MaterializerSettings, scaladsl }
 
 import scala.collection.breakOut
+import scala.collection.immutable
 import scala.util.control.NonFatal
 
 /**
  * INTERNAL API
  */
-private[akka] class FlexiMergeImpl[T, P <: FlexiPorts[T]](
+private[akka] class FlexiMergeImpl[T, P <: Ports](
   _settings: MaterializerSettings,
-  ins: Vector[InPort[_]],
-  mergeLogic: scaladsl.FlexiMerge.MergeLogic[T]) extends FanIn(_settings, ins.size) {
+  ports: P,
+  mergeLogic: scaladsl.FlexiMerge.MergeLogic[T]) extends FanIn(_settings, ports.inlets.size) {
 
-  val inputMapping: Map[Int, InPort[_]] =
-    mergeLogic.inputHandles(inputCount).take(inputCount).zipWithIndex.map(_.swap)(breakOut)
-
-  private type StateT = mergeLogic.State[Any]
+  private type StateT = mergeLogic.State[_]
   private type CompletionT = mergeLogic.CompletionHandling
+  private type InP = StreamLayout.InPort
+
+  val inputMapping: Map[Int, InP] = ports.inlets.zipWithIndex.map(_.swap)(breakOut)
+  val indexOf: Map[InP, Int] = ports.inlets.zipWithIndex.toMap
 
   private var behavior: StateT = _
+  private def anyBehavior = behavior.asInstanceOf[mergeLogic.State[Any]]
   private var completion: CompletionT = _
 
   override protected val inputBunch = new FanIn.InputBunch(inputCount, settings.maxInputBufferSize, this) {
     override def onError(input: Int, e: Throwable): Unit = {
-      changeBehavior(try completion.onError(ctx, inputMapping(input), e)
-      catch {
-        case NonFatal(e) ⇒ fail(e); mergeLogic.SameState
-      })
+      changeBehavior(
+        try completion.onError(ctx, inputMapping(input), e)
+        catch {
+          case NonFatal(e) ⇒ fail(e); mergeLogic.SameState
+        })
       cancel(input)
     }
 
@@ -57,14 +60,14 @@ private[akka] class FlexiMergeImpl[T, P <: FlexiPorts[T]](
 
     override def error(cause: Throwable): Unit = fail(cause)
 
-    override def cancel(input: InPort[_]): Unit = inputBunch.cancel(indexOf(input))
+    override def cancel(input: InP): Unit = inputBunch.cancel(indexOf(input))
 
     override def changeCompletionHandling(newCompletion: CompletionT): Unit =
       FlexiMergeImpl.this.changeCompletionHandling(newCompletion)
 
   }
 
-  private def markInputs(inputs: Array[InPort[_]]): Unit = {
+  private def markInputs(inputs: Array[InP]): Unit = {
     inputBunch.unmarkAllInputs()
     var i = 0
     while (i < inputs.length) {
@@ -75,32 +78,30 @@ private[akka] class FlexiMergeImpl[T, P <: FlexiPorts[T]](
     }
   }
 
-  private def include(port: InPort[_]): Boolean =
-    include(indexOf(port))
+  private def include(port: InP): Boolean = include(indexOf(port))
 
   private def include(portIndex: Int): Boolean =
     inputMapping.contains(portIndex) && !inputBunch.isCancelled(portIndex) && !inputBunch.isDepleted(portIndex)
 
   private def precondition: TransferState = {
     behavior.condition match {
-      case _: ReadAny | _: ReadPreferred | _: Read[_] ⇒ inputBunch.AnyOfMarkedInputs && primaryOutputs.NeedsDemand
-      case _: ReadAll                              ⇒ inputBunch.AllOfMarkedInputs && primaryOutputs.NeedsDemand
+      case _: ReadAny[_] | _: ReadPreferred[_] | _: Read[_] ⇒ inputBunch.AnyOfMarkedInputs && primaryOutputs.NeedsDemand
+      case _: ReadAll[_]                                    ⇒ inputBunch.AllOfMarkedInputs && primaryOutputs.NeedsDemand
     }
   }
 
-  private def changeCompletionHandling(newCompletion: CompletionT): Unit =
-    completion = newCompletion.asInstanceOf[CompletionT]
+  private def changeCompletionHandling(newCompletion: CompletionT): Unit = completion = newCompletion
 
-  private def changeBehavior[A](newBehavior: mergeLogic.State[A]): Unit =
+  private def changeBehavior(newBehavior: StateT): Unit =
     if (newBehavior != mergeLogic.SameState && (newBehavior ne behavior)) {
-      behavior = newBehavior.asInstanceOf[StateT]
+      behavior = newBehavior
       behavior.condition match {
-        case read: ReadAny ⇒
+        case read: ReadAny[_] ⇒
           markInputs(read.inputs.toArray)
-        case ReadPreferred(preferred, secondaries) ⇒
-          markInputs(secondaries.toArray)
-          inputBunch.markInput(indexOf(preferred))
-        case read: ReadAll ⇒
+        case r: ReadPreferred[_] ⇒
+          markInputs(r.secondaries.toArray)
+          inputBunch.markInput(indexOf(r.preferred))
+        case read: ReadAll[_] ⇒
           markInputs(read.inputs.toArray)
         case Read(input) ⇒
           val inputIdx = indexOf(input)
@@ -117,30 +118,30 @@ private[akka] class FlexiMergeImpl[T, P <: FlexiPorts[T]](
 
   nextPhase(TransferPhase(precondition) { () ⇒
     behavior.condition match {
-      case read: ReadAny ⇒
+      case read: ReadAny[t] ⇒
         val id = inputBunch.idToDequeue()
         val elem = inputBunch.dequeueAndYield(id)
         val inputHandle = inputMapping(id)
-        changeBehavior(behavior.onInput(ctx, inputHandle, elem))
+        changeBehavior(anyBehavior.onInput(ctx, inputHandle, elem))
         triggerCompletionAfterRead(inputHandle)
-      case read: ReadPreferred ⇒
-        val id = inputBunch.idToDequeue()
-        val elem = inputBunch.dequeueAndPrefer(id)
+      case r: ReadPreferred[_] ⇒
+        val id = indexOf(r.preferred)
+        val elem = inputBunch.dequeuePrefering(id)
         val inputHandle = inputMapping(id)
-        changeBehavior(behavior.onInput(ctx, inputHandle, elem))
+        changeBehavior(anyBehavior.onInput(ctx, inputHandle, elem))
         triggerCompletionAfterRead(inputHandle)
       case Read(input) ⇒
         val elem = inputBunch.dequeue(indexOf(input))
-        changeBehavior(behavior.onInput(ctx, input, elem))
+        changeBehavior(anyBehavior.onInput(ctx, input, elem))
         triggerCompletionAfterRead(input)
-      case read: ReadAll ⇒
+      case read: ReadAll[t] ⇒
         val inputHandles = read.inputs
 
         val values = inputHandles.collect {
           case input if include(input) ⇒ input → inputBunch.dequeue(indexOf(input))
         }
 
-        changeBehavior(behavior.onInput(ctx, inputHandles.head, read.mkResult(Map(values: _*))))
+        changeBehavior(anyBehavior.onInput(ctx, inputHandles.head, read.mkResult(Map(values: _*))))
 
         // must be triggered after emitting the accumulated out value
         triggerCompletionAfterRead(inputHandles)
@@ -148,7 +149,7 @@ private[akka] class FlexiMergeImpl[T, P <: FlexiPorts[T]](
 
   })
 
-  private def triggerCompletionAfterRead(inputs: Seq[InPort[_]]): Unit = {
+  private def triggerCompletionAfterRead(inputs: Seq[InP]): Unit = {
     var j = 0
     while (j < inputs.length) {
       triggerCompletionAfterRead(inputs(j))
@@ -156,17 +157,15 @@ private[akka] class FlexiMergeImpl[T, P <: FlexiPorts[T]](
     }
   }
 
-  private def triggerCompletionAfterRead(inputHandle: InPort[_]): Unit =
+  private def triggerCompletionAfterRead(inputHandle: InP): Unit =
     if (inputBunch.isDepleted(indexOf(inputHandle)))
       triggerCompletion(inputHandle)
 
-  private def triggerCompletion(in: InPort[_]): Unit =
-    changeBehavior(try completion.onComplete(ctx, in)
-    catch {
-      case NonFatal(e) ⇒ fail(e); mergeLogic.SameState
-    })
-
-  private def indexOf(p: InPort[_]): Int =
-    p.asInstanceOf[IndexedInPort[_]].id
+  private def triggerCompletion(in: InP): Unit =
+    changeBehavior(
+      try completion.onComplete(ctx, in)
+      catch {
+        case NonFatal(e) ⇒ fail(e); mergeLogic.SameState
+      })
 
 }

@@ -14,7 +14,7 @@ class GraphZipSpec extends TwoStreamsSetup {
   override type Outputs = (Int, Int)
 
   override def fixture(b: FlowGraphBuilder): Fixture = new Fixture(b: FlowGraphBuilder) {
-    val zip = Zip[Int, Int](b)
+    val zip = Zip[Int, Int]()(b)
 
     override def left: InPort[Int] = zip.left
     override def right: InPort[Int] = zip.right
@@ -27,7 +27,7 @@ class GraphZipSpec extends TwoStreamsSetup {
       val probe = StreamTestKit.SubscriberProbe[(Int, String)]()
 
       FlowGraph { implicit b ⇒
-        val zip = Zip[Int, String]
+        val zip = Zip[Int, String]()
 
         Source(1 to 4) ~> zip.left
         Source(List("A", "B", "C", "D", "E", "F")) ~> zip.right

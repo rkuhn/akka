@@ -142,7 +142,7 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
 
 }
 
-object Source {
+object Source extends SourceApply {
   private[stream] def apply[Out, Mat](module: SourceModule[Out, Mat]): Source[Out, Mat] =
     new Source(module)
 
@@ -232,41 +232,6 @@ object Source {
    */
   def apply[T](initialDelay: FiniteDuration, interval: FiniteDuration, tick: T): Source[T, Cancellable] =
     new Source(new TickSource(initialDelay, interval, tick))
-
-  /**
-   * Creates a `Source` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
-   * returns the `UndefinedSink`.
-   */
-  def apply[T]()(block: FlowGraph.FlowGraphBuilder ⇒ Graphs.OutPort[T]): Source[T, Unit] = {
-    val builder = new FlowGraph.FlowGraphBuilder
-    val port = block(builder)
-    builder.buildSource(port)
-  }
-
-  // to be boilerplate-ified
-  import Graphs._
-  import FlowGraph._
-  def apply[Mat, M1, M2, Out](g1: Graph[Ports, M1], g2: Graph[Ports, M2])(combineMat: (M1, M2) ⇒ Mat)(
-      buildBlock: FlowGraphBuilder ⇒ (g1.Ports, g2.Ports) ⇒ OutPort[Out]): Source[Out, Mat] = {
-    val builder = new FlowGraphBuilder
-    val curried = combineMat.curried
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ curried(m1))
-    val p2 = builder.importGraph(g2, (f: M2 ⇒ Any, m2: M2) ⇒ f(m2))
-    val port = buildBlock(builder)(p1, p2)
-    builder.buildSource(port)
-  }
-
-  /**
-   * Creates a `Source` by using a [[FlowGraphBuilder]] from this [[PartialFlowGraph]] on a block that expects
-   * a [[FlowGraphBuilder]] and returns the `UndefinedSink`.
-   */
-  //  def apply[T](graph: PartialFlowGraph)(block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] =
-  //    createSourceFromBuilder(new FlowGraphBuilder(graph), block)
-
-  //  private def createSourceFromBuilder[T](builder: FlowGraphBuilder, block: FlowGraphBuilder ⇒ UndefinedSink[T]): Source[T] = {
-  //    val out = block(builder)
-  //    builder.partialBuild().toSource(out)
-  //  }
 
   /**
    * Creates a `Source` that is materialized to an [[akka.actor.ActorRef]] which points to an Actor

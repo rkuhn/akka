@@ -8,10 +8,11 @@ import akka.actor.Props
 import akka.stream.MaterializerSettings
 import akka.stream.actor.{ ActorSubscriberMessage, ActorSubscriber }
 import akka.stream.scaladsl.FlexiMerge.MergeLogic
-import akka.stream.scaladsl.FlexiPorts
-import akka.stream.scaladsl.Graphs.InPort
+import akka.stream.scaladsl.Graphs.{ InPort, Ports }
 import org.reactivestreams.{ Subscription, Subscriber }
 import akka.actor.DeadLetterSuppression
+
+import scala.collection.immutable
 
 /**
  * INTERNAL API
@@ -141,13 +142,12 @@ private[akka] object FanIn {
       dequeueAndYield(idToDequeue())
 
     def dequeueAndYield(id: Int): Any = {
-      val id = idToDequeue()
       preferredId = id + 1
       if (preferredId == inputCount) preferredId = 0
       dequeue(id)
     }
 
-    def dequeueAndPrefer(preferred: Int): Any = {
+    def dequeuePrefering(preferred: Int): Any = {
       preferredId = preferred
       val id = idToDequeue()
       dequeue(id)
@@ -235,7 +235,7 @@ private[akka] abstract class FanIn(val settings: MaterializerSettings, val input
     throw new IllegalStateException("This actor cannot be restarted")
   }
 
-  def receive = inputBunch.subreceive orElse primaryOutputs.subreceive
+  def receive = inputBunch.subreceive.orElse[Any, Unit](primaryOutputs.subreceive)
 
 }
 
@@ -279,7 +279,7 @@ private[akka] final class UnfairMerge(_settings: MaterializerSettings,
   inputBunch.markAllInputs()
 
   nextPhase(TransferPhase(inputBunch.AnyOfMarkedInputs && primaryOutputs.NeedsDemand) { () ⇒
-    val elem = inputBunch.dequeueAndPrefer(preferred)
+    val elem = inputBunch.dequeuePrefering(preferred)
     primaryOutputs.enqueueOutputElement(elem)
   })
 }
@@ -288,8 +288,8 @@ private[akka] final class UnfairMerge(_settings: MaterializerSettings,
  * INTERNAL API
  */
 private[akka] object FlexiMerge {
-  def props[T, P <: FlexiPorts[T]](settings: MaterializerSettings, inputPorts: Vector[InPort[_]], mergeLogic: MergeLogic[T]): Props =
-    Props(new FlexiMergeImpl(settings, inputPorts, mergeLogic))
+  def props[T, P <: Ports](settings: MaterializerSettings, ports: P, mergeLogic: MergeLogic[T]): Props =
+    Props(new FlexiMergeImpl(settings, ports, mergeLogic))
 }
 
 /**
