@@ -45,30 +45,12 @@ final class Sink[-In, Mat](m: StreamLayout.Module, val inlet: Graphs.InPort[In])
 
 }
 
-object Sink {
+object Sink extends SinkApply {
+
   /**
    * Helper to create [[Sink]] from `Subscriber`.
    */
   def apply[T](subscriber: Subscriber[T]): Sink[T, Unit] = new Sink(new SubscriberSink(subscriber))
-
-  //  /**
-  //   * Creates a `Sink` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
-  //   * returns the `UndefinedSource`.
-  //   */
-  //  def apply[T]()(block: FlowGraphBuilder ⇒ UndefinedSource[T]): Sink[T] =
-  //    createSinkFromBuilder(new FlowGraphBuilder(), block)
-  //
-  //  /**
-  //   * Creates a `Sink` by using a FlowGraphBuilder from this [[PartialFlowGraph]] on a block that expects
-  //   * a [[FlowGraphBuilder]] and returns the `UndefinedSource`.
-  //   */
-  //  def apply[T](graph: PartialFlowGraph)(block: FlowGraphBuilder ⇒ UndefinedSource[T]): Sink[T] =
-  //    createSinkFromBuilder(new FlowGraphBuilder(graph), block)
-  //
-  //  private def createSinkFromBuilder[T](builder: FlowGraphBuilder, block: FlowGraphBuilder ⇒ UndefinedSource[T]): Sink[T] = {
-  //    val in = block(builder)
-  //    builder.partialBuild().toSink(in)
-  //  }
 
   /**
    * Creates a `Sink` that is materialized to an [[akka.actor.ActorRef]] which points to an Actor
@@ -80,7 +62,7 @@ object Sink {
   /**
    * A `Sink` that immediately cancels its upstream after materialization.
    */
-  def cancelled[T]: Sink[T, Unit] = new Sink(new CancelSink)
+  def cancelled[T]: Sink[T, Unit] = new Sink[Any, Unit](new CancelSink)
 
   /**
    * A `Sink` that materializes into a `Future` of the first value received.

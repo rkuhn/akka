@@ -160,19 +160,6 @@ object Concat {
 object FlowGraph extends FlowGraphApply {
   import akka.stream.scaladsl.Graphs._
 
-  def apply[Mat](g1: Graph[Ports, Mat])(buildBlock: FlowGraphBuilder ⇒ (g1.Ports) ⇒ Unit): RunnableFlow[Mat] = {
-    val builder = new FlowGraphBuilder
-    val p1 = builder.importGraph(g1, (_: Any, m1: Mat) ⇒ m1)
-    buildBlock(builder)(p1)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
-  }
-
-  def apply(buildBlock: (FlowGraphBuilder) ⇒ Unit): RunnableFlow[Unit] = {
-    val builder = new FlowGraphBuilder
-    buildBlock(builder)
-    builder.buildRunnable()
-  }
-
   class FlowGraphBuilder private[stream] () {
     private var moduleInProgress: Module = EmptyModule
     private var inPortMapping = Map.empty[StreamLayout.InPort, StreamLayout.InPort]
@@ -198,6 +185,13 @@ object FlowGraph extends FlowGraphApply {
 
     def addEdge[T](from: OutPort[T], to: InPort[T]): Unit = {
       moduleInProgress = moduleInProgress.connect(resolvePort(from), resolvePort(to))
+    }
+
+    def add[T, P <: Ports](merge: FlexiMerge[T, P]): P = {
+      val p = merge.ports.deepCopy().asInstanceOf[P]
+      val module = new FlexiMergeModule(p, merge.createMergeLogic)
+      addModule(module)
+      p
     }
 
     // Assumes that junction is a new instance, so no copying needed here
@@ -260,13 +254,13 @@ object FlowGraph extends FlowGraphApply {
       moduleInProgress = moduleInProgress.connect(resolvePort(port), op.inPort)
     }
 
-    private[stream] def buildRunnable(): RunnableFlow[Unit] = {
+    private[stream] def buildRunnable[Mat](): RunnableFlow[Mat] = {
       if (!moduleInProgress.isRunnable) {
         throw new IllegalStateException(
           "Cannot build the RunnableFlow because there are unconnected ports: " +
             (moduleInProgress.outPorts ++ moduleInProgress.inPorts).mkString(", "))
       }
-      new RunnableFlow[Unit](moduleInProgress)
+      new RunnableFlow(moduleInProgress)
     }
 
     private[stream] def buildSource[T, Mat](outport: OutPort[T]): Source[T, Mat] = {
@@ -278,6 +272,28 @@ object FlowGraph extends FlowGraphApply {
       if (moduleInProgress.outPorts.head != outport)
         throw new IllegalStateException(s"provided OutPort $outport does not equal the module’s open OutPort ${moduleInProgress.outPorts.head}")
       new Source(moduleInProgress, outport)
+    }
+
+    private[stream] def buildFlow[In, Out, Mat](inlet: InPort[In], outlet: OutPort[Out]): Flow[In, Out, Mat] = {
+      if (!moduleInProgress.isFlow)
+        throw new IllegalStateException(
+          s"Cannot build Flow with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.inPorts.mkString(",")})")
+      if (moduleInProgress.outPorts.head != outlet)
+        throw new IllegalStateException(s"provided OutPort $outlet does not equal the module’s open OutPort ${moduleInProgress.outPorts.head}")
+      if (moduleInProgress.inPorts.head != inlet)
+        throw new IllegalStateException(s"provided InPort $inlet does not equal the module’s open InPort ${moduleInProgress.inPorts.head}")
+      new Flow(moduleInProgress, inlet, outlet)
+    }
+
+    private[stream] def buildSink[T, Mat](inport: InPort[T]): Sink[T, Mat] = {
+      if (moduleInProgress.isRunnable)
+        throw new IllegalStateException("Cannot build the Sink since no ports remain open")
+      if (!moduleInProgress.isSink)
+        throw new IllegalStateException(
+          s"Cannot build Sink with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.inPorts.mkString(",")})")
+      if (moduleInProgress.inPorts.head != inport)
+        throw new IllegalStateException(s"provided InPort $inport does not equal the module’s open InPort ${moduleInProgress.inPorts.head}")
+      new Sink(moduleInProgress, inport)
     }
 
     private[stream] def module: Module = moduleInProgress

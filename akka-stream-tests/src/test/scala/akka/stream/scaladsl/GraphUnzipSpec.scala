@@ -20,7 +20,7 @@ class GraphUnzipSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val unzip = Unzip[Int, String]
         Source(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in
         unzip.right ~> Flow[String].buffer(16, OverflowStrategy.backpressure) ~> Sink(c2)
@@ -49,7 +49,7 @@ class GraphUnzipSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val unzip = Unzip[Int, String]
         Source(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in
         unzip.left ~> Sink(c1)
@@ -70,7 +70,7 @@ class GraphUnzipSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val unzip = Unzip[Int, String]
         Source(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in
         unzip.left ~> Sink(c1)
@@ -92,7 +92,7 @@ class GraphUnzipSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val unzip = Unzip[Int, String]
         Source(p1.getPublisher) ~> unzip.in
         unzip.left ~> Sink(c1)

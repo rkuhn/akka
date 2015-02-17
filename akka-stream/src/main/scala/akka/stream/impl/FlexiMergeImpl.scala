@@ -23,7 +23,7 @@ private[akka] class FlexiMergeImpl[T, P <: Ports](
   private type CompletionT = mergeLogic.CompletionHandling
   private type InP = StreamLayout.InPort
 
-  val inputMapping: Map[Int, InP] = ports.inlets.zipWithIndex.map(_.swap)(breakOut)
+  val inputMapping: Array[InP] = ports.inlets.toArray
   val indexOf: Map[InP, Int] = ports.inlets.zipWithIndex.toMap
 
   private var behavior: StateT = _

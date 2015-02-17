@@ -16,13 +16,6 @@ import akka.stream.impl.StreamLayout
 
 object FlexiMerge {
 
-  def apply[T, P <: Ports](ports: P)(createMergeLogic: P ⇒ MergeLogic[T])(implicit b: FlowGraphBuilder): P = {
-    val p = ports.deepCopy().asInstanceOf[P]
-    val module = new FlexiMergeModule(p, createMergeLogic)
-    b.addModule(module)
-    p
-  }
-
   private type OutP = StreamLayout.OutPort
   private type InP = StreamLayout.InPort
 
@@ -72,8 +65,8 @@ object FlexiMerge {
   final case class ReadPreferred[T](preferred: InPort[T], secondaries: InPort[T]*) extends ReadCondition[T]
 
   object ReadAll {
-    def apply[T](inputs: immutable.Seq[InPort[T]]): ReadAll[T] = new ReadAll(ReadAllInputs, inputs: _*)
-    def apply[T](inputs: InPort[T]*): ReadAll[T] = new ReadAll(ReadAllInputs, inputs: _*)
+    def apply[T](inputs: immutable.Seq[InPort[T]]): ReadAll[T] = new ReadAll(new ReadAllInputs(_), inputs: _*)
+    def apply[T](inputs: InPort[T]*): ReadAll[T] = new ReadAll(new ReadAllInputs(_), inputs: _*)
   }
 
   /**
@@ -95,7 +88,7 @@ object FlexiMerge {
   /**
    * Provides typesafe accessors to values from inputs supplied to [[ReadAll]].
    */
-  final case class ReadAllInputs(map: immutable.Map[InP, Any]) extends ReadAllInputsBase {
+  final class ReadAllInputs(map: immutable.Map[InP, Any]) extends ReadAllInputsBase {
     def apply[T](input: InPort[T]): T = map(input).asInstanceOf[T]
     def get[T](input: InPort[T]): Option[T] = map.get(input).asInstanceOf[Option[T]]
     def getOrElse[T](input: InPort[T], default: ⇒ T): T = map.getOrElse(input, default).asInstanceOf[T]
@@ -230,15 +223,12 @@ object FlexiMerge {
  * @param ports ports that this junction exposes
  * @param attributes optional attributes for this vertex
  */
-abstract class FlexiMerge[Out, P <: Ports](ports: P, attributes: OperationAttributes) {
+abstract class FlexiMerge[Out, P <: Ports](private[stream] val ports: P, attributes: OperationAttributes) {
 
   type PortT = P
   type InP = StreamLayout.InPort
 
   def createMergeLogic(p: P): MergeLogic[Out]
-
-  // TODO this name is not yet good
-  def add(implicit b: FlowGraphBuilder): P = FlexiMerge(ports)(createMergeLogic)
 
   override def toString = attributes.nameLifted match {
     case Some(n) ⇒ n

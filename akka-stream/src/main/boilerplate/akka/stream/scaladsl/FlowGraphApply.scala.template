@@ -8,12 +8,17 @@ import akka.stream.scaladsl.Graphs.{ Graph, Ports }
 
 trait FlowGraphApply {
 
-
-  def apply[Mat, M1](g1: Graph[Ports, M1])(combineMat: (M1) ⇒ Mat)(buildBlock: FlowGraphBuilder ⇒ (g1.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+  def apply()(buildBlock: (FlowGraphBuilder) ⇒ Unit): RunnableFlow[Unit] = {
     val builder = new FlowGraphBuilder
-    val p1 = builder.importGraph(g1, (_: Any, m1: M1) ⇒ combineMat(m1))
+    buildBlock(builder)
+    builder.buildRunnable()
+  }
+
+  def apply[Mat](g1: Graph[Ports, Mat])(buildBlock: FlowGraphBuilder ⇒ (g1.Ports) ⇒ Unit): RunnableFlow[Mat] = {
+    val builder = new FlowGraphBuilder
+    val p1 = builder.importGraph(g1, Keep.right)
     buildBlock(builder)(p1)
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+    builder.buildRunnable()
   }
 
   [2..#def apply[Mat, [#M1#]]([#g1: Graph[Ports, M1]#])(combineMat: ([#M1#]) ⇒ Mat)(buildBlock: FlowGraphBuilder ⇒ ([#g1.Ports#]) ⇒ Unit): RunnableFlow[Mat] = {
@@ -23,7 +28,7 @@ trait FlowGraphApply {
     [2..#val p1 = builder.importGraph(g1, (f: M1 ⇒ Any, m1: M1) ⇒ f(m1))#
     ]
     buildBlock(builder)([#p1#])
-    builder.buildRunnable().asInstanceOf[RunnableFlow[Mat]]
+    builder.buildRunnable()
   }#
 
   ]

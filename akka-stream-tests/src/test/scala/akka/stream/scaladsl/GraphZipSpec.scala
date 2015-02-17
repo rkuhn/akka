@@ -26,7 +26,7 @@ class GraphZipSpec extends TwoStreamsSetup {
     "work in the happy case" in {
       val probe = StreamTestKit.SubscriberProbe[(Int, String)]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val zip = Zip[Int, String]()
 
         Source(1 to 4) ~> zip.left
