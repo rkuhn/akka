@@ -35,7 +35,7 @@ class GraphMergeSpec extends TwoStreamsSetup {
       val source3 = Source(List[Int]())
       val probe = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val m1 = Merge[Int](2)
         val m2 = Merge[Int](2)
 
@@ -69,7 +69,7 @@ class GraphMergeSpec extends TwoStreamsSetup {
 
       val probe = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val merge = Merge[Int](6)
 
         source1 ~> merge.in(0)

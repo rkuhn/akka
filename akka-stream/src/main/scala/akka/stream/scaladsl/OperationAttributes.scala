@@ -66,7 +66,7 @@ object OperationAttributes {
   private[OperationAttributes] def apply(attribute: Attribute): OperationAttributes =
     apply(List(attribute))
 
-  private[akka] val none: OperationAttributes = OperationAttributes()
+  val none: OperationAttributes = OperationAttributes()
 
   /**
    * Specifies the name of the operation.

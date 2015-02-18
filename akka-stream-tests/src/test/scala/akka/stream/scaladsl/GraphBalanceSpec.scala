@@ -22,7 +22,7 @@ class GraphBalanceSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val balance = Balance[Int](2)
         Source(List(1, 2, 3)) ~> balance.in
         balance.out(0) ~> Sink(c1)
@@ -45,7 +45,7 @@ class GraphBalanceSpec extends AkkaSpec {
 
     "support waiting for demand from all downstream subscriptions" in {
       val s1 = StreamTestKit.SubscriberProbe[Int]()
-      val p2 = FlowGraph(Sink.publisher[Int])(identity) { implicit b ⇒
+      val p2 = FlowGraph(Sink.publisher[Int]) { implicit b ⇒
         p2Sink ⇒
           val balance = Balance[Int](2, waitForAllDownstreams = true)
           Source(List(1, 2, 3)) ~> balance.in
@@ -145,7 +145,7 @@ class GraphBalanceSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val balance = Balance[Int](2)
         Source(List(1, 2, 3)) ~> balance.in
         balance.out(0) ~> Sink(c1)
@@ -166,7 +166,7 @@ class GraphBalanceSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val balance = Balance[Int](2)
         Source(List(1, 2, 3)) ~> balance.in
         balance.out(0) ~> Sink(c1)
@@ -188,7 +188,7 @@ class GraphBalanceSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph { implicit b ⇒
+      FlowGraph() { implicit b ⇒
         val balance = Balance[Int](2)
         Source(p1.getPublisher) ~> balance.in
         balance.out(0) ~> Sink(c1)

@@ -138,7 +138,7 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
 
 }
 
-object Flow {
+object Flow extends FlowApply {
 
   /**
    * Creates an empty `Flow` of type `T`
@@ -154,23 +154,6 @@ object Flow {
    * Example usage: `Flow[Int]`
    */
   def apply[T]: Flow[T, T, Unit] = empty
-
-  /**
-   * Creates a `Flow` by using an empty [[FlowGraphBuilder]] on a block that expects a [[FlowGraphBuilder]] and
-   * returns the `UndefinedSource` and `UndefinedSink`.
-   */
-  def apply[I, O]()(block: FlowGraphBuilder ⇒ (Graphs.InPort[I], Graphs.OutPort[O])): Flow[I, O, Unit] = {
-    val builder = new FlowGraphBuilder
-    val (inlet, outlet) = block(builder)
-    val module = builder.module
-    if (!module.isFlow)
-      throw new IllegalStateException("The flow must have exactly one unconnected input and output ports")
-    if (!module.outPorts(outlet))
-      throw new IllegalStateException(s"The output port must be unconnected but it was connected to ${module.downstreams(outlet)}")
-    if (!module.inPorts(inlet))
-      throw new IllegalStateException(s"The input port must be unconnected but it was connected to ${module.upstreams(inlet)}")
-    new Flow(module, inlet, outlet)
-  }
 
 }
 
@@ -193,7 +176,7 @@ case class RunnableFlow[Mat](private[stream] val module: StreamLayout.Module) {
 trait FlowOps[+Out, +Mat] {
   import akka.stream.impl.Stages._
   import FlowOps._
-  type Repr[+O, +Mat] <: FlowOps[O, Mat]
+  type Repr[+O, +M] <: FlowOps[O, M]
 
   /**
    * Transform this stream by applying the given function to each of the elements
@@ -405,7 +388,7 @@ trait FlowOps[+Out, +Mat] {
   def transform[T](mkStage: () ⇒ Stage[Out, T]): Repr[T, Mat] =
     andThen(StageFactory(mkStage))
 
-  private[akka] def transformMaterializing[T, Mat](mkStageAndMaterialized: () ⇒ (Stage[Out, T], Mat)): Repr[T, Mat] =
+  private[akka] def transformMaterializing[T, M](mkStageAndMaterialized: () ⇒ (Stage[Out, T], M)): Repr[T, M] =
     andThenMat(MaterializingStageFactory(mkStageAndMaterialized))
 
   /**

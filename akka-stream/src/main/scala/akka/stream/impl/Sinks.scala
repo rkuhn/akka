@@ -34,7 +34,7 @@ trait SinkModule[-In, Mat] extends StreamLayout.Module {
   override def downstreams: Map[OutPort, InPort] = Map.empty
   override def upstreams: Map[InPort, OutPort] = Map.empty
 
-  val inPort: Graphs.InPort[In] = new Graphs.InPort[In]("FIXME")
+  val inPort: Graphs.InPort[In] = new Graphs.InPort[In]("Sink.in")
   override def inPorts: Set[InPort] = Set(inPort)
   override def outPorts: Set[OutPort] = Set.empty
 

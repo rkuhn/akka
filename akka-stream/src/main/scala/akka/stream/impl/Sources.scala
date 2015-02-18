@@ -26,7 +26,7 @@ trait SourceModule[+Out, +Mat] extends Module {
   override def upstreams: Map[IP, OP] = Map.empty
   override def downstreams: Map[OP, IP] = Map.empty
   override def inPorts: Set[IP] = Set.empty
-  val outPort: Graphs.OutPort[Out] = new Graphs.OutPort[Out]("FIXME")
+  val outPort: Graphs.OutPort[Out] = new Graphs.OutPort[Out]("Source.out")
   override val outPorts: Set[OP] = Set(outPort)
 
   /**

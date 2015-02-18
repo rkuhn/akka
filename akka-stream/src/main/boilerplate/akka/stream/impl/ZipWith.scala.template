@@ -12,7 +12,7 @@ import akka.stream.scaladsl.Graphs.{ InPort, OutPort, Ports }
 
 [2..19#/** INTERNAL API */
 private[akka] final class Zip1With(_settings: MaterializerSettings, f: Function1[[#Any#], Any])
-  extends FanIn(_settings, inputPorts = 1) {
+  extends FanIn(_settings, inputCount = 1) {
 
   inputBunch.markAllInputs()
 

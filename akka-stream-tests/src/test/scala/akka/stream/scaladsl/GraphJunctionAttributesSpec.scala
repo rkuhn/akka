@@ -27,20 +27,17 @@ class GraphJunctionAttributesSpec extends AkkaSpec {
       case object FastTick extends FastTick
 
       val source = Source[(SlowTick, List[FastTick])]() { implicit b ⇒
-        import FlowGraphImplicits._
+        import FlowGraph.Implicits._
 
         val slow = Source(0.seconds, 100.millis, SlowTick)
         val fast = Source(0.seconds, 10.millis, FastTick)
-        val sink = UndefinedSink[(SlowTick, List[FastTick])]
 
         val zip = Zip[SlowTick, List[FastTick]](inputBuffer(1, 1))
 
         slow ~> zip.left
         fast.conflate(tick ⇒ List(tick)) { case (list, tick) ⇒ tick :: list } ~> zip.right
 
-        zip.out ~> sink
-
-        sink
+        zip.out
       }
 
       val future = source.grouped(10).runWith(Sink.head)

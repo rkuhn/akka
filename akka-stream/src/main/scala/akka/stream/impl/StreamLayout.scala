@@ -152,6 +152,12 @@ private[akka] object StreamLayout {
         that.copy(module = that.module.withAttributes(attributes))
       })
 
+    override def toString = {
+      "\nModules: \n" + subModules.toSeq.map(m ⇒ "   " + m.getClass.getName).mkString("\n") + "\n" +
+        "Downstreams: \n" + downstreams.map { case (in, out) ⇒ s"   $in -> $out" }.mkString("\n") + "\n" +
+        "Upstreams: \n" + upstreams.map { case (out, in) ⇒ s"   $out -> $in" }.mkString("\n")
+    }
+
   }
 }
 

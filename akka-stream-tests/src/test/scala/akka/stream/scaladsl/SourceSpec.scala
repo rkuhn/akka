@@ -5,10 +5,12 @@ package akka.stream.scaladsl
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
-
 import akka.stream.FlowMaterializer
 import akka.stream.testkit.AkkaSpec
 import akka.stream.testkit.StreamTestKit
+import akka.stream.impl.PublisherSource
+import akka.stream.testkit.StreamTestKit.PublisherProbe
+import akka.stream.testkit.StreamTestKit.SubscriberProbe
 
 class SourceSpec extends AkkaSpec {
 
@@ -68,6 +70,41 @@ class SourceSpec extends AkkaSpec {
       val c2 = StreamTestKit.SubscriberProbe[Int]()
       p.subscribe(c2)
       c2.expectError(ex)
+    }
+  }
+
+  "Composite Source" must {
+    "merge from many inputs" in {
+      val probes = Seq.fill(5)(PublisherProbe[Int])
+      val source = Source.subscriber[Int]
+      val out = SubscriberProbe[Int]
+
+      val s = Source(source, source, source, source, source)(Seq(_, _, _, _, _)) { implicit b ⇒
+        (i0, i1, i2, i3, i4) ⇒
+          import FlowGraph.Implicits._
+          val m = Merge[Int](5)
+          i0.outlet ~> m.in(0)
+          i1.outlet ~> m.in(1)
+          i2.outlet ~> m.in(2)
+          i3.outlet ~> m.in(3)
+          i4.outlet ~> m.in(4)
+          m.out
+      }.to(Sink(out), Keep.left).run()
+
+      for (i ← 0 to 4) probes(i).subscribe(s(i))
+      val sub = out.expectSubscription()
+      sub.request(10)
+
+      val subs = for (i ← 0 to 4) {
+        val s = probes(i).expectSubscription()
+        s.expectRequest()
+        s.sendNext(i)
+        s.sendComplete()
+      }
+
+      val gotten = for (_ ← 0 to 4) yield out.expectNext()
+      gotten.toSet should ===(Set(0, 1, 2, 3, 4))
+      out.expectComplete()
     }
   }
 

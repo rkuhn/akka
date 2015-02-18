@@ -2,6 +2,7 @@ package akka.stream.impl
 
 import akka.stream.impl.StreamLayout.{ Mapping, OutPort, InPort, Module }
 import akka.stream.scaladsl.{ Graphs, OperationAttributes }
+import akka.stream.scaladsl.FlexiMerge.MergeLogic
 
 object Junctions {
 
@@ -78,7 +79,24 @@ object Junctions {
 
       Mapping(newMerge, (ins.zip(newMerge.ins) :+ (preferred -> newMerge.preferred)).toMap, Map(out -> newMerge.out))
     }
+  }
 
+  final case class FlexiMergeModule[T, P <: Graphs.Ports](
+    ports: P,
+    flexi: P ⇒ MergeLogic[T],
+    override val attributes: OperationAttributes = name("flexiMerge")) extends FaninModule {
+
+    require(ports.outlets.size == 1, "FlexiMerge can have only one output port")
+
+    override val inPorts: Set[InPort] = ports.inlets.toSet
+    override val outPorts: Set[OutPort] = ports.outlets.toSet
+
+    override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)
+
+    override def carbonCopy: () ⇒ Mapping = () ⇒ {
+      val newModule = new FlexiMergeModule(ports.deepCopy().asInstanceOf[P], flexi, attributes)
+      Mapping(newModule, Map(ports.inlets.zip(newModule.ports.inlets): _*), Map(ports.outlets.head → newModule.ports.outlets.head))
+    }
   }
 
   final case class BalanceModule[T](

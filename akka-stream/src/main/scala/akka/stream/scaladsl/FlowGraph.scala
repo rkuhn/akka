@@ -101,75 +101,20 @@ object Zip {
       ZipPorts(new InPort(left.toString), new InPort(right.toString), new OutPort(out.toString))
   }
 
-  def apply[A, B](implicit b: FlowGraphBuilder): ZipPorts[A, B] = {
+  def apply[A, B](attributes: OperationAttributes = OperationAttributes.none)(implicit b: FlowGraphBuilder): ZipPorts[A, B] = {
     val zipWithModule = new ZipWith2Module(
       new InPort[A]("Zip.left"),
       new InPort[B]("Zip.right"),
       new OutPort[(A, B)]("Zip.out"),
-      (a: A, b: B) ⇒ (a, b))
+      (a: A, b: B) ⇒ (a, b),
+      attributes and OperationAttributes.name("Zip"))
     b.addModule(zipWithModule)
     ZipPorts(zipWithModule.in1, zipWithModule.in2, zipWithModule.out)
   }
 
 }
 
-object ZipWith {
-
-  def apply[A1, A2, O](zipper: (A1, A2) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith2(zipper)
-
-  def apply[A1, A2, A3, O](zipper: (A1, A2, A3) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith3(zipper)
-
-  def apply[A1, A2, A3, A4, O](zipper: (A1, A2, A3, A4) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith4(zipper)
-
-  def apply[A1, A2, A3, A4, A5, O](zipper: (A1, A2, A3, A4, A5) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith5(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, O](zipper: (A1, A2, A3, A4, A5, A6) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith6(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, O](zipper: (A1, A2, A3, A4, A5, A6, A7) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith7(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith8(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith9(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith10(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith11(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith12(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith13(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith14(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith15(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith16(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith17(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith18(zipper)
-
-  def apply[A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, O](zipper: (A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19) ⇒ O)(implicit b: FlowGraphBuilder) =
-    ZipWith19(zipper)
-
-}
+object ZipWith extends ZipWithApply
 
 object Unzip {
 
@@ -215,12 +160,6 @@ object Concat {
 object FlowGraph extends FlowGraphApply {
   import akka.stream.scaladsl.Graphs._
 
-  def apply(buildBlock: (FlowGraphBuilder) ⇒ Unit): RunnableFlow[Unit] = {
-    val builder = new FlowGraphBuilder
-    buildBlock(builder)
-    builder.buildRunnable()
-  }
-
   class FlowGraphBuilder private[stream] () {
     private var moduleInProgress: Module = EmptyModule
     private var inPortMapping = Map.empty[StreamLayout.InPort, StreamLayout.InPort]
@@ -246,6 +185,13 @@ object FlowGraph extends FlowGraphApply {
 
     def addEdge[T](from: OutPort[T], to: InPort[T]): Unit = {
       moduleInProgress = moduleInProgress.connect(resolvePort(from), resolvePort(to))
+    }
+
+    def add[T, P <: Ports](merge: FlexiMerge[T, P]): P = {
+      val p = merge.ports.deepCopy().asInstanceOf[P]
+      val module = new FlexiMergeModule(p, merge.createMergeLogic)
+      addModule(module)
+      p
     }
 
     // Assumes that junction is a new instance, so no copying needed here
@@ -290,7 +236,7 @@ object FlowGraph extends FlowGraphApply {
       val moduleCopy = graph.module.carbonCopy()
       moduleInProgress = moduleInProgress.grow(
         moduleCopy.module,
-        (m1: Any, m2: Any) ⇒ combine.asInstanceOf[(Any, Any) ⇒ Any](m1, m2))
+        combine.asInstanceOf[(Any, Any) ⇒ Any])
 
       remapPorts(graph, moduleCopy)
     }
@@ -308,15 +254,15 @@ object FlowGraph extends FlowGraphApply {
       moduleInProgress = moduleInProgress.connect(resolvePort(port), op.inPort)
     }
 
-    private[stream] def buildRunnable(): RunnableFlow[Unit] = {
+    private[stream] def buildRunnable[Mat](): RunnableFlow[Mat] = {
       if (!moduleInProgress.isRunnable) {
         throw new IllegalStateException(
           "Cannot build the RunnableFlow because there are unconnected ports: " +
-            (moduleInProgress.outPorts ++ moduleInProgress.inPorts).mkString(","))
+            (moduleInProgress.outPorts ++ moduleInProgress.inPorts).mkString(", "))
       }
-      new RunnableFlow[Unit](moduleInProgress)
+      new RunnableFlow(moduleInProgress)
     }
-    
+
     private[stream] def buildSource[T, Mat](outport: OutPort[T]): Source[T, Mat] = {
       if (moduleInProgress.isRunnable)
         throw new IllegalStateException("Cannot build the Source since no ports remain open")
@@ -326,6 +272,28 @@ object FlowGraph extends FlowGraphApply {
       if (moduleInProgress.outPorts.head != outport)
         throw new IllegalStateException(s"provided OutPort $outport does not equal the module’s open OutPort ${moduleInProgress.outPorts.head}")
       new Source(moduleInProgress, outport)
+    }
+
+    private[stream] def buildFlow[In, Out, Mat](inlet: InPort[In], outlet: OutPort[Out]): Flow[In, Out, Mat] = {
+      if (!moduleInProgress.isFlow)
+        throw new IllegalStateException(
+          s"Cannot build Flow with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.inPorts.mkString(",")})")
+      if (moduleInProgress.outPorts.head != outlet)
+        throw new IllegalStateException(s"provided OutPort $outlet does not equal the module’s open OutPort ${moduleInProgress.outPorts.head}")
+      if (moduleInProgress.inPorts.head != inlet)
+        throw new IllegalStateException(s"provided InPort $inlet does not equal the module’s open InPort ${moduleInProgress.inPorts.head}")
+      new Flow(moduleInProgress, inlet, outlet)
+    }
+
+    private[stream] def buildSink[T, Mat](inport: InPort[T]): Sink[T, Mat] = {
+      if (moduleInProgress.isRunnable)
+        throw new IllegalStateException("Cannot build the Sink since no ports remain open")
+      if (!moduleInProgress.isSink)
+        throw new IllegalStateException(
+          s"Cannot build Sink with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.inPorts.mkString(",")})")
+      if (moduleInProgress.inPorts.head != inport)
+        throw new IllegalStateException(s"provided InPort $inport does not equal the module’s open InPort ${moduleInProgress.inPorts.head}")
+      new Sink(moduleInProgress, inport)
     }
 
     private[stream] def module: Module = moduleInProgress

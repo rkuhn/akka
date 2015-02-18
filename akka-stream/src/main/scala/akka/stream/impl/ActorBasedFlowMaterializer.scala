@@ -95,22 +95,31 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
       private def materializeJunction(op: JunctionModule, effectiveAttributes: OperationAttributes): Unit = {
         op match {
           case fanin: FaninModule ⇒
-            val (props, ins, out) = fanin match {
+            val (props, inputs, output) = fanin match {
               case MergeModule(ins, out, _) ⇒
                 (FairMerge.props(effectiveAttributes.settings(settings), ins.size), ins, out)
+
+              case f: FlexiMergeModule[t, p] ⇒
+                val flexi = f.flexi(f.ports)
+                (FlexiMerge.props(effectiveAttributes.settings(settings), f.ports, flexi), f.ports.inlets, f.ports.outlets.head)
+              // TODO each materialization needs its own logic
+
               case MergePreferredModule(preferred, ins, out, _) ⇒
                 (UnfairMerge.props(effectiveAttributes.settings(settings), ins.size + 1), preferred +: ins, out)
+
               case ConcatModule(first, second, out, _) ⇒
                 (Concat.props(effectiveAttributes.settings(settings)), List(first, second), out)
-              case zip: ZipWithModule ⇒ (zip.props(settings), zip.ins, zip.outPorts.head)
+
+              case zip: ZipWithModule ⇒
+                (zip.props(effectiveAttributes.settings(settings)), zip.ins, zip.outPorts.head)
             }
             val impl = actorOf(props, stageName(effectiveAttributes), effectiveAttributes.settings(settings).dispatcher)
             val publisher = new ActorPublisher[Any](impl)
             impl ! ExposedPublisher(publisher)
-            for ((in, id) ← ins.zipWithIndex) {
+            for ((in, id) ← inputs.zipWithIndex) {
               assignPort(in, FanIn.SubInput[Any](impl, id))
             }
-            assignPort(out, publisher)
+            assignPort(output, publisher)
 
           case fanout: FanoutModule ⇒
             val (props, in, outs) = fanout match {
