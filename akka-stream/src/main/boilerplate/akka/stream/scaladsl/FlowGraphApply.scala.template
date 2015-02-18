@@ -5,6 +5,7 @@ package akka.stream.scaladsl
 
 import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
 import akka.stream.scaladsl.Graphs.{ Graph, Ports }
+import akka.stream.impl.StreamLayout.Module
 
 trait FlowGraphApply {
 
@@ -21,6 +22,44 @@ trait FlowGraphApply {
     builder.buildRunnable()
   }
 
+  private def checkPartialPorts[P <: Ports](p: P, mod: Module): Unit = {
+    if (p.inlets.toSet != mod.inPorts)
+      throw new IllegalStateException("The input ports in the returned Ports instance must correspond to the unconnected ports")
+    if (p.outlets.toSet != mod.outPorts)
+      throw new IllegalStateException("The output ports in the returned Ports instance must correspond to the unconnected ports")
+  }
+
+  def partial[P <: Ports](buildBlock: FlowGraphBuilder ⇒ P): Graph[P, Unit] = {
+    val builder = new FlowGraphBuilder
+    val p = buildBlock(builder)
+    val mod = builder.module.wrap()
+
+    checkPartialPorts(p, mod)
+
+    new Graph[P, Unit] {
+      override type MaterializedType = Unit
+      override def ports: P = p
+      override private[stream] def module: Module = mod
+    }
+  }
+
+  def partial[P <: Ports, Mat](g1: Graph[Ports, Mat])(buildBlock: FlowGraphBuilder ⇒ (g1.Ports) ⇒ P): Graph[P, Mat] = {
+    val builder = new FlowGraphBuilder
+    val p1 = builder.importGraph(g1, Keep.right)
+    val p = buildBlock(builder)(p1)
+    val mod = builder.module.wrap()
+
+    checkPartialPorts(p, mod)
+
+    new Graph[P, Mat] {
+      override type MaterializedType = Mat
+      override def ports: P = p
+      override private[stream] def module: Module = mod
+    }
+  }
+
+
+
   [2..#def apply[Mat, [#M1#]]([#g1: Graph[Ports, M1]#])(combineMat: ([#M1#]) ⇒ Mat)(buildBlock: FlowGraphBuilder ⇒ ([#g1.Ports#]) ⇒ Unit): RunnableFlow[Mat] = {
     val builder = new FlowGraphBuilder
     val curried = combineMat.curried
@@ -32,5 +71,26 @@ trait FlowGraphApply {
   }#
 
   ]
+
+  [2..#def partial[P <: Ports, Mat, [#M1#]]([#g1: Graph[Ports, M1]#])(combineMat: ([#M1#]) ⇒ Mat)(buildBlock: FlowGraphBuilder ⇒ ([#g1.Ports#]) ⇒ P): Graph[P, Mat] = {
+    val builder = new FlowGraphBuilder
+    val curried = combineMat.curried
+    val p##1 = builder.importGraph(g##1, (_: Any, m##1: M##1) ⇒ curried(m##1))
+    [2..#val p1 = builder.importGraph(g1, (f: M1 ⇒ Any, m1: M1) ⇒ f(m1))#
+    ]
+    val p = buildBlock(builder)([#p1#])
+    val mod = builder.module.wrap()
+
+    checkPartialPorts(p, mod)
+
+    new Graph[P, Mat] {
+      override type MaterializedType = Mat
+      override def ports: P = p
+      override private[stream] def module: Module = mod
+    }
+  }#
+
+  ]
+
 
 }

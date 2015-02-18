@@ -5,8 +5,6 @@ package akka.stream.scaladsl
 
 import akka.stream.impl.{ PublisherSink, SubscriberSource, StreamLayout }
 
-// FIXME rename this file to Materialization.scala
-
 /**
  * Convenience functions for often-encountered purposes like keeping only the
  * left (first) or only the right (second) of two input values.
