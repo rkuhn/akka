@@ -22,10 +22,16 @@ object GraphFlexiRouteSpec {
     import FlexiRoute._
 
     override def createRouteLogic(p: PortT): RouteLogic[T] = new RouteLogic[T] {
+
+      val emitToAnyWithDemand = State[T](DemandFromAny(p)) { (ctx, preferredOutput, element) ⇒
+        ctx.emit(preferredOutput, element)
+        SameState
+      }
+
       // initally, wait for demand from all
       override def initialState = State[T](DemandFromAll(p)) { (ctx, preferredOutput, element) ⇒
         ctx.emit(preferredOutput, element)
-        SameState
+        emitToAnyWithDemand
       }
     }
   }
