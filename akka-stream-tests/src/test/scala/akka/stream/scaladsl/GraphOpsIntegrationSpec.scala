@@ -36,44 +36,6 @@ object GraphOpsIntegrationSpec {
 
   }
 
-  //    object Lego {
-  //      def apply(pipeline: Flow[String, String, _]): Lego = {
-  //        val in = UndefinedSource[String]
-  //        val out = UndefinedSink[ByteString]
-  //        val graph = PartialFlowGraph { implicit builder ⇒
-  //          val balance = Balance[String]
-  //          val merge = Merge[String]
-  //          in ~> Flow[String].map(_.trim) ~> balance
-  //          balance ~> pipeline ~> merge
-  //          balance ~> pipeline ~> merge
-  //          balance ~> pipeline ~> merge
-  //          merge ~> Flow[String].map(_.trim).map(ByteString.fromString) ~> out
-  //        }
-  //        new Lego(in, out, graph)
-  //      }
-  //    }
-
-  //  class Lego private (
-  //    private val in: UndefinedSource[String],
-  //    private val out: UndefinedSink[ByteString],
-  //    private val graph: PartialFlowGraph) {
-  //
-  //    def connect(that: Lego, adapter: Flow[ByteString, String]): Lego = {
-  //      val newGraph = PartialFlowGraph { builder ⇒
-  //        builder.importPartialFlowGraph(this.graph)
-  //        builder.importPartialFlowGraph(that.graph)
-  //        builder.connect(this.out, adapter, that.in)
-  //      }
-  //      new Lego(this.in, that.out, newGraph)
-  //    }
-  //
-  //    def run(source: Source[String], sink: Sink[ByteString])(implicit materializer: FlowMaterializer): Unit =
-  //      FlowGraph(graph) { builder ⇒
-  //        builder.attachSource(in, source)
-  //        builder.attachSink(out, sink)
-  //      }.run()
-  //
-  //  }
 }
 
 class GraphOpsIntegrationSpec extends AkkaSpec {
@@ -198,37 +160,6 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
       s.expectNext(3 * 2)
       s.expectComplete()
     }
-
-    //    "support continued transformation from undefined source/sink" in {
-    //      val input1 = UndefinedSource[Int]
-    //      val output1 = UndefinedSink[Int]
-    //      val output2 = UndefinedSink[String]
-    //      val partial = PartialFlowGraph { implicit builder ⇒
-    //        val bcast = Broadcast[String]
-    //        input1 ~> Flow[Int].map(_.toString) ~> bcast ~> Flow[String].map(_.toInt) ~> output1
-    //        bcast ~> Flow[String].map("elem-" + _) ~> output2
-    //      }
-    //
-    //      val s1 = SubscriberProbe[Int]
-    //      val s2 = SubscriberProbe[String]
-    //      FlowGraph(partial) { builder ⇒
-    //        builder.attachSource(input1, Source(List(0, 1, 2).map(_ + 1)))
-    //        builder.attachSink(output1, Flow[Int].filter(n ⇒ (n % 2) != 0).to(Sink(s1)))
-    //        builder.attachSink(output2, Flow[String].map(_.toUpperCase).to(Sink(s2)))
-    //      }.run()
-    //
-    //      val sub1 = s1.expectSubscription()
-    //      val sub2 = s2.expectSubscription()
-    //      sub1.request(10)
-    //      sub2.request(10)
-    //      s1.expectNext(1)
-    //      s1.expectNext(3)
-    //      s1.expectComplete()
-    //      s2.expectNext("ELEM-1")
-    //      s2.expectNext("ELEM-2")
-    //      s2.expectNext("ELEM-3")
-    //      s2.expectComplete()
-    //    }
 
     "be possible to use as lego bricks" in {
       val shuffler = Shuffle(Flow[Int].map(_ + 1))

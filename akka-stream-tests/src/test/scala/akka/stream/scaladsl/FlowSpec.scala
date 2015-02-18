@@ -40,6 +40,32 @@ class FlowSpec extends AkkaSpec(ConfigFactory.parseString("akka.actor.debug.rece
   val identity: Flow[Any, Any, _] ⇒ Flow[Any, Any, _] = in ⇒ in.map(e ⇒ e)
   val identity2: Flow[Any, Any, _] ⇒ Flow[Any, Any, _] = in ⇒ identity(in)
 
+  class BrokenActorInterpreter(
+    _settings: MaterializerSettings,
+    _ops: Seq[Stage[_, _]],
+    brokenMessage: Any)
+    extends ActorInterpreter(_settings, _ops) {
+
+    import akka.stream.actor.ActorSubscriberMessage._
+
+    override protected[akka] def aroundReceive(receive: Receive, msg: Any) = {
+      msg match {
+        case OnNext(m) if m == brokenMessage ⇒
+          throw new NullPointerException(s"I'm so broken [$m]")
+        case _ ⇒ super.aroundReceive(receive, msg)
+      }
+    }
+  }
+
+  val faultyFlow: Flow[Any, Any, _] ⇒ Flow[Any, Any, _] = in ⇒ in.andThenMat { () ⇒
+    val props = Props(new BrokenActorInterpreter(settings, List(fusing.Map { x: Any ⇒ x }), "a3"))
+      .withDispatcher("akka.test.stream-dispatcher")
+    val processor = ActorProcessorFactory[Any, Any](system.actorOf(
+      props,
+      "borken-stage-actor"))
+    (processor, ())
+  }
+
   val toPublisher: (Source[Any, _], FlowMaterializer) ⇒ Publisher[Any] =
     (f, m) ⇒ f.runWith(Sink.publisher)(m)
 
@@ -502,54 +528,57 @@ class FlowSpec extends AkkaSpec(ConfigFactory.parseString("akka.actor.debug.rece
     }
   }
 
-  //  "A broken Flow" must {
-  //    "cancel upstream and call onError on current and future downstream subscribers if an internal error occurs" in {
-  //      new ChainSetup(faultyFlow, settings.copy(initialInputBufferSize = 1), toFanoutPublisher(initialBufferSize = 1, maximumBufferSize = 16)) {
-  //
-  //        def checkError(sprobe: StreamTestKit.SubscriberProbe[Any]): Unit = {
-  //          val error = sprobe.expectError()
-  //          error.isInstanceOf[IllegalStateException] should be(true)
-  //          error.getMessage should be("Processor actor terminated abruptly")
-  //        }
-  //
-  //        val downstream2 = StreamTestKit.SubscriberProbe[Any]()
-  //        publisher.subscribe(downstream2)
-  //        val downstream2Subscription = downstream2.expectSubscription()
-  //
-  //        downstreamSubscription.request(5)
-  //        downstream2Subscription.request(5)
-  //        upstream.expectRequest(upstreamSubscription, 1)
-  //        upstreamSubscription.sendNext("a1")
-  //        downstream.expectNext("a1")
-  //        downstream2.expectNext("a1")
-  //
-  //        upstream.expectRequest(upstreamSubscription, 1)
-  //        upstreamSubscription.sendNext("a2")
-  //        downstream.expectNext("a2")
-  //        downstream2.expectNext("a2")
-  //
-  //        val filters = immutable.Seq(EventFilter[NullPointerException](), EventFilter[IllegalStateException]())
-  //        try {
-  //          system.eventStream.publish(Mute(filters))
-  //
-  //          upstream.expectRequest(upstreamSubscription, 1)
-  //          upstreamSubscription.sendNext("a3")
-  //          upstreamSubscription.expectCancellation()
-  //
-  //          // IllegalStateException terminated abruptly
-  //          checkError(downstream)
-  //          checkError(downstream2)
-  //
-  //          val downstream3 = StreamTestKit.SubscriberProbe[Any]()
-  //          publisher.subscribe(downstream3)
-  //          // IllegalStateException terminated abruptly
-  //          checkError(downstream3)
-  //        } finally {
-  //          system.eventStream.publish(UnMute(filters))
-  //        }
-  //      }
-  //    }
-  //  }
+  "A broken Flow" must {
+    "cancel upstream and call onError on current and future downstream subscribers if an internal error occurs" in {
+      new ChainSetup(faultyFlow, settings.copy(initialInputBufferSize = 1), toFanoutPublisher(initialBufferSize = 1, maximumBufferSize = 16)) {
+
+        def checkError(sprobe: StreamTestKit.SubscriberProbe[Any]): Unit = {
+          val error = sprobe.expectError()
+          error.isInstanceOf[IllegalStateException] should be(true)
+          error.getMessage should be("Processor actor terminated abruptly")
+        }
+
+        val downstream2 = StreamTestKit.SubscriberProbe[Any]()
+        publisher.subscribe(downstream2)
+        val downstream2Subscription = downstream2.expectSubscription()
+
+        downstreamSubscription.request(5)
+        downstream2Subscription.request(5)
+        upstream.expectRequest(upstreamSubscription, 1)
+        upstreamSubscription.sendNext("a1")
+        downstream.expectNext("a1")
+        downstream2.expectNext("a1")
+
+        upstream.expectRequest(upstreamSubscription, 1)
+        upstreamSubscription.sendNext("a2")
+        downstream.expectNext("a2")
+        downstream2.expectNext("a2")
+
+        val filters = immutable.Seq(
+          EventFilter[NullPointerException](),
+          EventFilter[IllegalStateException](),
+          EventFilter[PostRestartException]()) // This is thrown because we attach the dummy failing actor to toplevel
+        try {
+          system.eventStream.publish(Mute(filters))
+
+          upstream.expectRequest(upstreamSubscription, 1)
+          upstreamSubscription.sendNext("a3")
+          upstreamSubscription.expectCancellation()
+
+          // IllegalStateException terminated abruptly
+          checkError(downstream)
+          checkError(downstream2)
+
+          val downstream3 = StreamTestKit.SubscriberProbe[Any]()
+          publisher.subscribe(downstream3)
+          // IllegalStateException terminated abruptly
+          checkError(downstream3)
+        } finally {
+          system.eventStream.publish(UnMute(filters))
+        }
+      }
+    }
+  }
 
   object TestException extends RuntimeException with NoStackTrace
 
