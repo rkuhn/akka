@@ -160,6 +160,23 @@ object Concat {
 object FlowGraph extends FlowGraphApply {
   import akka.stream.scaladsl.Graphs._
 
+  def partial[P <: Ports](buildBlock: FlowGraphBuilder ⇒ P): Graph[P, Unit] = {
+    val builder = new FlowGraphBuilder
+    val p = buildBlock(builder)
+    val mod = builder.module.wrap()
+
+    if (p.inlets.toSet != mod.inPorts)
+      throw new IllegalStateException("The input ports in the returned Ports instance must correspond to the unconnected ports")
+    if (p.outlets.toSet != mod.outPorts)
+      throw new IllegalStateException("The output ports in the returned Ports instance must correspond to the unconnected ports")
+
+    new Graph[P, Unit] {
+      override type MaterializedType = Unit
+      override def ports: P = p
+      override private[stream] def module: Module = mod
+    }
+  }
+
   class FlowGraphBuilder private[stream] () {
     private var moduleInProgress: Module = EmptyModule
     private var inPortMapping = Map.empty[StreamLayout.InPort, StreamLayout.InPort]

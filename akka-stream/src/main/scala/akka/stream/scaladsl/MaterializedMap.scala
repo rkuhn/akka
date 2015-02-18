@@ -30,5 +30,5 @@ trait Materializable {
   /**
    * Every materializable element must be backed by a stream layout module
    */
-  private[stream] def module: StreamLayout.Module = ??? // FIXME make abstract
+  private[stream] def module: StreamLayout.Module
 }

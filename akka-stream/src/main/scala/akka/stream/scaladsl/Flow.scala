@@ -89,6 +89,16 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
     join(flow, (_: Mat, _: Mat2) ⇒ ())
   }
 
+  // FIXME: Materialized value is not combined!
+  def concat[Out2 >: Out](source: Source[Out2, _]): Flow[In, Out2, Unit] = {
+    this.via(Flow() { implicit builder ⇒
+      import FlowGraph.Implicits._
+      val concat = Concat[Out2]
+      source ~> concat.second
+      (concat.first, concat.out)
+    })
+  }
+
   /** INTERNAL API */
   override private[stream] def andThen[U](op: StageModule): Repr[U, Mat] = {
     //No need to copy here, op is a fresh instance

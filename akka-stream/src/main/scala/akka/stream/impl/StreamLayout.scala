@@ -158,6 +158,12 @@ private[akka] object StreamLayout {
         "Upstreams: \n" + upstreams.map { case (out, in) ⇒ s"   $out -> $in" }.mkString("\n")
     }
 
+    override def toString = {
+      "Modules: " + subModules.toSeq.map("   " + _.toString).mkString("\n ") + "\n" +
+        "Downstreams: \n" + downstreams.map { case (in, out) ⇒ s"   $in -> $out" }.mkString("\n") + "\n" +
+        "Upstreams: \n" + upstreams.map { case (out, in) ⇒ s"   $out -> $in" }.mkString("\n")
+    }
+
   }
 }
 
