@@ -81,7 +81,7 @@ private[akka] class FlexiMergeImpl[T, P <: Ports](
   private def include(port: InP): Boolean = include(indexOf(port))
 
   private def include(portIndex: Int): Boolean =
-    inputMapping.contains(portIndex) && !inputBunch.isCancelled(portIndex) && !inputBunch.isDepleted(portIndex)
+    portIndex >= 0 && portIndex < inputCount && !inputBunch.isCancelled(portIndex) && !inputBunch.isDepleted(portIndex)
 
   private def precondition: TransferState = {
     behavior.condition match {
@@ -104,8 +104,8 @@ private[akka] class FlexiMergeImpl[T, P <: Ports](
         case read: ReadAll[_] ⇒
           markInputs(read.inputs.toArray)
         case Read(input) ⇒
+          require(indexOf.contains(input), s"Unknown input handle $input")
           val inputIdx = indexOf(input)
-          require(inputMapping.contains(inputIdx), s"Unknown input handle $input")
           require(!inputBunch.isCancelled(inputIdx), s"Read not allowed from cancelled $input")
           require(!inputBunch.isDepleted(inputIdx), s"Read not allowed from depleted $input")
           inputBunch.unmarkAllInputs()

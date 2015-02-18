@@ -285,21 +285,21 @@ object FlowGraph extends FlowGraphApply {
         throw new IllegalStateException("Cannot build the Source since no ports remain open")
       if (!moduleInProgress.isSource)
         throw new IllegalStateException(
-          s"Cannot build Source with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.inPorts.mkString(",")})")
-      if (moduleInProgress.outPorts.head != outport)
+          s"Cannot build Source with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.outPorts.mkString(",")})")
+      if (moduleInProgress.outPorts.head != resolvePort(outport))
         throw new IllegalStateException(s"provided OutPort $outport does not equal the module’s open OutPort ${moduleInProgress.outPorts.head}")
-      new Source(moduleInProgress, outport)
+      new Source(moduleInProgress, resolvePort(outport).asInstanceOf[OutPort[T]])
     }
 
     private[stream] def buildFlow[In, Out, Mat](inlet: InPort[In], outlet: OutPort[Out]): Flow[In, Out, Mat] = {
       if (!moduleInProgress.isFlow)
         throw new IllegalStateException(
-          s"Cannot build Flow with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.inPorts.mkString(",")})")
-      if (moduleInProgress.outPorts.head != outlet)
+          s"Cannot build Flow with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.outPorts.mkString(",")})")
+      if (moduleInProgress.outPorts.head != resolvePort(outlet))
         throw new IllegalStateException(s"provided OutPort $outlet does not equal the module’s open OutPort ${moduleInProgress.outPorts.head}")
-      if (moduleInProgress.inPorts.head != inlet)
+      if (moduleInProgress.inPorts.head != resolvePort(inlet))
         throw new IllegalStateException(s"provided InPort $inlet does not equal the module’s open InPort ${moduleInProgress.inPorts.head}")
-      new Flow(moduleInProgress, inlet, outlet)
+      new Flow(moduleInProgress, resolvePort(inlet).asInstanceOf[InPort[In]], resolvePort(outlet).asInstanceOf[OutPort[Out]])
     }
 
     private[stream] def buildSink[T, Mat](inport: InPort[T]): Sink[T, Mat] = {
@@ -307,10 +307,10 @@ object FlowGraph extends FlowGraphApply {
         throw new IllegalStateException("Cannot build the Sink since no ports remain open")
       if (!moduleInProgress.isSink)
         throw new IllegalStateException(
-          s"Cannot build Sink with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.inPorts.mkString(",")})")
-      if (moduleInProgress.inPorts.head != inport)
+          s"Cannot build Sink with open inputs (${moduleInProgress.inPorts.mkString(",")}) and outputs (${moduleInProgress.outPorts.mkString(",")})")
+      if (moduleInProgress.inPorts.head != resolvePort(inport))
         throw new IllegalStateException(s"provided InPort $inport does not equal the module’s open InPort ${moduleInProgress.inPorts.head}")
-      new Sink(moduleInProgress, inport)
+      new Sink(moduleInProgress, resolvePort(inport).asInstanceOf[InPort[T]])
     }
 
     private[stream] def module: Module = moduleInProgress
@@ -339,6 +339,8 @@ object FlowGraph extends FlowGraphApply {
 
     class PortOps[+Out, +Mat](port: StreamLayout.OutPort, b: FlowGraphBuilder) extends FlowOps[Out, Mat] with CombinerBase[Out] {
       override type Repr[+O, +M] = PortOps[O, M]
+
+      def outlet: OutPort[Out] = port.asInstanceOf[OutPort[Out]]
 
       override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] =
         throw new UnsupportedOperationException("Cannot set attributes on chained ops from a junction output port")

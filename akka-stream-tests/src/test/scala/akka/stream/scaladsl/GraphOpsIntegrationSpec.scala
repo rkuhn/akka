@@ -49,7 +49,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
   "FlowGraphs" must {
 
     "support broadcast - merge layouts" in {
-      val resultFuture = FlowGraph(Sink.head[Seq[Int]])(identity) { implicit b ⇒
+      val resultFuture = FlowGraph(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val bcast = Broadcast[Int](2)
           val merge = Merge[Int](2)
@@ -65,7 +65,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
 
     "support balance - merge (parallelization) layouts" in {
       val elements = 0 to 10
-      val out = FlowGraph(Sink.head[Seq[Int]])(identity) { implicit b ⇒
+      val out = FlowGraph(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val balance = Balance[Int](5)
           val merge = Merge[Int](5)
@@ -132,7 +132,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
 
     "allow adding of flows to sources and sinks to flows" in {
 
-      val resultFuture = FlowGraph(Sink.head[Seq[Int]])(identity) { implicit b ⇒
+      val resultFuture = FlowGraph(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val bcast = Broadcast[Int](2)
           val merge = Merge[Int](2)
@@ -150,7 +150,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
       val p = Source(List(1, 2, 3)).runWith(Sink.publisher)
       val s = SubscriberProbe[Int]
       val flow = Flow[Int].map(_ * 2)
-      FlowGraph { implicit builder ⇒
+      FlowGraph() { implicit builder ⇒
         Source(p) ~> flow ~> Sink(s)
       }.run()
       val sub = s.expectSubscription()
