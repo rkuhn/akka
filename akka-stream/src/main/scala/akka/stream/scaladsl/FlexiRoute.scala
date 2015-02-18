@@ -12,12 +12,10 @@ object FlexiRoute {
 
   import akka.stream.impl.StreamLayout
 
-  import scala.language.higherKinds
-
   private type OutP = StreamLayout.OutPort
   private type InP = StreamLayout.InPort
 
-  sealed trait DemandCondition
+  sealed trait DemandCondition[T]
 
   /**
    * Demand condition for the [[RouteLogic#State]] that will be
@@ -28,11 +26,11 @@ object FlexiRoute {
    * has been completed. `IllegalArgumentException` is thrown if
    * that is not obeyed.
    */
-  final case class DemandFrom(output: OutPort[_]) extends DemandCondition
+  final case class DemandFrom[T](output: OutPort[T]) extends DemandCondition[OutPort[T]]
 
   object DemandFromAny {
-    def apply(outputs: immutable.Seq[OutPort[_]]): DemandFromAny = new DemandFromAny(outputs: _*)
-    def apply(p: Ports): DemandFromAny = new DemandFromAny(p.outlets.asInstanceOf[Seq[OutPort[Nothing]]]: _*)
+    def apply(outputs: OutP*): DemandFromAny = new DemandFromAny(outputs.to[immutable.Seq])
+    def apply(p: Ports): DemandFromAny = new DemandFromAny(p.outlets)
   }
   /**
    * Demand condition for the [[RouteLogic#State]] that will be
@@ -42,11 +40,11 @@ object FlexiRoute {
    * Cancelled and completed outputs are not used, i.e. it is allowed
    * to specify them in the list of `outputs`.
    */
-  final case class DemandFromAny(outputs: OutPort[_]*) extends DemandCondition
+  final case class DemandFromAny(outputs: immutable.Seq[OutP]) extends DemandCondition[OutP]
 
   object DemandFromAll {
-    def apply(outputs: immutable.Seq[OutPort[_]]): DemandFromAll = new DemandFromAll(outputs: _*)
-    def apply(p: Ports): DemandFromAll = new DemandFromAll(p.outlets.asInstanceOf[Seq[OutPort[Nothing]]]: _*)
+    def apply(outputs: OutP*): DemandFromAll = new DemandFromAll(outputs.to[immutable.Seq])
+    def apply(p: Ports): DemandFromAll = new DemandFromAll(p.outlets)
   }
   /**
    * Demand condition for the [[RouteLogic#State]] that will be
@@ -56,7 +54,7 @@ object FlexiRoute {
    * Cancelled and completed outputs are not used, i.e. it is allowed
    * to specify them in the list of `outputs`.
    */
-  final case class DemandFromAll(outputs: OutPort[_]*) extends DemandCondition
+  final case class DemandFromAll(outputs: immutable.Seq[OutP]) extends DemandCondition[Unit]
 
   /**
    * The possibly stateful logic that reads from the input and enables emitting to downstream
@@ -74,7 +72,7 @@ object FlexiRoute {
      * The context provides means for performing side effects, such as emitting elements
      * downstream.
      */
-    trait RouteLogicContext[Out] {
+    trait RouteLogicContext {
       /**
        * @return `true` if at least one element has been requested by the given downstream (output).
        */
@@ -85,7 +83,7 @@ object FlexiRoute {
        * [[#isDemandAvailable]] is `true` for the given `output`, otherwise
        * `IllegalArgumentException` is thrown.
        */
-      def emit(output: OutP, elem: Out): Unit
+      def emit[Out](output: OutPort[Out])(elem: Out): Unit
 
       /**
        * Complete the given downstream successfully.
@@ -123,15 +121,15 @@ object FlexiRoute {
      * The `onInput` function is called when an `element` was read from upstream.
      * The function returns next behavior or [[#SameState]] to keep current behavior.
      */
-    sealed case class State[Out](condition: DemandCondition)(
-      val onInput: (RouteLogicContext[Out], OutP, In) ⇒ State[_])
+    sealed case class State[Out](condition: DemandCondition[Out])(
+      val onInput: (RouteLogicContext, Out, In) ⇒ State[_])
 
     /**
      * Return this from [[State]] `onInput` to use same state for next element.
      */
-    def SameState[In]: State[In] = sameStateInstance.asInstanceOf[State[In]]
+    def SameState[T]: State[T] = sameStateInstance.asInstanceOf[State[T]]
 
-    private val sameStateInstance = new State[Any](DemandFromAny(Nil))((_, _, _) ⇒
+    private val sameStateInstance = new State(DemandFromAny(Nil))((_, _, _) ⇒
       throw new UnsupportedOperationException("SameState.onInput should not be called")) {
 
       // unique instance, don't use case class
@@ -152,9 +150,9 @@ object FlexiRoute {
      * It returns next behavior or [[#SameState]] to keep current behavior.
      */
     sealed case class CompletionHandling(
-      onComplete: RouteLogicContext[Any] ⇒ Unit,
-      onError: (RouteLogicContext[Any], Throwable) ⇒ Unit,
-      onCancel: (RouteLogicContext[Any], OutP) ⇒ State[_])
+      onComplete: RouteLogicContext ⇒ Unit,
+      onError: (RouteLogicContext, Throwable) ⇒ Unit,
+      onCancel: (RouteLogicContext, OutP) ⇒ State[_])
 
     /**
      * When an output cancels it continues with remaining outputs.
@@ -199,6 +197,34 @@ abstract class FlexiRoute[In, P <: Ports](private[stream] val ports: P, attribut
 
   type PortT = P
   type OutP = StreamLayout.OutPort
+
+  /**
+   * This allows a type-safe mini-DSL for selecting one of several ports, very useful in
+   * conjunction with DemandFromAny(...):
+   *
+   * {{{
+   * State(DemandFromAny(p1, p2, p2)) { (ctx, out, element) =>
+   *   ctx.emit((p1 | p2 | p3)(out))(element)
+   * }
+   * }}}
+   *
+   * This will ensure that the either of the three ports would accept the type of `element`.
+   */
+  implicit class PortUnion[L](left: OutPort[L]) {
+    def |[R <: L](right: OutPort[R]): InnerPortUnion[R] = new InnerPortUnion(Map((left, left.asInstanceOf[OutPort[R]]), (right, right)))
+    /*
+     * It would be nicer to use `Map[OutP, OutPort[_ <: T]]` to get rid of the casts,
+     * but unfortunately this kills the compiler (and quite violently so).
+     */
+    class InnerPortUnion[T] private[PortUnion] (ports: Map[OutP, OutPort[T]]) {
+      def |[R <: T](right: OutPort[R]): InnerPortUnion[R] = new InnerPortUnion(ports.asInstanceOf[Map[OutP, OutPort[R]]].updated(right, right))
+      def apply(p: OutP) = ports get p match {
+        case Some(p) ⇒ p
+        case None    ⇒ throw new IllegalStateException(s"port $p was not among the allowed ones (${ports.keys.mkString(", ")})")
+      }
+      def all: Iterable[OutPort[T]] = ports.values
+    }
+  }
 
   /**
    * Create the stateful logic that will be used when reading input elements

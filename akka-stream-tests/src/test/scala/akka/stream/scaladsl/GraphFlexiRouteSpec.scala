@@ -10,6 +10,7 @@ import akka.stream.testkit.StreamTestKit.OnNext
 import akka.stream.testkit.StreamTestKit.PublisherProbe
 import akka.stream.testkit.StreamTestKit.SubscriberProbe
 import akka.actor.ActorSystem
+import akka.stream.scaladsl.Graphs.OutPort
 
 object GraphFlexiRouteSpec {
 
@@ -22,15 +23,16 @@ object GraphFlexiRouteSpec {
     import FlexiRoute._
 
     override def createRouteLogic(p: PortT): RouteLogic[T] = new RouteLogic[T] {
+      val select = p.out(0) | p.out(1)
 
-      val emitToAnyWithDemand = State[T](DemandFromAny(p)) { (ctx, preferredOutput, element) ⇒
-        ctx.emit(preferredOutput, element)
+      val emitToAnyWithDemand = State(DemandFromAny(p)) { (ctx, out, element) ⇒
+        ctx.emit(select(out))(element)
         SameState
       }
 
       // initally, wait for demand from all
-      override def initialState = State[T](DemandFromAll(p)) { (ctx, preferredOutput, element) ⇒
-        ctx.emit(preferredOutput, element)
+      override def initialState = State(DemandFromAll(p)) { (ctx, _, element) ⇒
+        ctx.emit(p.out(0))(element)
         emitToAnyWithDemand
       }
     }
@@ -45,13 +47,13 @@ object GraphFlexiRouteSpec {
 
     override def createRouteLogic(p: PortT) = new RouteLogic[T] {
 
-      val toOutput1: State[T] = State[T](DemandFrom(p.out(0))) { (ctx, _, element) ⇒
-        ctx.emit(p.out(0), element)
+      val toOutput1: State[OutPort[T]] = State(DemandFrom(p.out(0))) { (ctx, out, element) ⇒
+        ctx.emit(out)(element)
         toOutput2
       }
 
-      val toOutput2 = State[T](DemandFrom(p.out(1))) { (ctx, _, element) ⇒
-        ctx.emit(p.out(1), element)
+      val toOutput2 = State(DemandFrom(p.out(1))) { (ctx, out, element) ⇒
+        ctx.emit(out)(element)
         toOutput1
       }
 
@@ -64,10 +66,10 @@ object GraphFlexiRouteSpec {
 
     override def createRouteLogic(p: PortT) = new RouteLogic[(A, B)] {
 
-      override def initialState = State[Any](DemandFromAll(p)) { (ctx, _, element) ⇒
+      override def initialState = State(DemandFromAll(p)) { (ctx, _, element) ⇒
         val (a, b) = element
-        ctx.emit(p.out0, a)
-        ctx.emit(p.out1, b)
+        ctx.emit(p.out0)(a)
+        ctx.emit(p.out1)(b)
         SameState
       }
 
@@ -81,8 +83,9 @@ object GraphFlexiRouteSpec {
     var throwFromOnComplete = false
 
     def createRouteLogic(p: PortT): RouteLogic[String] = new RouteLogic[String] {
+      val select = p.out0 | p.out1
 
-      override def initialState = State[String](DemandFromAny(p)) {
+      override def initialState = State(DemandFromAny(p)) {
         (ctx, preferred, element) ⇒
           if (element == "err")
             ctx.error(new RuntimeException("err") with NoStackTrace)
@@ -95,7 +98,7 @@ object GraphFlexiRouteSpec {
           else if (element == "complete")
             ctx.complete()
           else
-            ctx.emit(preferred, "onInput: " + element)
+            ctx.emit(select(preferred))("onInput: " + element)
 
           SameState
       }
@@ -104,25 +107,25 @@ object GraphFlexiRouteSpec {
         onComplete = { ctx ⇒
           if (throwFromOnComplete)
             throw new RuntimeException("onComplete-exc") with NoStackTrace
-          p.outlets.foreach { output ⇒
+          select.all foreach { output ⇒
             if (ctx.isDemandAvailable(output))
-              ctx.emit(output, "onComplete")
+              ctx.emit(output)("onComplete")
           }
         },
         onError = { (ctx, cause) ⇒
           cause match {
             case _: IllegalArgumentException ⇒ // swallow
             case _ ⇒
-              p.outlets.foreach { output ⇒
+              select.all foreach { output ⇒
                 if (ctx.isDemandAvailable(output))
-                  ctx.emit(output, "onError")
+                  ctx.emit(output)("onError")
               }
           }
         },
         onCancel = { (ctx, cancelledOutput) ⇒
-          p.outlets.foreach { output ⇒
+          select.all foreach { output ⇒
             if (output != cancelledOutput && ctx.isDemandAvailable(output))
-              ctx.emit(output, "onCancel: " + cancelledOutput)
+              ctx.emit(output)("onCancel: " + cancelledOutput)
           }
           SameState
         })
