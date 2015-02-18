@@ -204,6 +204,13 @@ object FlowGraph extends FlowGraphApply {
       p
     }
 
+    def add[T, P <: Ports](route: FlexiRoute[T, P]): P = {
+      val p = route.ports.deepCopy().asInstanceOf[P]
+      val module = new FlexiRouteModule(p, route.createRouteLogic)
+      addModule(module)
+      p
+    }
+
     // Assumes that junction is a new instance, so no copying needed here
     private[stream] def addModule(module: Module): Unit = {
       moduleInProgress = moduleInProgress.grow(module)

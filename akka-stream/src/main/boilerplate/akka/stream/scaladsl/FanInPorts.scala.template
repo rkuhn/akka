@@ -13,7 +13,7 @@ abstract class FanInPorts[O] extends Ports {
   final override def inlets: immutable.Seq[InPort[_]] = _inlets
   
   private var _inlets: List[InPort[_]] = Nil
-  protected def port[T](name: String) = {
+  protected def port[T](name: String): InPort[T] = {
     val p = new InPort[T](name)
     _inlets ::= p
     p
