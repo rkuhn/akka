@@ -5,7 +5,7 @@ package akka.stream.impl
 
 import akka.stream.{ scaladsl, MaterializerSettings }
 import akka.stream.impl.FanOut.OutputBunch
-import akka.stream.{ Shape, OutPort }
+import akka.stream.{ Shape, OutPort, Outlet }
 
 import scala.util.control.NonFatal
 
@@ -19,12 +19,13 @@ private[akka] class FlexiRouteImpl[T, S <: Shape](_settings: MaterializerSetting
 
   import akka.stream.scaladsl.FlexiRoute._
 
-  private type StateT = routeLogic.State[AnyRef]
+  private type StateT = routeLogic.State[_]
   private type CompletionT = routeLogic.CompletionHandling
 
-  val outputMapping: Array[OutPort] = shape.outlets.toArray
+  val outputMapping: Array[Outlet[_]] = shape.outlets.toArray
   val indexOf: Map[OutPort, Int] = shape.outlets.zipWithIndex.toMap
 
+  private def anyBehavior = behavior.asInstanceOf[routeLogic.State[Outlet[Any]]]
   private var behavior: StateT = _
   private var completion: CompletionT = _
 
@@ -49,11 +50,11 @@ private[akka] class FlexiRouteImpl[T, S <: Shape](_settings: MaterializerSetting
     }
   }
 
-  private val ctx: routeLogic.RouteLogicContext[AnyRef] = new routeLogic.RouteLogicContext[AnyRef] {
+  private val ctx: routeLogic.RouteLogicContext = new routeLogic.RouteLogicContext {
     override def isDemandAvailable(output: OutPort): Boolean =
       (indexOf(output) < outputCount) && outputBunch.isPending(indexOf(output))
 
-    override def emit(output: OutPort, elem: AnyRef): Unit = {
+    override def emit[Out](output: Outlet[Out])(elem: Out): Unit = {
       val idx = indexOf(output)
       require(outputBunch.isPending(idx), s"emit to [$output] not allowed when no demand available")
       outputBunch.enqueue(idx, elem)
@@ -91,8 +92,8 @@ private[akka] class FlexiRouteImpl[T, S <: Shape](_settings: MaterializerSetting
 
   private def precondition: TransferState = {
     behavior.condition match {
-      case _: DemandFrom | _: DemandFromAny ⇒ primaryInputs.NeedsInput && outputBunch.AnyOfMarkedOutputs
-      case _: DemandFromAll                 ⇒ primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs
+      case _: DemandFrom[_] | _: DemandFromAny ⇒ primaryInputs.NeedsInput && outputBunch.AnyOfMarkedOutputs
+      case _: DemandFromAll                    ⇒ primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs
     }
   }
 
@@ -127,15 +128,13 @@ private[akka] class FlexiRouteImpl[T, S <: Shape](_settings: MaterializerSetting
       case any: DemandFromAny ⇒
         val id = outputBunch.idToEnqueueAndYield()
         val outputHandle = outputMapping(id)
-        changeBehavior(behavior.onInput(ctx, outputHandle, elem.asInstanceOf[T]))
+        changeBehavior(anyBehavior.onInput(ctx, outputHandle, elem.asInstanceOf[T]))
 
       case DemandFrom(outputHandle) ⇒
-        changeBehavior(behavior.onInput(ctx, outputHandle, elem.asInstanceOf[T]))
+        changeBehavior(anyBehavior.onInput(ctx, outputHandle, elem.asInstanceOf[T]))
 
       case all: DemandFromAll ⇒
-        val id = outputBunch.idToEnqueueAndYield()
-        val outputHandle = outputMapping(id)
-        changeBehavior(behavior.onInput(ctx, outputHandle, elem.asInstanceOf[T]))
+        changeBehavior(behavior.asInstanceOf[routeLogic.State[Unit]].onInput(ctx, (), elem.asInstanceOf[T]))
 
     }
 
