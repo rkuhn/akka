@@ -123,6 +123,9 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
 
           case fanout: FanoutModule ⇒
             val (props, in, outs) = fanout match {
+              case r: FlexiRouteModule[t, p] ⇒
+                val flexi = r.flexi(r.ports)
+                (FlexiRoute.props(effectiveAttributes.settings(settings), r.ports, flexi), r.ports.inlets.head, r.ports.outlets)
               case BroadcastModule(in, outs, _) ⇒
                 (Broadcast.props(effectiveAttributes.settings(settings), outs.size), in, outs)
               case BalanceModule(in, outs, waitForDownstreams, _) ⇒

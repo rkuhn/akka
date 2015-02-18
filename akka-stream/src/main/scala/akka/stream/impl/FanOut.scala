@@ -3,6 +3,9 @@
  */
 package akka.stream.impl
 
+import akka.stream.scaladsl.FlexiRoute.RouteLogic
+import akka.stream.scaladsl.Graphs.Ports
+
 import scala.collection.immutable
 import akka.actor.Actor
 import akka.actor.ActorLogging
@@ -227,10 +230,10 @@ private[akka] object FanOut {
 /**
  * INTERNAL API
  */
-private[akka] abstract class FanOut(val settings: MaterializerSettings, val outputPorts: Int) extends Actor with ActorLogging with Pump {
+private[akka] abstract class FanOut(val settings: MaterializerSettings, val outputCount: Int) extends Actor with ActorLogging with Pump {
   import FanOut._
 
-  protected val outputBunch = new OutputBunch(outputPorts, self, this)
+  protected val outputBunch = new OutputBunch(outputCount, self, this)
   protected val primaryInputs: Inputs = new BatchingInputBuffer(settings.maxInputBufferSize, this) {
     override def onError(e: Throwable): Unit = fail(e)
   }
@@ -324,7 +327,7 @@ private[akka] object Unzip {
 /**
  * INTERNAL API
  */
-private[akka] class Unzip(_settings: MaterializerSettings) extends FanOut(_settings, outputPorts = 2) {
+private[akka] class Unzip(_settings: MaterializerSettings) extends FanOut(_settings, outputCount = 2) {
   outputBunch.markAllOutputs()
 
   nextPhase(TransferPhase(primaryInputs.NeedsInput && outputBunch.AllOfMarkedOutputs) { () ⇒
@@ -343,4 +346,12 @@ private[akka] class Unzip(_settings: MaterializerSettings) extends FanOut(_setti
             s"can only handle Tuple2 and akka.japi.Pair!")
     }
   })
+}
+
+/**
+ * INTERNAL API
+ */
+private[akka] object FlexiRoute {
+  def props[T, P <: Ports](settings: MaterializerSettings, ports: P, routeLogic: RouteLogic[T]): Props =
+    Props(new FlexiRouteImpl(settings, ports, routeLogic))
 }

@@ -1,6 +1,7 @@
 package akka.stream.impl
 
 import akka.stream.impl.StreamLayout.{ Mapping, OutPort, InPort, Module }
+import akka.stream.scaladsl.FlexiRoute.RouteLogic
 import akka.stream.scaladsl.{ Graphs, OperationAttributes }
 import akka.stream.scaladsl.FlexiMerge.MergeLogic
 
@@ -95,6 +96,24 @@ object Junctions {
 
     override def carbonCopy: () ⇒ Mapping = () ⇒ {
       val newModule = new FlexiMergeModule(ports.deepCopy().asInstanceOf[P], flexi, attributes)
+      Mapping(newModule, Map(ports.inlets.zip(newModule.ports.inlets): _*), Map(ports.outlets.head → newModule.ports.outlets.head))
+    }
+  }
+
+  final case class FlexiRouteModule[T, P <: Graphs.Ports](
+    ports: P,
+    flexi: P ⇒ RouteLogic[T],
+    override val attributes: OperationAttributes = name("flexiRoute")) extends FanoutModule {
+
+    require(ports.inlets.size == 1, "FlexiRoute can have only one input port")
+
+    override val inPorts: Set[InPort] = ports.inlets.toSet
+    override val outPorts: Set[OutPort] = ports.outlets.toSet
+
+    override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)
+
+    override def carbonCopy: () ⇒ Mapping = () ⇒ {
+      val newModule = new FlexiRouteModule(ports.deepCopy().asInstanceOf[P], flexi, attributes)
       Mapping(newModule, Map(ports.inlets.zip(newModule.ports.inlets): _*), Map(ports.outlets.head → newModule.ports.outlets.head))
     }
   }
