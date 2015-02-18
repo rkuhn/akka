@@ -10,6 +10,7 @@ import akka.stream.impl._
 import akka.stream.impl.StreamLayout._
 import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
 import akka.stream.scaladsl.Graphs.{ InPort, OutPort }
+import OperationAttributes.name
 
 import scala.collection.immutable
 
@@ -22,10 +23,11 @@ object Merge {
     override def deepCopy(): MergePorts[T] = MergePorts(in.map(i ⇒ new InPort[T](i.toString)), new OutPort(out.toString))
   }
 
-  def apply[T](inputPorts: Int)(implicit b: FlowGraphBuilder): MergePorts[T] = {
+  def apply[T](inputPorts: Int, attributes: OperationAttributes = OperationAttributes.none)(implicit b: FlowGraphBuilder): MergePorts[T] = {
     val mergeModule = new MergeModule(
       Vector.fill(inputPorts)(new InPort[T]("Merge.in")),
-      new OutPort[T]("Merge.out"))
+      new OutPort[T]("Merge.out"),
+      OperationAttributes.name("Merge") and attributes)
     b.addModule(mergeModule)
     MergePorts(mergeModule.ins, mergeModule.out)
   }
@@ -41,11 +43,12 @@ object MergePreferred {
       MergePreferredPorts(new InPort(preferred.toString), in.map(i ⇒ new InPort[T](i.toString)), new OutPort(out.toString))
   }
 
-  def apply[T](secondaryPorts: Int)(implicit b: FlowGraphBuilder): MergePreferredPorts[T] = {
+  def apply[T](secondaryPorts: Int, attributes: OperationAttributes = OperationAttributes.none)(implicit b: FlowGraphBuilder): MergePreferredPorts[T] = {
     val mergeModule = new MergePreferredModule(
       new InPort[T]("Preferred.preferred"),
       Vector.fill(secondaryPorts)(new InPort[T]("Preferred.in")),
-      new OutPort[T]("Preferred.out"))
+      new OutPort[T]("Preferred.out"),
+      OperationAttributes.name("MergePreferred") and attributes)
     b.addModule(mergeModule)
     MergePreferredPorts(mergeModule.preferred, mergeModule.ins, mergeModule.out)
   }
@@ -61,10 +64,11 @@ object Broadcast {
       BroadcastPorts(new InPort(in.toString), out.map(o ⇒ new OutPort[T](o.toString)))
   }
 
-  def apply[T](outputPorts: Int)(implicit b: FlowGraphBuilder): BroadcastPorts[T] = {
+  def apply[T](outputPorts: Int, attributes: OperationAttributes = OperationAttributes.none)(implicit b: FlowGraphBuilder): BroadcastPorts[T] = {
     val bcastModule = new BroadcastModule(
       new InPort[T]("Bcast.in"),
-      Vector.fill(outputPorts)(new OutPort[T]("Bcast.out")))
+      Vector.fill(outputPorts)(new OutPort[T]("Bcast.out")),
+      OperationAttributes.name("Broadcast") and attributes)
     b.addModule(bcastModule)
     BroadcastPorts(bcastModule.in, bcastModule.outs)
   }
@@ -80,11 +84,15 @@ object Balance {
       BalancePorts(new InPort(in.toString), out.map(o ⇒ new OutPort[T](o.toString)))
   }
 
-  def apply[T](outputPorts: Int, waitForAllDownstreams: Boolean = false)(implicit b: FlowGraphBuilder): BalancePorts[T] = {
+  def apply[T](
+    outputPorts: Int,
+    waitForAllDownstreams: Boolean = false,
+    attributes: OperationAttributes = OperationAttributes.none)(implicit b: FlowGraphBuilder): BalancePorts[T] = {
     val bcastModule = new BalanceModule(
       new InPort[T]("Balance.in"),
       Vector.fill(outputPorts)(new OutPort[T]("Balance.out")),
-      waitForAllDownstreams)
+      waitForAllDownstreams,
+      OperationAttributes.name("Balance") and attributes)
     b.addModule(bcastModule)
     BalancePorts(bcastModule.in, bcastModule.outs)
   }
@@ -107,7 +115,7 @@ object Zip {
       new InPort[B]("Zip.right"),
       new OutPort[(A, B)]("Zip.out"),
       (a: A, b: B) ⇒ (a, b),
-      attributes and OperationAttributes.name("Zip"))
+      OperationAttributes.name("Zip") and attributes)
     b.addModule(zipWithModule)
     ZipPorts(zipWithModule.in1, zipWithModule.in2, zipWithModule.out)
   }
@@ -126,11 +134,12 @@ object Unzip {
       UnzipPorts(new InPort(in.toString), new OutPort(left.toString), new OutPort(right.toString))
   }
 
-  def apply[A, B](implicit b: FlowGraphBuilder): UnzipPorts[A, B] = {
+  def apply[A, B](attributes: OperationAttributes = OperationAttributes.none)(implicit b: FlowGraphBuilder): UnzipPorts[A, B] = {
     val unzipModule = new UnzipModule(
       new InPort[(A, B)]("Unzip.in"),
       new OutPort[A]("Unzip.left"),
-      new OutPort[B]("Unzip.right"))
+      new OutPort[B]("Unzip.right"),
+      OperationAttributes.name("Unzip") and attributes)
     b.addModule(unzipModule)
     UnzipPorts(unzipModule.in, unzipModule.left, unzipModule.right)
   }
@@ -146,11 +155,12 @@ object Concat {
       ConcatPorts(new InPort(first.toString), new InPort(second.toString), new OutPort(out.toString))
   }
 
-  def apply[A](implicit b: FlowGraphBuilder): ConcatPorts[A] = {
+  def apply[A](attributes: OperationAttributes = OperationAttributes.none)(implicit b: FlowGraphBuilder): ConcatPorts[A] = {
     val concatModdule = new ConcatModule(
       new InPort[A]("concat.first"),
       new InPort[A]("concat.second"),
-      new OutPort[A]("concat.out"))
+      new OutPort[A]("concat.out"),
+      OperationAttributes.name("Concat") and attributes)
     b.addModule(concatModdule)
     ConcatPorts(concatModdule.first, concatModdule.second, concatModdule.out)
   }

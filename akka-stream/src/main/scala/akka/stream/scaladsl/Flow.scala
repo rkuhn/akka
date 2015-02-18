@@ -93,7 +93,7 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
   def concat[Out2 >: Out](source: Source[Out2, _]): Flow[In, Out2, Unit] = {
     this.via(Flow() { implicit builder ⇒
       import FlowGraph.Implicits._
-      val concat = Concat[Out2]
+      val concat = Concat[Out2]()
       source ~> concat.second
       (concat.first, concat.out)
     })
