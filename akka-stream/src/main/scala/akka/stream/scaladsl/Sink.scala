@@ -5,7 +5,7 @@ package akka.stream.scaladsl
 
 import akka.actor.{ ActorRef, Props }
 import akka.stream.impl._
-import akka.stream.scaladsl.Graphs.SinkPorts
+import akka.stream.{ SinkShape, Inlet, Outlet, Graph }
 import akka.stream.scaladsl.OperationAttributes._
 import akka.stream.stage.{ TerminationDirective, Directive, Context, PushStage }
 import org.reactivestreams.{ Publisher, Subscriber }
@@ -18,17 +18,17 @@ import akka.stream.FlowMaterializer
  * A `Sink` is a set of stream processing steps that has one open input and an attached output.
  * Can be used as a `Subscriber`
  */
-final class Sink[-In, Mat](m: StreamLayout.Module, val inlet: Graphs.InPort[In])
-  extends Graphs.Graph[Graphs.SinkPorts[In], Mat] {
+final class Sink[-In, +Mat](m: StreamLayout.Module, val inlet: Inlet[In])
+  extends Graph[SinkShape[In], Mat] {
   private[stream] override val module: StreamLayout.Module = m
 
   private[akka] def this(module: SinkModule[In @uncheckedVariance, Mat]) = this(module, module.inPort)
 
-  override def ports: SinkPorts[In] = SinkPorts(inlet)
+  override val shape: SinkShape[In] = SinkShape(inlet)
 
   private[stream] def carbonCopy(): Sink[In, Mat] = {
     val sinkCopy = module.carbonCopy()
-    new Sink(sinkCopy.module, sinkCopy.inPorts(inlet).asInstanceOf[Graphs.InPort[In]])
+    new Sink(sinkCopy.module, sinkCopy.inPorts(inlet).asInstanceOf[Inlet[In]])
   }
 
   /**
@@ -42,12 +42,12 @@ final class Sink[-In, Mat](m: StreamLayout.Module, val inlet: Graphs.InPort[In])
     val sinkCopy = module.carbonCopy()
     new Sink(
       sinkCopy.module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]),
-      sinkCopy.inPorts(inlet).asInstanceOf[Graphs.InPort[In]])
+      sinkCopy.inPorts(inlet).asInstanceOf[Inlet[In]])
   }
 
   def withAttributes(attr: OperationAttributes): Sink[In, Mat] = {
     val newModule = module.withAttributes(attr)
-    new Sink(newModule, newModule.inPorts.head.asInstanceOf[Graphs.InPort[In]])
+    new Sink(newModule, newModule.inPorts.head.asInstanceOf[Inlet[In]])
   }
 
 }

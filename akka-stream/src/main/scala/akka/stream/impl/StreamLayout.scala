@@ -3,17 +3,14 @@
  */
 package akka.stream.impl
 
-import akka.stream.scaladsl.OperationAttributes
+import akka.stream.scaladsl.{ Keep, OperationAttributes }
+import akka.stream.{ InPort, OutPort, Shape, EmptyShape, AmorphousShape }
 import org.reactivestreams.{ Subscription, Publisher, Subscriber }
-import akka.stream.scaladsl.Keep
 
 /**
  * INTERNAL API
  */
 private[akka] object StreamLayout {
-
-  class InPort
-  class OutPort
 
   // TODO: Materialization order
   // TODO: Special case linear composites
@@ -28,8 +25,10 @@ private[akka] object StreamLayout {
   case class Mapping(module: Module, inPorts: Map[InPort, InPort], outPorts: Map[OutPort, OutPort])
 
   trait Module {
-    def inPorts: Set[InPort]
-    def outPorts: Set[OutPort]
+    def shape: Shape
+
+    final val inPorts: Set[InPort] = shape.inlets.toSet
+    final val outPorts: Set[OutPort] = shape.outlets.toSet
 
     def isRunnable: Boolean = inPorts.isEmpty && outPorts.isEmpty
     def isSink: Boolean = (inPorts.size == 1) && outPorts.isEmpty
@@ -42,8 +41,7 @@ private[akka] object StreamLayout {
 
       CompositeModule(
         subModules,
-        inPorts - to,
-        outPorts - from,
+        AmorphousShape(shape.inlets.filterNot(_ == to), shape.outlets.filterNot(_ == from)),
         downstreams.updated(from, to),
         upstreams.updated(to, from),
         materializedValueComputation,
@@ -57,8 +55,7 @@ private[akka] object StreamLayout {
     def transformMaterializedValue(f: Any ⇒ Any): Module = {
       CompositeModule(
         subModules = this.subModules,
-        inPorts,
-        outPorts,
+        shape,
         downstreams,
         upstreams,
         Transform(f, this.materializedValueComputation),
@@ -80,8 +77,7 @@ private[akka] object StreamLayout {
 
       CompositeModule(
         modules1 ++ modules2,
-        this.inPorts ++ that.inPorts,
-        this.outPorts ++ that.outPorts,
+        AmorphousShape(shape.inlets ++ that.shape.inlets, shape.outlets ++ that.shape.outlets),
         this.downstreams ++ that.downstreams,
         this.upstreams ++ that.upstreams,
         if (f eq Keep.left) materializedValueComputation
@@ -98,8 +94,7 @@ private[akka] object StreamLayout {
     def wrap(): Module = {
       CompositeModule(
         subModules = Set(this),
-        inPorts,
-        outPorts,
+        shape,
         downstreams,
         upstreams,
         Atomic(this),
@@ -127,10 +122,9 @@ private[akka] object StreamLayout {
   }
 
   object EmptyModule extends Module {
-    override def subModules: Set[Module] = Set.empty
+    override def shape = EmptyShape
 
-    override def inPorts: Set[InPort] = Set.empty
-    override def outPorts: Set[OutPort] = Set.empty
+    override def subModules: Set[Module] = Set.empty
 
     override def downstreams: Map[OutPort, InPort] = Map.empty
     override def upstreams: Map[InPort, OutPort] = Map.empty
@@ -152,8 +146,7 @@ private[akka] object StreamLayout {
 
   final case class CompositeModule(
     subModules: Set[Module],
-    inPorts: Set[InPort],
-    outPorts: Set[OutPort],
+    shape: Shape,
     downstreams: Map[OutPort, InPort],
     upstreams: Map[InPort, OutPort],
     override val materializedValueComputation: MaterializedValueNode,

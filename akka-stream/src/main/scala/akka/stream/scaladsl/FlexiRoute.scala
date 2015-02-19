@@ -4,18 +4,15 @@
 package akka.stream.scaladsl
 
 import akka.stream.impl.StreamLayout
-import akka.stream.scaladsl.Graphs.{ OutPort, Ports }
-
+import akka.stream.{ Outlet, Shape, OutPort, Graph }
 import scala.collection.immutable
+import akka.stream.impl.Junctions.FlexiRouteModule
 
 object FlexiRoute {
 
   import akka.stream.impl.StreamLayout
 
   import scala.language.higherKinds
-
-  private type OutP = StreamLayout.OutPort
-  private type InP = StreamLayout.InPort
 
   sealed trait DemandCondition
 
@@ -28,11 +25,11 @@ object FlexiRoute {
    * has been completed. `IllegalArgumentException` is thrown if
    * that is not obeyed.
    */
-  final case class DemandFrom(output: OutPort[_]) extends DemandCondition
+  final case class DemandFrom(output: Outlet[_]) extends DemandCondition
 
   object DemandFromAny {
-    def apply(outputs: immutable.Seq[OutPort[_]]): DemandFromAny = new DemandFromAny(outputs: _*)
-    def apply(p: Ports): DemandFromAny = new DemandFromAny(p.outlets.asInstanceOf[Seq[OutPort[Nothing]]]: _*)
+    def apply(outputs: immutable.Seq[Outlet[_]]): DemandFromAny = new DemandFromAny(outputs: _*)
+    def apply(p: Shape): DemandFromAny = new DemandFromAny(p.outlets.asInstanceOf[Seq[Outlet[Nothing]]]: _*)
   }
   /**
    * Demand condition for the [[RouteLogic#State]] that will be
@@ -42,11 +39,11 @@ object FlexiRoute {
    * Cancelled and completed outputs are not used, i.e. it is allowed
    * to specify them in the list of `outputs`.
    */
-  final case class DemandFromAny(outputs: OutPort[_]*) extends DemandCondition
+  final case class DemandFromAny(outputs: Outlet[_]*) extends DemandCondition
 
   object DemandFromAll {
-    def apply(outputs: immutable.Seq[OutPort[_]]): DemandFromAll = new DemandFromAll(outputs: _*)
-    def apply(p: Ports): DemandFromAll = new DemandFromAll(p.outlets.asInstanceOf[Seq[OutPort[Nothing]]]: _*)
+    def apply(outputs: immutable.Seq[Outlet[_]]): DemandFromAll = new DemandFromAll(outputs: _*)
+    def apply(p: Shape): DemandFromAll = new DemandFromAll(p.outlets.asInstanceOf[Seq[Outlet[Nothing]]]: _*)
   }
   /**
    * Demand condition for the [[RouteLogic#State]] that will be
@@ -56,7 +53,7 @@ object FlexiRoute {
    * Cancelled and completed outputs are not used, i.e. it is allowed
    * to specify them in the list of `outputs`.
    */
-  final case class DemandFromAll(outputs: OutPort[_]*) extends DemandCondition
+  final case class DemandFromAll(outputs: Outlet[_]*) extends DemandCondition
 
   /**
    * The possibly stateful logic that reads from the input and enables emitting to downstream
@@ -78,19 +75,19 @@ object FlexiRoute {
       /**
        * @return `true` if at least one element has been requested by the given downstream (output).
        */
-      def isDemandAvailable(output: OutP): Boolean
+      def isDemandAvailable(output: OutPort): Boolean
 
       /**
        * Emit one element downstream. It is only allowed to `emit` when
        * [[#isDemandAvailable]] is `true` for the given `output`, otherwise
        * `IllegalArgumentException` is thrown.
        */
-      def emit(output: OutP, elem: Out): Unit
+      def emit(output: OutPort, elem: Out): Unit
 
       /**
        * Complete the given downstream successfully.
        */
-      def complete(output: OutP): Unit
+      def complete(output: OutPort): Unit
 
       /**
        * Complete all downstreams successfully and cancel upstream.
@@ -100,7 +97,7 @@ object FlexiRoute {
       /**
        * Complete the given downstream with failure.
        */
-      def error(output: OutP, cause: Throwable): Unit
+      def error(output: OutPort, cause: Throwable): Unit
 
       /**
        * Complete all downstreams with failure and cancel upstream.
@@ -124,7 +121,7 @@ object FlexiRoute {
      * The function returns next behavior or [[#SameState]] to keep current behavior.
      */
     sealed case class State[Out](condition: DemandCondition)(
-      val onInput: (RouteLogicContext[Out], OutP, In) ⇒ State[_])
+      val onInput: (RouteLogicContext[Out], OutPort, In) ⇒ State[_])
 
     /**
      * Return this from [[State]] `onInput` to use same state for next element.
@@ -152,9 +149,9 @@ object FlexiRoute {
      * It returns next behavior or [[#SameState]] to keep current behavior.
      */
     sealed case class CompletionHandling(
-      onComplete: RouteLogicContext[Any] ⇒ Unit,
-      onError: (RouteLogicContext[Any], Throwable) ⇒ Unit,
-      onCancel: (RouteLogicContext[Any], OutP) ⇒ State[_])
+      onComplete: RouteLogicContext[AnyRef] ⇒ Unit,
+      onError: (RouteLogicContext[AnyRef], Throwable) ⇒ Unit,
+      onCancel: (RouteLogicContext[AnyRef], OutPort) ⇒ State[_])
 
     /**
      * When an output cancels it continues with remaining outputs.
@@ -194,17 +191,16 @@ object FlexiRoute {
  *
  * @param attributes optional attributes for this vertex
  */
-abstract class FlexiRoute[In, P <: Ports](private[stream] val ports: P, attributes: OperationAttributes) {
+abstract class FlexiRoute[In, S <: Shape](val shape: S, attributes: OperationAttributes) extends Graph[S, Unit] {
   import akka.stream.scaladsl.FlexiRoute._
 
-  type PortT = P
-  type OutP = StreamLayout.OutPort
-
+  val module: StreamLayout.Module = new FlexiRouteModule(shape, createRouteLogic)
+  
   /**
    * Create the stateful logic that will be used when reading input elements
    * and emitting output elements. Create a new instance every time.
    */
-  def createRouteLogic(p: P): RouteLogic[In]
+  def createRouteLogic(s: S): RouteLogic[In]
 
   override def toString = attributes.nameLifted match {
     case Some(n) ⇒ n

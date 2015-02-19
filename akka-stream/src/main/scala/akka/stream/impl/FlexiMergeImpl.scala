@@ -4,7 +4,7 @@
 package akka.stream.impl
 
 import akka.stream.scaladsl.FlexiMerge.{ Read, ReadAll, ReadAny, ReadPreferred }
-import akka.stream.scaladsl.Graphs.{ Ports, InPort }
+import akka.stream.{ Shape, InPort }
 import akka.stream.{ MaterializerSettings, scaladsl }
 
 import scala.collection.breakOut
@@ -14,17 +14,16 @@ import scala.util.control.NonFatal
 /**
  * INTERNAL API
  */
-private[akka] class FlexiMergeImpl[T, P <: Ports](
+private[akka] class FlexiMergeImpl[T, S <: Shape](
   _settings: MaterializerSettings,
-  ports: P,
-  mergeLogic: scaladsl.FlexiMerge.MergeLogic[T]) extends FanIn(_settings, ports.inlets.size) {
+  shape: S,
+  mergeLogic: scaladsl.FlexiMerge.MergeLogic[T]) extends FanIn(_settings, shape.inlets.size) {
 
   private type StateT = mergeLogic.State[_]
   private type CompletionT = mergeLogic.CompletionHandling
-  private type InP = StreamLayout.InPort
 
-  val inputMapping: Array[InP] = ports.inlets.toArray
-  val indexOf: Map[InP, Int] = ports.inlets.zipWithIndex.toMap
+  val inputMapping: Array[InPort] = shape.inlets.toArray
+  val indexOf: Map[InPort, Int] = shape.inlets.zipWithIndex.toMap
 
   private var behavior: StateT = _
   private def anyBehavior = behavior.asInstanceOf[mergeLogic.State[Any]]
@@ -60,14 +59,14 @@ private[akka] class FlexiMergeImpl[T, P <: Ports](
 
     override def error(cause: Throwable): Unit = fail(cause)
 
-    override def cancel(input: InP): Unit = inputBunch.cancel(indexOf(input))
+    override def cancel(input: InPort): Unit = inputBunch.cancel(indexOf(input))
 
     override def changeCompletionHandling(newCompletion: CompletionT): Unit =
       FlexiMergeImpl.this.changeCompletionHandling(newCompletion)
 
   }
 
-  private def markInputs(inputs: Array[InP]): Unit = {
+  private def markInputs(inputs: Array[InPort]): Unit = {
     inputBunch.unmarkAllInputs()
     var i = 0
     while (i < inputs.length) {
@@ -78,7 +77,7 @@ private[akka] class FlexiMergeImpl[T, P <: Ports](
     }
   }
 
-  private def include(port: InP): Boolean = include(indexOf(port))
+  private def include(port: InPort): Boolean = include(indexOf(port))
 
   private def include(portIndex: Int): Boolean =
     portIndex >= 0 && portIndex < inputCount && !inputBunch.isCancelled(portIndex) && !inputBunch.isDepleted(portIndex)
@@ -149,7 +148,7 @@ private[akka] class FlexiMergeImpl[T, P <: Ports](
 
   })
 
-  private def triggerCompletionAfterRead(inputs: Seq[InP]): Unit = {
+  private def triggerCompletionAfterRead(inputs: Seq[InPort]): Unit = {
     var j = 0
     while (j < inputs.length) {
       triggerCompletionAfterRead(inputs(j))
@@ -157,11 +156,11 @@ private[akka] class FlexiMergeImpl[T, P <: Ports](
     }
   }
 
-  private def triggerCompletionAfterRead(inputHandle: InP): Unit =
+  private def triggerCompletionAfterRead(inputHandle: InPort): Unit =
     if (inputBunch.isDepleted(indexOf(inputHandle)))
       triggerCompletion(inputHandle)
 
-  private def triggerCompletion(in: InP): Unit =
+  private def triggerCompletion(in: InPort): Unit =
     changeBehavior(
       try completion.onComplete(ctx, in)
       catch {

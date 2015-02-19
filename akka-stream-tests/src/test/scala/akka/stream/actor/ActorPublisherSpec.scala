@@ -6,12 +6,8 @@ package akka.stream.actor
 import akka.actor.ActorRef
 import akka.actor.PoisonPill
 import akka.actor.Props
-import akka.stream.scaladsl.Broadcast
-import akka.stream.scaladsl.FlowGraph
-import akka.stream.scaladsl.Merge
+import akka.stream.scaladsl._
 import akka.stream.FlowMaterializer
-import akka.stream.scaladsl.Sink
-import akka.stream.scaladsl.Source
 import akka.stream.testkit.AkkaSpec
 import akka.stream.testkit.StreamTestKit
 import akka.testkit.EventFilter
@@ -290,9 +286,9 @@ class ActorPublisherSpec extends AkkaSpec with ImplicitSender {
       val sink1 = Sink(ActorSubscriber[String](system.actorOf(receiverProps(probe1.ref))))
       val sink2 = Sink[String](receiverProps(probe2.ref))
 
-      val senderRef2 = FlowGraph(Source[Int](senderProps)) { implicit b ⇒
+      val senderRef2 = Graph.closed(Source[Int](senderProps)) { implicit b ⇒
         source2 ⇒
-          import FlowGraph.Implicits._
+          import Graph.Implicits._
 
           val merge = Merge[Int](2)
           val bcast = Broadcast[String](2)

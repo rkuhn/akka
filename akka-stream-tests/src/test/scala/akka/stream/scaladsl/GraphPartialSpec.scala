@@ -93,6 +93,23 @@ class GraphPartialSpec extends AkkaSpec {
       Await.result(sub2._1, 3.seconds) should be(12)
       Await.result(sub2._2, 3.seconds) should be(24)
     }
+
+    "be able to expose the ports of imported graphs" in {
+      val p = FlowGraph.partial(Flow[Int].map(_ + 1)) { implicit b ⇒
+        flow ⇒
+          FlowPorts(flow.inlet, flow.outlet)
+      }
+
+      val fut = FlowGraph(Sink.head[Int], p)(Keep.left) { implicit b ⇒
+        (sink, flow) ⇒
+          import FlowGraph.Implicits._
+          Source.single(0) ~> flow.inlet
+          flow.outlet ~> sink.inlet
+      }.run()
+
+      Await.result(fut, 3.seconds) should be(0)
+
+    }
   }
 
 }

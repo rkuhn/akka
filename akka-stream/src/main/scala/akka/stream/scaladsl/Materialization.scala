@@ -18,15 +18,3 @@ object Keep {
   def right[L, R]: (L, R) ⇒ R = _right.asInstanceOf[(L, R) ⇒ R]
   def both[L, R]: (L, R) ⇒ (L, R) = _both.asInstanceOf[(L, R) ⇒ (L, R)]
 }
-
-/**
- * Common trait for things that have a MaterializedType.
- */
-trait Materializable {
-  type MaterializedType
-
-  /**
-   * Every materializable element must be backed by a stream layout module
-   */
-  private[stream] def module: StreamLayout.Module
-}

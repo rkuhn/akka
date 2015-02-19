@@ -8,7 +8,7 @@ import akka.actor.Props
 import akka.stream.MaterializerSettings
 import akka.stream.actor.{ ActorSubscriberMessage, ActorSubscriber }
 import akka.stream.scaladsl.FlexiMerge.MergeLogic
-import akka.stream.scaladsl.Graphs.{ InPort, Ports }
+import akka.stream.{ InPort, Shape }
 import org.reactivestreams.{ Subscription, Subscriber }
 import akka.actor.DeadLetterSuppression
 
@@ -288,7 +288,7 @@ private[akka] final class UnfairMerge(_settings: MaterializerSettings,
  * INTERNAL API
  */
 private[akka] object FlexiMerge {
-  def props[T, P <: Ports](settings: MaterializerSettings, ports: P, mergeLogic: MergeLogic[T]): Props =
+  def props[T, S <: Shape](settings: MaterializerSettings, ports: S, mergeLogic: MergeLogic[T]): Props =
     Props(new FlexiMergeImpl(settings, ports, mergeLogic))
 }
 

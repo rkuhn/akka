@@ -3,16 +3,15 @@
  */
 package akka.stream.impl
 
-import akka.stream.scaladsl.Graphs
+import akka.stream._
 
 trait FlowModule[In, Out, Mat] extends StreamLayout.Module {
   override def subModules = Set.empty
   override def downstreams = Map.empty
   override def upstreams = Map.empty
-  val inPort = new Graphs.InPort[In]("Flow.in")
-  val outPort = new Graphs.OutPort[Out]("Flow.out")
-  override val inPorts: Set[StreamLayout.InPort] = Set(inPort)
-  override val outPorts: Set[StreamLayout.OutPort] = Set(outPort)
-
+  
+  val inPort = new Inlet[In]("Flow.in")
+  val outPort = new Outlet[Out]("Flow.out")
+  override val shape = new FlowShape(inPort, outPort)
 }
 

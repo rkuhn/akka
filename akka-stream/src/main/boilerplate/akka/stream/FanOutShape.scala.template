@@ -1,0 +1,33 @@
+/**
+ * Copyright (C) 2014-2015 Typesafe Inc. <http://www.typesafe.com>
+ */
+package akka.stream
+
+import scala.collection.immutable
+
+abstract class FanOutShape[I] extends Shape {
+  final val in = new Inlet[I]("out")
+  
+  final override def outlets: immutable.Seq[Outlet[_]] = _outlets
+  final override def inlets: immutable.Seq[Inlet[_]] = in :: Nil
+  
+  private var _outlets: List[Outlet[_]] = Nil
+  protected def newOutlet[T](name: String): Outlet[T] = {
+    val p = new Outlet[T](name)
+    _outlets ::= p
+    p
+  }
+}
+
+class UniformFanOutShape[I, O](n: Int) extends FanOutShape[I] {
+  val out: Array[Outlet[O]] = Array.tabulate(n)(i => newOutlet[O](s"out$i"))
+  override def deepCopy(): UniformFanOutShape[I, O] = new UniformFanOutShape(n)
+}
+
+[2..#class FanOutShape1[I, [#O0#]] extends FanOutShape[I] {
+  [#val out0 = newOutlet[O0]("out0")#
+  ]
+  override def deepCopy(): FanOutShape1[I, [#O0#]] = new FanOutShape1
+}#
+
+]

@@ -4,7 +4,7 @@
 package akka.stream.impl
 
 import akka.stream.scaladsl.FlexiRoute.RouteLogic
-import akka.stream.scaladsl.Graphs.Ports
+import akka.stream.Shape
 
 import scala.collection.immutable
 import akka.actor.Actor
@@ -352,6 +352,6 @@ private[akka] class Unzip(_settings: MaterializerSettings) extends FanOut(_setti
  * INTERNAL API
  */
 private[akka] object FlexiRoute {
-  def props[T, P <: Ports](settings: MaterializerSettings, ports: P, routeLogic: RouteLogic[T]): Props =
+  def props[T, S <: Shape](settings: MaterializerSettings, ports: S, routeLogic: RouteLogic[T]): Props =
     Props(new FlexiRouteImpl(settings, ports, routeLogic))
 }
