@@ -3,29 +3,27 @@
  */
 package akka.stream.scaladsl
 
-import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ InPort, OutPort }
 import akka.stream.testkit.TwoStreamsSetup
+import akka.stream._
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
 
 class GraphPreferredMergeSpec extends TwoStreamsSetup {
+  import Graph.Implicits._
 
   override type Outputs = Int
 
-  override def fixture(b: FlowGraphBuilder): Fixture = new Fixture(b: FlowGraphBuilder) {
-    val merge = MergePreferred[Outputs](1)(b)
+  override def fixture(b: Graph.Builder): Fixture = new Fixture(b: Graph.Builder) {
+    val merge = b.add(MergePreferred[Outputs](1))
 
-    override def left: InPort[Outputs] = merge.preferred
-    override def right: InPort[Outputs] = merge.in(0)
-    override def out: OutPort[Outputs] = merge.out
+    override def left: Inlet[Outputs] = merge.preferred
+    override def right: Inlet[Outputs] = merge.in(0)
+    override def out: Outlet[Outputs] = merge.out
 
   }
 
   "preferred merge" must {
-    import akka.stream.scaladsl.FlowGraph.Implicits._
-
     commonTests()
 
     "prefer selected input more than others" in {
@@ -34,9 +32,9 @@ class GraphPreferredMergeSpec extends TwoStreamsSetup {
       val preferred = Source(Stream.fill(numElements)(1))
       val aux = Source(Stream.fill(numElements)(2))
 
-      val result = FlowGraph(Sink.head[Seq[Int]]) { implicit b ⇒
+      val result = Graph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
         sink ⇒
-          val merge = MergePreferred[Int](3)
+          val merge = b.add(MergePreferred[Int](3))
           preferred ~> merge.preferred
 
           merge.out.grouped(numElements * 2) ~> sink.inlet

@@ -214,7 +214,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
 
       val undefinedSink2 = UndefinedSink[String]
 
-      val partial2 = PartialFlowGraph(partial1) { implicit b ⇒
+      val partial2 = PartialGraph.closed(partial1) { implicit b ⇒
         import FlowGraphImplicits._
         b.attachSource(undefinedSource1, in1)
         b.attachSource(undefinedSource2, in2)
@@ -223,17 +223,17 @@ class FlowGraphCompileSpec extends AkkaSpec {
       partial2.undefinedSources should be(Set.empty)
       partial2.undefinedSinks should be(Set(undefinedSink1, undefinedSink2))
 
-      FlowGraph(partial2) { b ⇒
+      Graph.closed(partial2) { b ⇒
         b.attachSink(undefinedSink1, out1)
         b.attachSink(undefinedSink2, out2)
       }.run()
 
-      FlowGraph(partial2) { b ⇒
+      Graph.closed(partial2) { b ⇒
         b.attachSink(undefinedSink1, f1.to(out1))
         b.attachSink(undefinedSink2, f2.to(out2))
       }.run()
 
-      FlowGraph(partial1) { implicit b ⇒
+      Graph.closed(partial1) { implicit b ⇒
         import FlowGraphImplicits._
         b.attachSink(undefinedSink1, f1.to(out1))
         b.attachSource(undefinedSource1, Source(List("a", "b", "c")).via(f1))
@@ -520,8 +520,8 @@ class FlowGraphCompileSpec extends AkkaSpec {
       }
 
       FlowGraph { b ⇒
-        b.importPartialFlowGraph(partial1)
-        b.importPartialFlowGraph(partial2)
+        b.importPartialGraph.closed(partial1)
+        b.importPartialGraph.closed(partial2)
         b.connect(output1, f1, input1)
         b.connect(output2, f2, input2)
       }.run()

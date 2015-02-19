@@ -8,7 +8,7 @@ import akka.stream.testkit.StreamTestKit.SubscriberProbe
 import akka.stream.FlowMaterializer
 
 class SinkSpec extends AkkaSpec {
-  import FlowGraph.Implicits._
+  import Graph.Implicits._
 
   implicit val mat = FlowMaterializer()
 
@@ -17,7 +17,7 @@ class SinkSpec extends AkkaSpec {
     "be composable without importing modules" in {
       val probes = Array.fill(3)(SubscriberProbe[Int])
       val sink = Sink() { implicit b ⇒
-        val bcast = Broadcast[Int](3)
+        val bcast = b.add(Broadcast[Int](3))
         for (i ← 0 to 2) bcast.out(i).filter(_ == i) ~> Sink(probes(i))
         bcast.in
       }
@@ -35,7 +35,7 @@ class SinkSpec extends AkkaSpec {
       val probes = Array.fill(3)(SubscriberProbe[Int])
       val sink = Sink(Sink(probes(0))) { implicit b ⇒
         s0 ⇒
-          val bcast = Broadcast[Int](3)
+          val bcast = b.add(Broadcast[Int](3))
           bcast.out(0) ~> Flow[Int].filter(_ == 0) ~> s0.inlet
           for (i ← 1 to 2) bcast.out(i).filter(_ == i) ~> Sink(probes(i))
           bcast.in
@@ -54,7 +54,7 @@ class SinkSpec extends AkkaSpec {
       val probes = Array.fill(3)(SubscriberProbe[Int])
       val sink = Sink(Sink(probes(0)), Sink(probes(1)))(List(_, _)) { implicit b ⇒
         (s0, s1) ⇒
-          val bcast = Broadcast[Int](3)
+          val bcast = b.add(Broadcast[Int](3))
           bcast.out(0).filter(_ == 0) ~> s0.inlet
           bcast.out(1).filter(_ == 1) ~> s1.inlet
           bcast.out(2).filter(_ == 2) ~> Sink(probes(2))
@@ -74,7 +74,7 @@ class SinkSpec extends AkkaSpec {
       val probes = Array.fill(3)(SubscriberProbe[Int])
       val sink = Sink(Sink(probes(0)), Sink(probes(1)), Sink(probes(2)))(List(_, _, _)) { implicit b ⇒
         (s0, s1, s2) ⇒
-          val bcast = Broadcast[Int](3)
+          val bcast = b.add(Broadcast[Int](3))
           bcast.out(0).filter(_ == 0) ~> s0.inlet
           bcast.out(1).filter(_ == 1) ~> s1.inlet
           bcast.out(2).filter(_ == 2) ~> s2.inlet

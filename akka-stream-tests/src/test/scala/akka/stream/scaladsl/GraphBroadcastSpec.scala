@@ -15,14 +15,14 @@ class GraphBroadcastSpec extends AkkaSpec {
   implicit val materializer = FlowMaterializer(settings)
 
   "A broadcast" must {
-    import FlowGraph.Implicits._
+    import Graph.Implicits._
 
     "broadcast to other subscriber" in {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val bcast = Broadcast[Int](2)
+      Graph.closed() { implicit b ⇒
+        val bcast = b.add(Broadcast[Int](2))
         Source(List(1, 2, 3)) ~> bcast.in
         bcast.out(0) ~> Flow[Int].buffer(16, OverflowStrategy.backpressure) ~> Sink(c1)
         bcast.out(1) ~> Flow[Int].buffer(16, OverflowStrategy.backpressure) ~> Sink(c2)
@@ -50,7 +50,7 @@ class GraphBroadcastSpec extends AkkaSpec {
       val headSink = Sink.head[Seq[Int]]
 
       import system.dispatcher
-      val result = FlowGraph(
+      val result = Graph.closed(
         headSink,
         headSink,
         headSink,
@@ -58,7 +58,7 @@ class GraphBroadcastSpec extends AkkaSpec {
         headSink)(
           (fut1, fut2, fut3, fut4, fut5) ⇒ Future.sequence(List(fut1, fut2, fut3, fut4, fut5))) { implicit b ⇒
             (p1, p2, p3, p4, p5) ⇒
-              val bcast = Broadcast[Int](5)
+              val bcast = b.add(Broadcast[Int](5))
               Source(List(1, 2, 3)) ~> bcast.in
               bcast.out(0).grouped(5) ~> p1.inlet
               bcast.out(1).grouped(5) ~> p2.inlet
@@ -80,7 +80,7 @@ class GraphBroadcastSpec extends AkkaSpec {
         (f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22) ⇒
           Future.sequence(List(f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, f14, f15, f16, f17, f18, f19, f20, f21, f22))
 
-      val result = FlowGraph(
+      val result = Graph.closed(
         headSink, headSink, headSink, headSink, headSink,
         headSink, headSink, headSink, headSink, headSink,
         headSink, headSink, headSink, headSink, headSink,
@@ -88,7 +88,7 @@ class GraphBroadcastSpec extends AkkaSpec {
         headSink, headSink)(combine) {
           implicit b ⇒
             (p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22) ⇒
-              val bcast = Broadcast[Int](22)
+              val bcast = b.add(Broadcast[Int](22))
               Source(List(1, 2, 3)) ~> bcast.in
               bcast.out(0).grouped(5) ~> p1.inlet
               bcast.out(1).grouped(5) ~> p2.inlet
@@ -121,8 +121,8 @@ class GraphBroadcastSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val bcast = Broadcast[Int](2)
+      Graph.closed() { implicit b ⇒
+        val bcast = b.add(Broadcast[Int](2))
         Source(List(1, 2, 3)) ~> bcast.in
         bcast.out(0) ~> Flow[Int] ~> Sink(c1)
         bcast.out(1) ~> Flow[Int] ~> Sink(c2)
@@ -142,8 +142,8 @@ class GraphBroadcastSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val bcast = Broadcast[Int](2)
+      Graph.closed() { implicit b ⇒
+        val bcast = b.add(Broadcast[Int](2))
         Source(List(1, 2, 3)) ~> bcast.in
         bcast.out(0) ~> Flow[Int] ~> Sink(c1)
         bcast.out(1) ~> Flow[Int] ~> Sink(c2)
@@ -164,8 +164,8 @@ class GraphBroadcastSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val bcast = Broadcast[Int](2)
+      Graph.closed() { implicit b ⇒
+        val bcast = b.add(Broadcast[Int](2))
         Source(p1.getPublisher) ~> bcast.in
         bcast.out(0) ~> Flow[Int] ~> Sink(c1)
         bcast.out(1) ~> Flow[Int] ~> Sink(c2)

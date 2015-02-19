@@ -290,8 +290,8 @@ class ActorPublisherSpec extends AkkaSpec with ImplicitSender {
         source2 ⇒
           import Graph.Implicits._
 
-          val merge = Merge[Int](2)
-          val bcast = Broadcast[String](2)
+          val merge = b.add(Merge[Int](2))
+          val bcast = b.add(Broadcast[String](2))
 
           source1 ~> merge.in(0)
           source2.outlet ~> merge.in(1)

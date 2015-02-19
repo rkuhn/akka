@@ -2,7 +2,7 @@ package akka.stream.scaladsl
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
-import FlowGraph.Implicits._
+import Graph.Implicits._
 import akka.stream.FlowMaterializer
 import akka.stream.testkit.AkkaSpec
 import akka.stream.testkit.StreamTestKit.AutoPublisher
@@ -133,7 +133,7 @@ object GraphFlexiRouteSpec {
     val publisher = PublisherProbe[String]
     val s1 = SubscriberProbe[String]
     val s2 = SubscriberProbe[String]
-    FlowGraph() { implicit b ⇒
+    Graph.closed() { implicit b ⇒
       val route = b.add(new TestRoute)
       Source(publisher) ~> route.in
       route.out0 ~> Sink(s1)
@@ -167,8 +167,8 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       // we can't know exactly which elements that go to each output, because if subscription/request
       // from one of the downstream is delayed the elements will be pushed to the other output
       val s = SubscriberProbe[String]
-      val m = FlowGraph() { implicit b ⇒
-        val merge = Merge[String](2)
+      val m = Graph.closed() { implicit b ⇒
+        val merge = b.add(Merge[String](2))
         val route = b.add(new Fair[String])
         in ~> route.in
         route.out(0) ~> merge.in(0)
@@ -186,7 +186,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
     }
 
     "build simple round-robin route" in {
-      val (p1, p2) = FlowGraph(out1, out2)(Pair.apply) { implicit b ⇒
+      val (p1, p2) = Graph.closed(out1, out2)(Pair.apply) { implicit b ⇒
         (o1, o2) ⇒
           val route = b.add(new StrictRoundRobin[String])
           in ~> route.in
@@ -218,7 +218,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       val outA = Sink.publisher[Int]
       val outB = Sink.publisher[String]
 
-      val (p1, p2) = FlowGraph(outA, outB)(Pair.apply) { implicit b ⇒
+      val (p1, p2) = Graph.closed(outA, outB)(Pair.apply) { implicit b ⇒
         (oa, ob) ⇒
           val route = b.add(new Unzip[Int, String])
           Source(List(1 -> "A", 2 -> "B", 3 -> "C", 4 -> "D")) ~> route.in
