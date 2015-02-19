@@ -15,7 +15,6 @@ private[akka] object StreamLayout {
   class InPort
   class OutPort
 
-  // TODO: materialized value combiners in DSL
   // TODO: Materialization order
   // TODO: Special case linear composites
   // TODO: Cycles
@@ -37,8 +36,8 @@ private[akka] object StreamLayout {
     def isFlow: Boolean = (inPorts.size == 1) && (outPorts.size == 1)
 
     def connect[A, B](from: OutPort, to: InPort): Module = {
-      assert(outPorts(from))
-      assert(inPorts(to))
+      require(outPorts(from), s"The output port [$from] is not part of the underlying graph.")
+      require(inPorts(to), s"The input port [$to] is not part of the underlying graph.")
 
       CompositeModule(
         subModules,
@@ -57,8 +56,8 @@ private[akka] object StreamLayout {
     def grow(that: Module): Module = grow(that, Keep.left)
 
     def grow[A, B, C](that: Module, f: (A, B) ⇒ C): Module = {
-      assert(that ne this)
-      assert(!subModules(that))
+      require(that ne this, "A module cannot be added to itself. You should pass a separate instance to grow().")
+      require(!subModules(that), "An existing submodule cannot be added again. All contained modules must be unique.")
 
       val modules1 = if (this.isAtomic) Set(this) else this.subModules
       val modules2 = if (that.isAtomic) Set(that) else that.subModules
@@ -180,7 +179,10 @@ abstract class MaterializerSession(val topLevel: StreamLayout.Module) {
   private val publishers = collection.mutable.HashMap[OutPort, Publisher[Any]]().withDefaultValue(null)
 
   final def materialize(): Any = {
-    assert(topLevel.isRunnable)
+    require(topLevel ne EmptyModule, "An empty module cannot be materialized (EmptyModule was given)")
+    require(
+      topLevel.isRunnable,
+      s"The top level module cannot be materialized because it has unconnected ports: ${(topLevel.inPorts ++ topLevel.outPorts).mkString(", ")}")
     materializeModule(topLevel, topLevel.attributes)
   }
 
