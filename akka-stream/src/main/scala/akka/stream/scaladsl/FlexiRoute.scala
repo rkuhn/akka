@@ -193,7 +193,7 @@ abstract class FlexiRoute[In, S <: Shape](val shape: S, attributes: OperationAtt
   import akka.stream.scaladsl.FlexiRoute._
 
   val module: StreamLayout.Module = new FlexiRouteModule(shape, createRouteLogic)
-  
+
   /**
    * This allows a type-safe mini-DSL for selecting one of several ports, very useful in
    * conjunction with DemandFromAny(...):
@@ -221,7 +221,7 @@ abstract class FlexiRoute[In, S <: Shape](val shape: S, attributes: OperationAtt
       def all: Iterable[Outlet[T]] = ports.values
     }
   }
-  
+
   type PortT = S
 
   /**

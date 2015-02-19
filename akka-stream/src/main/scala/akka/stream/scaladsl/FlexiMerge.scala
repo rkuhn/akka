@@ -218,7 +218,7 @@ object FlexiMerge {
  */
 abstract class FlexiMerge[Out, S <: Shape](val shape: S, attributes: OperationAttributes) extends Graph[S, Unit] {
   val module: StreamLayout.Module = new FlexiMergeModule(shape, createMergeLogic)
-  
+
   type PortT = S
 
   def createMergeLogic(s: S): MergeLogic[Out]

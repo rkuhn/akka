@@ -16,7 +16,7 @@ trait Graph[+S <: Shape, +M] {
   def shape: S
   /**
    * INTERNAL API.
-   * 
+   *
    * Every materializable element must be backed by a stream layout module
    */
   private[stream] def module: StreamLayout.Module

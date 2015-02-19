@@ -20,7 +20,7 @@ import akka.stream.{ Inlet, Outlet, InPort, OutPort }
 import akka.stream.SourceShape
 
 trait SourceModule[+Out, +Mat] extends Module {
-  
+
   val outPort: Outlet[Out] = new Outlet[Out]("Source.out")
   override val shape = new SourceShape[Out](outPort)
 

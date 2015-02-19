@@ -175,7 +175,7 @@ object Balance {
 object Zip {
   import akka.stream.javadsl.japi.Function2
   import akka.japi.Pair
-  
+
   /**
    * Create a new `ZipWith` vertex with the specified input types and zipping-function
    * which creates `akka.japi.Pair`s.

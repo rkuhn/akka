@@ -17,7 +17,7 @@ abstract class Shape {
    * Scala API: get a list of all input ports
    */
   def inlets: immutable.Seq[Inlet[_]]
-  
+
   /**
    * Scala API: get a list of all output ports
    */
@@ -29,12 +29,12 @@ abstract class Shape {
    * type system.
    */
   def deepCopy(): Shape
-  
+
   /**
    * Java API: get a list of all input ports
    */
   def getInlets: java.util.List[Inlet[_]] = inlets.asJava
-  
+
   /**
    * Java API: get a list of all output ports
    */
@@ -47,10 +47,10 @@ abstract class Shape {
 abstract class AbstractShape extends Shape {
   def allInlets: java.util.List[Inlet[_]]
   def allOutlets: java.util.List[Outlet[_]]
-  
+
   final override lazy val inlets = allInlets.asScala.toList
   final override lazy val outlets = allOutlets.asScala.toList
-  
+
   final override def getInlets = allInlets
   final override def getOutlets = allOutlets
 }
@@ -59,7 +59,7 @@ object EmptyShape extends Shape {
   override val inlets = Nil
   override val outlets = Nil
   override def deepCopy() = this
-  
+
   /**
    * Java API: obtain EmptyShape instance
    */
@@ -68,9 +68,8 @@ object EmptyShape extends Shape {
 
 case class AmorphousShape(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]) extends Shape {
   override def deepCopy() = AmorphousShape(
-      inlets.map(i => new Inlet[Any](i.toString)),
-      outlets.map(o => new Outlet[Any](o.toString))
-  ) 
+    inlets.map(i ⇒ new Inlet[Any](i.toString)),
+    outlets.map(o ⇒ new Outlet[Any](o.toString)))
 }
 
 final case class SourceShape[+T](outlet: Outlet[T]) extends Shape {

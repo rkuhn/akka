@@ -269,7 +269,7 @@ object FlexiMerge {
       }
 
     }
-    
+
     private def toAnyRefSeq(l: JList[InPort]) = immutableIndexedSeq(l).asInstanceOf[immutable.Seq[Inlet[AnyRef]]]
 
     def convertReadCondition(condition: ReadCondition): scaladsl.FlexiMerge.ReadCondition[AnyRef] = {

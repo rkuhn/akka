@@ -113,6 +113,9 @@ object Graph extends GraphApply {
      */
     def add[S <: Shape](graph: Graph[S, _]): S = importGraph(graph, Keep.left)
 
+    def add[T](s: Source[T, _]): Outlet[T] = importGraph(s, Keep.left).outlet
+    def add[T](s: Sink[T, _]): Inlet[T] = importGraph(s, Keep.left).inlet
+
     // Assumes that junction is a new instance, so no copying needed here
     private[stream] def addModule(module: Module): Unit = {
       moduleInProgress = moduleInProgress.grow(module)

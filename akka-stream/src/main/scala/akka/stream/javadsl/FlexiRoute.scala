@@ -242,7 +242,7 @@ object FlexiRoute {
       }
 
     }
-    
+
     private def toAnyRefSeq(l: JList[OutPort]) = immutableIndexedSeq(l).asInstanceOf[immutable.Seq[Outlet[AnyRef]]]
 
     def convertDemandCondition[T](condition: DemandCondition[T]): scaladsl.FlexiRoute.DemandCondition[T] =

@@ -173,7 +173,7 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
    * If scaladsl is not a keyed type, javadsl shouldn't be as well.
    */
   def returnTypeMatch(s: Class[_], j: Class[_]): Boolean =
-      (sSource.isAssignableFrom(s) && jSource.isAssignableFrom(j)) ||
+    (sSource.isAssignableFrom(s) && jSource.isAssignableFrom(j)) ||
       (sSink.isAssignableFrom(s) && jSink.isAssignableFrom(j)) ||
       (sFlow.isAssignableFrom(s) && jFlow.isAssignableFrom(j))
 

@@ -27,8 +27,8 @@ private[akka] object StreamLayout {
   trait Module {
     def shape: Shape
 
-    final val inPorts: Set[InPort] = shape.inlets.toSet
-    final val outPorts: Set[OutPort] = shape.outlets.toSet
+    final lazy val inPorts: Set[InPort] = shape.inlets.toSet
+    final lazy val outPorts: Set[OutPort] = shape.outlets.toSet
 
     def isRunnable: Boolean = inPorts.isEmpty && outPorts.isEmpty
     def isSink: Boolean = (inPorts.size == 1) && outPorts.isEmpty
