@@ -87,7 +87,7 @@ private[akka] object Stages {
       Fused(ops, name(ops.map(x ⇒ Logging.simpleName(x).toLowerCase).mkString("+"))) //FIXME change to something more performant for name
   }
 
-  final case class Identity(attributes: OperationAttributes = OperationAttributes.none) extends StageModule {
+  final case class Identity(attributes: OperationAttributes = OperationAttributes.name("identity")) extends StageModule {
     def withAttributes(attributes: OperationAttributes) = copy(attributes = attributes)
     override protected def newInstance: StageModule = this.copy()
   }

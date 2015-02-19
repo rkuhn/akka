@@ -120,7 +120,7 @@ class HttpEntitySpec extends FreeSpec with MustMatchers with BeforeAndAfterAll {
       Await.result(transformed.toStrict(250.millis), 250.millis)
     }
 
-  def duplicateBytesTransformer(): Flow[ByteString, ByteString] =
+  def duplicateBytesTransformer(): Flow[ByteString, ByteString, Unit] =
     Flow[ByteString].transform(() ⇒ StreamUtils.byteStringTransformer(doubleChars, () ⇒ trailer))
 
   def trailer: ByteString = ByteString("--dup")

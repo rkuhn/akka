@@ -15,16 +15,14 @@ import scala.concurrent.{ Promise, ExecutionContext, Future }
 import scala.concurrent.duration.FiniteDuration
 import scala.util.control.NonFatal
 import scala.util.{ Success, Failure }
-import akka.stream.impl.StreamLayout.Module
+import akka.stream.impl.StreamLayout.{ LinearModule, Module }
 import akka.stream.{ Inlet, Outlet, InPort, OutPort }
 import akka.stream.{ Shape, SourceShape }
 import akka.event.Logging.simpleName
 
-abstract class SourceModule[+Out, +Mat](val shape: SourceShape[Out]) extends Module {
+abstract class SourceModule[+Out, +Mat](val shape: SourceShape[Out]) extends LinearModule {
 
   def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Publisher[Out] @uncheckedVariance, Mat)
-
-  override def subModules: Set[Module] = Set.empty
 
   override def replaceShape(s: Shape): Module =
     if (s == shape) this
@@ -37,6 +35,10 @@ abstract class SourceModule[+Out, +Mat](val shape: SourceShape[Out]) extends Mod
     val out = new Outlet[Out](shape.outlet.toString)
     newInstance(SourceShape(out))
   }
+
+  override def inPortOption: Option[InPort] = None
+  override val outPortOption: Option[OutPort] = Some(shape.outlet)
+  override def stages: Vector[LinearModule] = Vector.empty
 }
 
 /**

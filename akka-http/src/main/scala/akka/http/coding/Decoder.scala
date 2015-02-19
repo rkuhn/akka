@@ -24,7 +24,7 @@ trait Decoder {
   def maxBytesPerChunk: Int
   def withMaxBytesPerChunk(maxBytesPerChunk: Int): Decoder
 
-  def decoderFlow: Flow[ByteString, ByteString]
+  def decoderFlow: Flow[ByteString, ByteString, Unit]
   def decode(input: ByteString): ByteString
 }
 object Decoder {
@@ -45,7 +45,7 @@ trait StreamDecoder extends Decoder { outer ⇒
         outer.newDecompressorStage(maxBytesPerChunk)
     }
 
-  def decoderFlow: Flow[ByteString, ByteString] =
+  def decoderFlow: Flow[ByteString, ByteString, Unit] =
     Flow[ByteString].transform(newDecompressorStage(maxBytesPerChunk))
 
   def decode(input: ByteString): ByteString = decodeWithLimits(input)

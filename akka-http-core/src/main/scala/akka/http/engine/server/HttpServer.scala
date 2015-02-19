@@ -5,7 +5,9 @@
 package akka.http.engine.server
 
 import akka.stream.impl.BlackholeSink
+import akka.stream.scaladsl.Graphs._
 
+import scala.collection.immutable.Seq
 import scala.util.control.NonFatal
 import akka.actor.{ ActorRef, Props }
 import akka.util.ByteString
@@ -28,9 +30,30 @@ import akka.stream.OverflowStrategy
  */
 private[http] object HttpServer {
 
-  def serverFlowToTransport(serverFlow: Flow[HttpRequest, HttpResponse],
-                            settings: ServerSettings,
-                            log: LoggingAdapter)(implicit mat: FlowMaterializer): Flow[ByteString, ByteString] = {
+  case class HttpServerPorts(
+    bytesIn: InPort[ByteString],
+    bytesOut: OutPort[ByteString],
+    httpResponses: InPort[HttpResponse],
+    httpRequests: OutPort[HttpRequest]) extends Ports {
+
+    override def inlets: Seq[InPort[_]] = bytesIn :: httpResponses :: Nil
+    override def outlets: Seq[OutPort[_]] = bytesOut :: httpRequests :: Nil
+
+    /**
+     * Create a copy of this Ports object, returning the same type as the
+     * original; this constraint can unfortunately not be expressed in the
+     * type system.
+     */
+    override def deepCopy(): Ports = HttpServerPorts(
+      new InPort(bytesIn.toString),
+      new OutPort(bytesOut.toString),
+      new InPort(httpRequests.toString),
+      new OutPort(httpResponses.toString))
+
+  }
+
+  def serverBlueprint(settings: ServerSettings,
+                      log: LoggingAdapter)(implicit mat: FlowMaterializer): Graph[HttpServerPorts, Unit] = {
 
     // the initial header parser we initially use for every connection,
     // will not be mutated, all "shared copy" parsers copy on first-write into the header cache
@@ -52,10 +75,7 @@ private[http] object HttpServer {
       }
     }
 
-    val bypassFanout = Broadcast[RequestOutput](OperationAttributes.name("bypassFanout"))
-    val bypassMerge = new BypassMerge(settings, log)
-
-    val requestParsing = Flow[ByteString].section(name("rootParser"))(_.transform(() ⇒
+    val requestParsingFlow = Flow[ByteString].section(name("rootParser"))(_.transform(() ⇒
       // each connection uses a single (private) request parser instance for all its requests
       // which builds a cache of all header instances seen on that connection
       rootParser.createShallowCopy(() ⇒ oneHundredContinueRef).stage))
@@ -69,7 +89,7 @@ private[http] object HttpServer {
             val effectiveUri = HttpRequest.effectiveUri(uri, headers, securedConnection = false, settings.defaultHostHeader)
             val effectiveMethod = if (method == HttpMethods.HEAD && settings.transparentHeadRequests) HttpMethods.GET else method
             HttpRequest(effectiveMethod, effectiveUri, headers, createEntity(entityParts), protocol)
-          case (_, src) ⇒ src.runWith(BlackholeSink)
+          case (_, src) ⇒ src.runWith(Sink.ignore)
         }.collect {
           case r: HttpRequest ⇒ r
         }.buffer(1, OverflowStrategy.backpressure)
@@ -91,39 +111,46 @@ private[http] object HttpServer {
         .flatten(FlattenStrategy.concat)
         .section(name("errorLogger"))(_.transform(() ⇒ errorLogger(log, "Outgoing response stream error")))
 
-    val transportIn = UndefinedSource[ByteString]
-    val transportOut = UndefinedSink[ByteString]
+    FlowGraph.partial(requestParsingFlow, rendererPipeline)(Keep.right) { implicit b ⇒
+      (requestParsing, renderer) ⇒
+        import FlowGraph.Implicits._
 
-    import FlowGraphImplicits._
+        val bypassFanout = Broadcast[RequestOutput](2, OperationAttributes.name("bypassFanout"))
+        val bypassMerge = b.add(new BypassMerge(settings, log))
+        val bypassInput = bypassMerge.in0
+        val bypassOneHundredContinueInput = bypassMerge.in1
+        val bypassApplicationInput = bypassMerge.in2
 
-    Flow() { implicit b ⇒
-      //FIXME: the graph is unnecessary after fixing #15957
-      transportIn ~> requestParsing ~> bypassFanout ~> requestPreparation ~> serverFlow ~> bypassMerge.applicationInput ~> rendererPipeline ~> transportOut
-      bypassFanout ~> bypass ~> bypassMerge.bypassInput
-      oneHundredContinueSource ~> bypassMerge.oneHundredContinueInput
+        requestParsing.outlet ~> bypassFanout.in
+        bypassMerge.out ~> renderer.inlet
+        val requestsIn = (bypassFanout.out(0) ~> requestPreparation).outlet
 
-      b.allowCycles()
+        bypassFanout.out(1) ~> bypass ~> bypassInput
+        oneHundredContinueSource ~> bypassOneHundredContinueInput
 
-      transportIn -> transportOut
+        HttpServerPorts(
+          // FIXME FIXME FIXME: This resolveport should not be here, this is a quick workaround of a core bug
+          // of graph importing
+          b.resolvePort(requestParsing.inlet).asInstanceOf[InPort[ByteString]],
+          b.resolvePort(renderer.outlet).asInstanceOf[OutPort[ByteString]],
+          bypassApplicationInput,
+          requestsIn)
     }
+
   }
 
   class BypassMerge(settings: ServerSettings, log: LoggingAdapter)
-    extends FlexiMerge[ResponseRenderingContext](OperationAttributes.name("BypassMerge")) {
+    extends FlexiMerge[ResponseRenderingContext, FanIn3[RequestOutput, OneHundredContinue.type, HttpResponse, ResponseRenderingContext]](new FanIn3, OperationAttributes.name("BypassMerge")) {
     import FlexiMerge._
-    val bypassInput = createInputPort[RequestOutput]()
-    val oneHundredContinueInput = createInputPort[OneHundredContinue.type]()
-    val applicationInput = createInputPort[HttpResponse]()
 
-    def createMergeLogic() = new MergeLogic[ResponseRenderingContext] {
+    def createMergeLogic(p: PortT) = new MergeLogic[ResponseRenderingContext] {
       var requestStart: RequestStart = _
 
-      override def inputHandles(inputCount: Int) = {
-        require(inputCount == 3, s"BypassMerge must have 3 connected inputs, was $inputCount")
-        Vector(bypassInput, oneHundredContinueInput, applicationInput)
-      }
+      val bypassInput: InPort[RequestOutput] = p.in0
+      val oneHundredContinueInput: InPort[OneHundredContinue.type] = p.in1
+      val applicationInput: InPort[HttpResponse] = p.in2
 
-      override val initialState: State[Any] = State[Any](Read(bypassInput)) {
+      override val initialState: State[RequestOutput] = State[RequestOutput](Read(bypassInput)) {
         case (ctx, _, requestStart: RequestStart) ⇒
           this.requestStart = requestStart
           ctx.changeCompletionHandling(waitingForApplicationResponseCompletionHandling)
@@ -135,7 +162,7 @@ private[http] object HttpServer {
       override val initialCompletionHandling = eagerClose
 
       val waitingForApplicationResponse =
-        State[Any](ReadAny(oneHundredContinueInput, applicationInput)) {
+        State[Any](ReadAny(oneHundredContinueInput.asInstanceOf[InPort[Any]] :: applicationInput.asInstanceOf[InPort[Any]] :: Nil)) {
           case (ctx, _, response: HttpResponse) ⇒
             // see the comment on [[OneHundredContinue]] for an explanation of the closing logic here (and more)
             val close = requestStart.closeAfterResponseCompletion || requestStart.expect100ContinueResponsePending

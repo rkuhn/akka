@@ -43,6 +43,12 @@ private[akka] object StreamLayout {
     def isSource: Boolean = (outPorts.size == 1) && inPorts.isEmpty
     def isFlow: Boolean = (inPorts.size == 1) && (outPorts.size == 1)
 
+    def growConnect(that: Module, from: OutPort, to: InPort): Module =
+      growConnect(that, from, to, Keep.left)
+
+    def growConnect[A, B, C](that: Module, from: OutPort, to: InPort, f: (A, B) ⇒ C): Module =
+      this.grow(that, f).connect(from, to)
+
     def connect[A, B](from: OutPort, to: InPort): Module = {
       if (debug) validate()
 
@@ -199,20 +205,161 @@ private[akka] object StreamLayout {
       if (s == EmptyShape) this
       else throw new UnsupportedOperationException("cannot replace the shape of the EmptyModule")
 
-    override def grow(that: Module): Module = that
-    override def wrap(): Module = this
-
     override def subModules: Set[Module] = Set.empty
 
     override def withAttributes(attributes: OperationAttributes): Module =
       throw new UnsupportedOperationException("EmptyModule cannot carry attributes")
     override def attributes = OperationAttributes.none
 
-    override def carbonCopy: Module = this
-
     override def isRunnable: Boolean = false
     override def isAtomic: Boolean = false
     override def materializedValueComputation: MaterializedValueNode = Ignore
+
+    override def grow(that: Module): Module = that
+    override def grow[A, B, C](that: Module, f: (A, B) ⇒ C): Module = {
+      // All empty things materialize to Unit
+      that.transformMaterializedValue(f.asInstanceOf[(Any, Any) ⇒ Any]((), _))
+    }
+
+    override def growConnect(that: Module, from: OutPort, to: InPort): Module = that
+    override def growConnect[A, B, C](that: Module, from: OutPort, to: InPort, f: (A, B) ⇒ C): Module = {
+      // All empty things materialize to Unit
+      that.transformMaterializedValue(f.asInstanceOf[(Any, Any) ⇒ Any]((), _))
+    }
+
+    override def wrap(): Module = this
+
+    override def toString: String = "EmptyModule"
+
+  }
+
+  trait LinearModule extends Module {
+    def inPortOption: Option[InPort]
+    def outPortOption: Option[OutPort]
+
+    def stages: Vector[LinearModule]
+
+    final override lazy val inPorts: Set[InPort] = inPortOption match {
+      case None    ⇒ Set.empty
+      case Some(p) ⇒ Set(p)
+    }
+    final override lazy val outPorts: Set[OutPort] = outPortOption match {
+      case None    ⇒ Set.empty
+      case Some(p) ⇒ Set(p)
+    }
+
+    final override lazy val subModules: Set[Module] = stages.toSet
+
+    final override lazy val downstreams: Map[OutPort, InPort] = {
+      val own = stages.iterator.take(stages.size - 1).zip(stages.iterator.drop(1)).map {
+        case (upstream, downstream) ⇒
+          upstream.outPortOption.get -> downstream.inPortOption.get
+      }.toMap
+      stages.iterator.foldLeft(own)(_ ++ _.downstreams)
+
+    }
+
+    final override lazy val upstreams: Map[InPort, OutPort] = {
+      val own = stages.iterator.take(stages.size - 1).zip(stages.iterator.drop(1)).map {
+        case (upstream, downstream) ⇒
+          downstream.inPortOption.get -> upstream.outPortOption.get
+      }.toMap
+      stages.iterator.foldLeft(own)(_ ++ _.upstreams)
+    }
+
+    final override def isRunnable: Boolean = inPortOption.isEmpty && outPortOption.isEmpty
+    final override def isSink: Boolean = inPortOption.isDefined && outPortOption.isEmpty
+    final override def isSource: Boolean = outPortOption.isDefined && inPortOption.isEmpty
+    final override def isFlow: Boolean = inPortOption.isDefined && outPortOption.isDefined
+    final override def isAtomic: Boolean = stages.isEmpty
+
+    final override def growConnect[A, B, C](that: Module, from: OutPort, to: InPort, f: (A, B) ⇒ C): Module = {
+      require(that ne EmptyModule, "Cannot add an Empty module")
+      that match {
+
+        case linearThat: LinearModule ⇒
+          val stagesThis = if (this.isAtomic) Vector(this) else this.stages
+          val stagesThat = if (linearThat.isAtomic) Vector(linearThat) else linearThat.stages
+
+          if (outPortOption.isDefined && outPortOption.get == from) {
+            LinearCompositeModule(
+              inPortOption = inPortOption,
+              outPortOption = linearThat.outPortOption,
+              stages = stagesThis ++ stagesThat,
+              materializedValueComputation = if (f eq Keep.left) materializedValueComputation
+              else if (f eq Keep.right) linearThat.materializedValueComputation
+              else Combine(f.asInstanceOf[(Any, Any) ⇒ Any], this.materializedValueComputation, linearThat.materializedValueComputation),
+              carbonCopy = () ⇒ {
+                val thisCopy = this.carbonCopy()
+                val thatCopy = linearThat.carbonCopy()
+                Mapping(
+                  thisCopy.module.growConnect(thatCopy.module, thisCopy.outPorts(from), thatCopy.inPorts(to), f),
+                  thisCopy.inPorts ++ thatCopy.inPorts,
+                  thisCopy.outPorts ++ thatCopy.outPorts)
+              },
+              OperationAttributes.none)
+          } else if (inPortOption.isDefined && inPortOption.get == to) {
+            LinearCompositeModule(
+              inPortOption = linearThat.inPortOption,
+              outPortOption = outPortOption,
+              stages = stagesThat ++ stagesThis,
+              materializedValueComputation = if (f eq Keep.left) materializedValueComputation
+              else if (f eq Keep.right) linearThat.materializedValueComputation
+              else Combine(f.asInstanceOf[(Any, Any) ⇒ Any], this.materializedValueComputation, linearThat.materializedValueComputation),
+              carbonCopy = () ⇒ {
+                val thisCopy = this.carbonCopy()
+                val thatCopy = linearThat.carbonCopy()
+                Mapping(
+                  thisCopy.module.growConnect(thatCopy.module, thatCopy.outPorts(from), thisCopy.inPorts(to), f),
+                  thisCopy.inPorts ++ thatCopy.inPorts,
+                  thisCopy.outPorts ++ thatCopy.outPorts)
+              },
+              OperationAttributes.none)
+          } else {
+            super.growConnect(that, from, to, f)
+          }
+        case _ ⇒
+          super.growConnect(that, from, to, f)
+      }
+    }
+
+    final override def wrap(): Module = {
+      LinearCompositeModule(
+        inPortOption,
+        outPortOption,
+        Vector(this),
+        Atomic(this),
+        carbonCopy = () ⇒ {
+          val copy = this.carbonCopy()
+          copy.copy(module = copy.module.wrap())
+        },
+        OperationAttributes.none)
+    }
+
+    override def toString: String = attributes.nameLifted.getOrElse(
+      stages.map { s ⇒
+        if (s.isAtomic) s.toString
+        else s"[${s.toString}]"
+      }.mkString(" ~> "))
+
+  }
+
+  // Optimized representation for purely linear layouts. It roughly corresponds to the old Pipe with possibly sink or
+  // source added
+  final case class LinearCompositeModule(
+    inPortOption: Option[InPort],
+    outPortOption: Option[OutPort],
+    stages: Vector[LinearModule],
+    override val materializedValueComputation: MaterializedValueNode,
+    override val carbonCopy: () ⇒ Mapping,
+    attributes: OperationAttributes) extends LinearModule {
+
+    override def withAttributes(attributes: OperationAttributes): Module = copy(
+      attributes = attributes,
+      carbonCopy = () ⇒ {
+        val that = this.carbonCopy()
+        that.copy(module = that.module.withAttributes(attributes))
+      })
   }
 
   final case class CompositeModule(

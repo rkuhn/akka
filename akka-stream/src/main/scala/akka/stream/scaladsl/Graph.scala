@@ -246,10 +246,10 @@ object FlowGraph extends GraphApply {
     }
 
     import scala.language.implicitConversions
-    
+
     implicit def port2flow[T](from: Outlet[T])(implicit b: Builder): PortOps[T, Unit] =
       new PortOps(from, b)
-    
+
     implicit def fanOut2flow[I, O](j: UniformFanOutShape[I, O])(implicit b: Builder): PortOps[O, Unit] =
       new PortOps(find(b, j, 0), b)
 

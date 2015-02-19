@@ -5,7 +5,7 @@ package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicReference
 import akka.actor.{ ActorRef, Props }
-import akka.stream.impl.StreamLayout.Module
+import akka.stream.impl.StreamLayout.{ LinearModule, Module }
 import akka.stream.scaladsl.OperationAttributes._
 import akka.stream.scaladsl.{ Sink, OperationAttributes, Source }
 import akka.stream.stage._
@@ -17,11 +17,9 @@ import scala.util.{ Failure, Success, Try }
 import akka.stream.{ Shape, SinkShape }
 import akka.event.Logging.simpleName
 
-abstract class SinkModule[-In, Mat](val shape: SinkShape[In]) extends Module {
+abstract class SinkModule[-In, Mat](val shape: SinkShape[In]) extends LinearModule {
 
   def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Subscriber[In] @uncheckedVariance, Mat)
-
-  override def subModules: Set[Module] = Set.empty
 
   override def replaceShape(s: Shape): Module =
     if (s == shape) this
@@ -34,6 +32,10 @@ abstract class SinkModule[-In, Mat](val shape: SinkShape[In]) extends Module {
     val in = new Inlet[In](shape.inlet.toString)
     newInstance(SinkShape(in))
   }
+
+  override val inPortOption: Option[InPort] = Some(shape.inlet)
+  override def outPortOption: Option[OutPort] = None
+  override def stages: Vector[LinearModule] = Vector.empty
 }
 
 /**

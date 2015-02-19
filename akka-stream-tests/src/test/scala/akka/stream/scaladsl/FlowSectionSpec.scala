@@ -23,14 +23,6 @@ class FlowSectionSpec extends AkkaSpec(FlowSectionSpec.config) {
 
   "A flow" can {
 
-    "have an op with a name" in {
-      //FIXME: Flow has no simple toString anymore
-      pending
-      val n = "Converter to Int"
-      val f = Flow[Int].section(name(n))(_.map(_.toInt))
-      f.toString should include(n)
-    }
-
     "have an op with a different dispatcher" in {
       val flow = Flow[Int].section(dispatcher("my-dispatcher1"))(_.map(sendThreadNameTo(testActor)))
 

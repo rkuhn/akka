@@ -149,6 +149,6 @@ abstract class CoderSpec extends WordSpec with CodecSpecSupport with Inspectors 
     ByteString(output.toByteArray)
   }
 
-  def decodeChunks(input: Source[ByteString]): ByteString =
+  def decodeChunks(input: Source[ByteString, _]): ByteString =
     input.via(Coder.decoderFlow).join.awaitResult(3.seconds)
 }

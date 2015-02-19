@@ -5,7 +5,7 @@ package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
 import akka.stream.{ SourceShape, Inlet, Outlet }
-import akka.stream.impl.StreamLayout.Module
+import akka.stream.impl.StreamLayout.{ EmptyModule, Module }
 import akka.stream.stage.{ TerminationDirective, Directive, Context, PushPullStage }
 
 import scala.annotation.unchecked.uncheckedVariance
@@ -45,12 +45,14 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
    * Transform this [[akka.stream.scaladsl.Source]] by appending the given processing stages.
    */
   def viaMat[T, Mat2, Mat3](flow: Flow[Out, T, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Source[T, Mat3] = {
-    val flowCopy = flow.module.carbonCopy
-    new Source(
-      module
-        .grow(flowCopy, combine)
-        .connect(shape.outlet, flowCopy.shape.inlets.head)
-        .replaceShape(SourceShape(flowCopy.shape.outlets.head)))
+    if (flow.isEmpty) this.asInstanceOf[Source[T, Mat3]]
+    else {
+      val flowCopy = flow.module.carbonCopy
+      new Source(
+        module
+          .growConnect(flowCopy, shape.outlet, flowCopy.shape.inlets.head, combine)
+          .replaceShape(SourceShape(flowCopy.shape.outlets.head)))
+    }
   }
 
   /**
@@ -65,16 +67,8 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
    */
   def toMat[Mat2, Mat3](sink: Sink[Out, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
     val sinkCopy = sink.module.carbonCopy
-    RunnableFlow(module
-      .grow(sinkCopy, combine)
-      .connect(shape.outlet, sinkCopy.shape.inlets.head))
+    RunnableFlow(module.growConnect(sinkCopy, shape.outlet, sinkCopy.shape.inlets.head, combine))
   }
-
-  /**
-   * Transform only the materialized value of this Source, leaving all other properties as they were.
-   */
-  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Repr[Out, Mat2] =
-    new Source(module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]))
 
   /** INTERNAL API */
   override private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat] = {
@@ -82,16 +76,14 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
     // FIXME: currently combine ignores here
     new Source(
       module
-        .grow(op)
-        .connect(shape.outlet, op.inPort)
+        .growConnect(op, shape.outlet, op.inPort)
         .replaceShape(SourceShape(op.outPort)))
   }
 
   override private[scaladsl] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
     new Source(
       module
-        .grow(op, Keep.right)
-        .connect(shape.outlet, op.inPort)
+        .growConnect(op, shape.outlet, op.inPort, Keep.right)
         .replaceShape(SourceShape(op.outPort)))
   }
 
@@ -144,8 +136,7 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
     val subFlow = section(Flow[O2]).module.carbonCopy.withAttributes(attributes)
     new Source(
       module
-        .grow(subFlow.wrap(), combine)
-        .connect(shape.outlet, subFlow.shape.inlets.head)
+        .growConnect(subFlow.wrap(), shape.outlet, subFlow.shape.inlets.head, combine)
         .replaceShape(SourceShape(subFlow.shape.outlets.head)))
   }
 
@@ -154,8 +145,9 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
   }
 
   override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] =
-    new Source(module.withAttributes(attr))
+    new Source(module.withAttributes(attr).wrap())
 
+  override def toString: String = s"Source[${module.toString} ~>]"
 }
 
 object Source extends SourceApply {
@@ -267,7 +259,7 @@ object Source extends SourceApply {
         }
       }
 
-    })
+    }).withAttributes(OperationAttributes.name("iterable"))
   }
 
   /**
