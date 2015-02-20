@@ -342,7 +342,7 @@ object FlowGraph extends FlowGraphApply {
 
       def outlet: OutPort[Out] = port.asInstanceOf[OutPort[Out]]
 
-      override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] =
+      override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] =
         throw new UnsupportedOperationException("Cannot set attributes on chained ops from a junction output port")
 
       override private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat] = {

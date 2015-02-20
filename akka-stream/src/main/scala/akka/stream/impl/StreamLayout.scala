@@ -22,6 +22,7 @@ private[akka] object StreamLayout {
   sealed trait MaterializedValueNode
   case class Combine(f: (Any, Any) ⇒ Any, dep1: MaterializedValueNode, dep2: MaterializedValueNode) extends MaterializedValueNode
   case class Atomic(module: Module) extends MaterializedValueNode
+  case class Transform(f: Any ⇒ Any, dep: MaterializedValueNode) extends MaterializedValueNode
   case object Ignore extends MaterializedValueNode
 
   case class Mapping(module: Module, inPorts: Map[InPort, InPort], outPorts: Map[OutPort, OutPort])
@@ -49,6 +50,21 @@ private[akka] object StreamLayout {
         carbonCopy = () ⇒ {
           val mapping = this.carbonCopy()
           mapping.copy(module = mapping.module.connect(mapping.outPorts(from), mapping.inPorts(to)))
+        },
+        attributes)
+    }
+
+    def transformMaterializedValue(f: Any ⇒ Any): Module = {
+      CompositeModule(
+        subModules = this.subModules,
+        inPorts,
+        outPorts,
+        downstreams,
+        upstreams,
+        Transform(f, this.materializedValueComputation),
+        carbonCopy = () ⇒ {
+          val copy = this.carbonCopy()
+          copy.copy(module = copy.module.transformMaterializedValue(f))
         },
         attributes)
     }
@@ -208,6 +224,7 @@ abstract class MaterializerSession(val topLevel: StreamLayout.Module) {
   private def resolveMaterialized(matNode: MaterializedValueNode, materializedValues: collection.Map[Module, Any]): Any = matNode match {
     case Atomic(m)          ⇒ materializedValues(m)
     case Combine(f, d1, d2) ⇒ f(resolveMaterialized(d1, materializedValues), resolveMaterialized(d2, materializedValues))
+    case Transform(f, d)    ⇒ f(resolveMaterialized(d, materializedValues))
     case Ignore             ⇒ ()
   }
 

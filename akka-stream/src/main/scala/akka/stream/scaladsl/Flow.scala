@@ -74,6 +74,14 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
       inlet)
   }
 
+  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Repr[Out, Mat2] = {
+    val sourceCopy = module.carbonCopy()
+    new Flow(
+      sourceCopy.module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]),
+      sourceCopy.inPorts(inlet).asInstanceOf[Graphs.InPort[In]],
+      sourceCopy.outPorts(outlet).asInstanceOf[Graphs.OutPort[Out]])
+  }
+
   /**
    * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
    */
@@ -85,8 +93,8 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
         .connect(flowCopy.outlet, this.inlet))
   }
 
-  def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[Unit] = {
-    join(flow, (_: Mat, _: Mat2) ⇒ ())
+  def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[Mat2] = {
+    join(flow, (_: Mat, m2: Mat2) ⇒ m2)
   }
 
   // FIXME: Materialized value is not combined!
@@ -114,8 +122,7 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
     new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Graphs.OutPort[U]])
   }
 
-  /** INTERNAL API */
-  override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
+  override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
     val newModule = module.withAttributes(attr)
     new Flow(newModule, newModule.inPorts.head.asInstanceOf[Graphs.InPort[In]], newModule.outPorts.head.asInstanceOf[Graphs.OutPort[Out]])
   }
@@ -129,7 +136,7 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
     source.via(this, (sm: Mat1, fm: Mat) ⇒ sm).to(sink, (sourcem: Mat1, sinkm: Mat2) ⇒ (sourcem, sinkm)).run()
   }
 
-  def section[I <: In, O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[I, O, Mat3] = {
+  def section[O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[In, O, Mat3] = {
     val subFlow = section(Flow[O2]).withAttributes(attributes).carbonCopy()
     new Flow(
       module
@@ -142,8 +149,8 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
   /**
    * Applies given [[OperationAttributes]] to a given section.
    */
-  def section[I <: In, O, O2 >: Out, Mat2](attributes: OperationAttributes)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[I, O, Mat2] = {
-    this.section[I, O, O2, Mat2, Mat2](attributes, (parentm: Mat, subm: Mat2) ⇒ subm)(section)
+  def section[O, O2 >: Out, Mat2](attributes: OperationAttributes)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[In, O, Mat2] = {
+    this.section[O, O2, Mat2, Mat2](attributes, (parentm: Mat, subm: Mat2) ⇒ subm)(section)
   }
 
 }
@@ -478,8 +485,7 @@ trait FlowOps[+Out, +Mat] {
   private[akka] def timerTransform[U](mkStage: () ⇒ TimerTransformer[Out, U]): Repr[U, Mat] =
     andThen(TimerTransform(mkStage.asInstanceOf[() ⇒ TimerTransformer[Any, Any]]))
 
-  /** INTERNAL API */
-  private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat]
+  def withAttributes(attr: OperationAttributes): Repr[Out, Mat]
 
   /** INTERNAL API */
   private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat]

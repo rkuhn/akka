@@ -55,7 +55,7 @@ object StreamTcp extends ExtensionId[StreamTcp] with ExtensionIdProvider {
      * Convenience shortcut for: `flow.join(handler).run()`.
      */
     def handleWith[Mat](handler: Flow[ByteString, ByteString, Mat])(implicit materializer: FlowMaterializer): Mat =
-      flow.join(handler, (_: Unit, m: Mat) ⇒ m).run()
+      flow.join(handler).run()
 
   }
 

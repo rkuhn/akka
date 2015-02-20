@@ -65,6 +65,13 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
       .connect(outlet, sinkCopy.inlet))
   }
 
+  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Repr[Out, Mat2] = {
+    val sourceCopy = module.carbonCopy()
+    new Source(
+      sourceCopy.module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]),
+      sourceCopy.outPorts(outlet).asInstanceOf[Graphs.OutPort[Out]])
+  }
+
   /** INTERNAL API */
   override private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat] = {
     // No need to copy here, op is a fresh instance
@@ -107,7 +114,7 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
    * emitted by that source is emitted after the last element of this
    * source.
    */
-  def concat[Out2 >: Out, Mat2](second: Source[Out2, Mat2]): Source[Out2, (Mat, Mat2)] = Source.concat(this, second)
+  def concat[Out2 >: Out](second: Source[Out2, _]): Source[Out2, Unit] = Source.concat(this, second)
 
   /**
    * Concatenates a second source so that the first element
@@ -116,7 +123,7 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
    *
    * This is a shorthand for [[concat]]
    */
-  def ++[Out2 >: Out, Mat2](second: Source[Out2, Mat2]): Source[Out2, (Mat, Mat2)] = concat(second)
+  def ++[Out2 >: Out](second: Source[Out2, _]): Source[Out2, Unit] = concat(second)
 
   /**
    * Applies given [[OperationAttributes]] to a given section.
@@ -134,8 +141,7 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
     this.section[O, O2, Mat2, Mat2](attributes, (parentm: Mat, subm: Mat2) ⇒ subm)(section)
   }
 
-  /** INTERNAL API */
-  override private[scaladsl] def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
+  override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
     val newModule = module.withAttributes(attr)
     new Source(newModule, newModule.outPorts.head.asInstanceOf[Graphs.OutPort[Out]])
   }
@@ -273,7 +279,14 @@ object Source extends SourceApply {
    * emitted by the second source is emitted after the last element of the first
    * source.
    */
-  def concat[T, Mat1, Mat2](source1: Source[T, Mat1], source2: Source[T, Mat2]): Source[T, (Mat1, Mat2)] = ??? // FIXME
+  def concat[T](source1: Source[T, _], source2: Source[T, _]): Source[T, Unit] = {
+    source1.via(Flow() { implicit builder ⇒
+      import FlowGraph.Implicits._
+      val concat = Concat[T]()
+      source2 ~> concat.second
+      (concat.first, concat.out)
+    })
+  }
 
   /**
    * Creates a `Source` that is materialized as a [[org.reactivestreams.Subscriber]]

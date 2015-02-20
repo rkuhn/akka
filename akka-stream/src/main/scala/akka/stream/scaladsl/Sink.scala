@@ -38,6 +38,13 @@ final class Sink[-In, Mat](m: StreamLayout.Module, val inlet: Graphs.InPort[In])
   def runWith[Mat2](source: Source[In, Mat2])(implicit materializer: FlowMaterializer): Mat =
     source.to(this).run()
 
+  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Sink[In, Mat2] = {
+    val sinkCopy = module.carbonCopy()
+    new Sink(
+      sinkCopy.module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]),
+      sinkCopy.inPorts(inlet).asInstanceOf[Graphs.InPort[In]])
+  }
+
   def withAttributes(attr: OperationAttributes): Sink[In, Mat] = {
     val newModule = module.withAttributes(attr)
     new Sink(newModule, newModule.inPorts.head.asInstanceOf[Graphs.InPort[In]])
