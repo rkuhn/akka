@@ -6,13 +6,13 @@ package akka.stream.impl
 import akka.stream.scaladsl._
 import akka.stream.testkit.AkkaSpec
 import org.reactivestreams.{ Subscription, Subscriber, Publisher }
+import akka.stream._
 
 class StreamLayoutSpec extends AkkaSpec {
   import StreamLayout._
 
   def testAtomic(inPortCount: Int, outPortCount: Int): Module = new Module {
-    override val inPorts: Set[InPort] = List.fill(inPortCount)(new InPort).toSet
-    override val outPorts: Set[OutPort] = List.fill(outPortCount)(new OutPort).toSet
+    override val shape = AmorphousShape(List.fill(inPortCount)(new Inlet("")), List.fill(outPortCount)(new Outlet("")))
 
     override def subModules: Set[Module] = Set.empty
     override def downstreams: Map[OutPort, InPort] = Map.empty

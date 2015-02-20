@@ -1,7 +1,6 @@
 package akka.stream.testkit
 
-import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.{ FlowMaterializer, MaterializerSettings }
+import akka.stream.{ FlowMaterializer, MaterializerSettings, Inlet, Outlet }
 import akka.stream.scaladsl._
 import org.reactivestreams.Publisher
 import scala.collection.immutable
@@ -18,18 +17,18 @@ abstract class TwoStreamsSetup extends AkkaSpec {
 
   type Outputs
 
-  abstract class Fixture(b: FlowGraphBuilder) {
-    def left: Graphs.InPort[Int]
-    def right: Graphs.InPort[Int]
-    def out: Graphs.OutPort[Outputs]
+  abstract class Fixture(b: Graph.Builder) {
+    def left: Inlet[Int]
+    def right: Inlet[Int]
+    def out: Outlet[Outputs]
   }
 
-  def fixture(b: FlowGraphBuilder): Fixture
+  def fixture(b: Graph.Builder): Fixture
 
   def setup(p1: Publisher[Int], p2: Publisher[Int]) = {
     val subscriber = StreamTestKit.SubscriberProbe[Outputs]()
-    FlowGraph() { implicit b ⇒
-      import FlowGraph.Implicits._
+    Graph.closed() { implicit b ⇒
+      import Graph.Implicits._
       val f = fixture(b)
 
       Source(p1) ~> f.left

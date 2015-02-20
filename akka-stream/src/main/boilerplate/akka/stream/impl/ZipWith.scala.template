@@ -5,12 +5,10 @@ package akka.stream.impl
 
 import scala.collection.immutable
 import akka.actor.Props
-import akka.stream.MaterializerSettings
+import akka.stream.{ MaterializerSettings, Shape, Inlet, Outlet }
 import akka.stream.impl.GenJunctions._
-import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ InPort, OutPort, Ports }
 
-[2..19#/** INTERNAL API */
+[2..20#/** INTERNAL API */
 private[akka] final class Zip1With(_settings: MaterializerSettings, f: Function1[[#Any#], Any])
   extends FanIn(_settings, inputCount = 1) {
 

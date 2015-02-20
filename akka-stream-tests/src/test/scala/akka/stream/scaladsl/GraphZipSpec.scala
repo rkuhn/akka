@@ -3,22 +3,21 @@
  */
 package akka.stream.scaladsl
 
-import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ OutPort, InPort }
-import akka.stream.scaladsl.FlowGraph.Implicits._
 import akka.stream.testkit.StreamTestKit
 import akka.stream.testkit.TwoStreamsSetup
+import akka.stream._
 
 class GraphZipSpec extends TwoStreamsSetup {
+  import Graph.Implicits._
 
   override type Outputs = (Int, Int)
 
-  override def fixture(b: FlowGraphBuilder): Fixture = new Fixture(b: FlowGraphBuilder) {
-    val zip = Zip[Int, Int]()(b)
+  override def fixture(b: Graph.Builder): Fixture = new Fixture(b: Graph.Builder) {
+    val zip = b.add(Zip[Int, Int]())
 
-    override def left: InPort[Int] = zip.left
-    override def right: InPort[Int] = zip.right
-    override def out: OutPort[(Int, Int)] = zip.out
+    override def left: Inlet[Int] = zip.in0
+    override def right: Inlet[Int] = zip.in1
+    override def out: Outlet[(Int, Int)] = zip.out
   }
 
   "Zip" must {
@@ -26,11 +25,11 @@ class GraphZipSpec extends TwoStreamsSetup {
     "work in the happy case" in {
       val probe = StreamTestKit.SubscriberProbe[(Int, String)]()
 
-      FlowGraph() { implicit b ⇒
-        val zip = Zip[Int, String]()
+      Graph.closed() { implicit b ⇒
+        val zip = b.add(Zip[Int, String]())
 
-        Source(1 to 4) ~> zip.left
-        Source(List("A", "B", "C", "D", "E", "F")) ~> zip.right
+        Source(1 to 4) ~> zip.in0
+        Source(List("A", "B", "C", "D", "E", "F")) ~> zip.in1
 
         zip.out ~> Sink(probe)
       }.run()

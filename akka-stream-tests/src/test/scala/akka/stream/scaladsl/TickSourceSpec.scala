@@ -69,7 +69,7 @@ class TickSourceSpec extends AkkaSpec {
     //      val c = StreamTestKit.SubscriberProbe[Int]()
     //
     //      FlowGraph { implicit b ⇒
-    //        import FlowGraph.Implicits._
+    //        import Graph.Implicits._
     //        val zip = Zip[Int, String]
     //        Source(1 to 100) ~> zip.left
     //        Source(1.second, 1.second, "tick") ~> zip.right

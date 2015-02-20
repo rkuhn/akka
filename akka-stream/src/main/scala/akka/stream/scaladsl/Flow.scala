@@ -4,11 +4,10 @@
 package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
-import akka.stream.impl.StreamLayout.{ Module, OutPort, InPort }
-import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.FlowPorts
+import akka.stream.impl.StreamLayout.Module
+import akka.stream.{ FlowShape, Inlet, Outlet, InPort, OutPort }
 import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.{ TimerTransformer, TransformerLike, OverflowStrategy }
+import akka.stream.{ TimerTransformer, TransformerLike, OverflowStrategy, FlowMaterializer, FlattenStrategy, Graph }
 import akka.util.Collections.EmptyImmutableSeq
 import org.reactivestreams.Processor
 import scala.annotation.unchecked.uncheckedVariance
@@ -16,30 +15,28 @@ import scala.collection.immutable
 import scala.concurrent.duration.{ Duration, FiniteDuration }
 import scala.concurrent.Future
 import scala.language.higherKinds
-import akka.stream.FlowMaterializer
-import akka.stream.FlattenStrategy
 import akka.stream.stage._
 import akka.stream.impl.{ Stages, StreamLayout, FlowModule }
 
 /**
  * A `Flow` is a set of stream processing steps that has one open input and one open output.
  */
-final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPort[In], val outlet: Graphs.OutPort[Out])
-  extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.FlowPorts[In, Out], Mat] {
+final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Inlet[In], val outlet: Outlet[Out])
+  extends FlowOps[Out, Mat] with Graph[FlowShape[In, Out], Mat] {
 
   private[stream] override val module: StreamLayout.Module = m
 
   private[stream] def this(module: FlowModule[In @uncheckedVariance, Out @uncheckedVariance, Mat]) =
     this(module, module.inPort, module.outPort)
 
-  override val ports: FlowPorts[In, Out] = FlowPorts(inlet, outlet)
+  override val shape: FlowShape[In, Out] = FlowShape(inlet, outlet)
 
   private[stream] def carbonCopy(): Flow[In, Out, Mat] = {
     val flowCopy = this.module.carbonCopy()
     new Flow(
       flowCopy.module,
-      flowCopy.inPorts(inlet).asInstanceOf[Graphs.InPort[In]],
-      flowCopy.outPorts(outlet).asInstanceOf[Graphs.OutPort[Out]])
+      flowCopy.inPorts(inlet).asInstanceOf[Inlet[In]],
+      flowCopy.outPorts(outlet).asInstanceOf[Outlet[Out]])
   }
 
   override type Repr[+O, +M] = Flow[In @uncheckedVariance, O, M]
@@ -78,8 +75,8 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
     val sourceCopy = module.carbonCopy()
     new Flow(
       sourceCopy.module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]),
-      sourceCopy.inPorts(inlet).asInstanceOf[Graphs.InPort[In]],
-      sourceCopy.outPorts(outlet).asInstanceOf[Graphs.OutPort[Out]])
+      sourceCopy.inPorts(inlet).asInstanceOf[Inlet[In]],
+      sourceCopy.outPorts(outlet).asInstanceOf[Outlet[Out]])
   }
 
   /**
@@ -98,33 +95,33 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
   }
 
   // FIXME: Materialized value is not combined!
-  def concat[Out2 >: Out](source: Source[Out2, _]): Flow[In, Out2, Unit] = {
+  def concat[Out2 >: Out, Mat2](source: Source[Out2, Mat2]): Flow[In, Out2, Unit] = {
     this.via(Flow() { implicit builder ⇒
-      import FlowGraph.Implicits._
-      val concat = Concat[Out2]()
-      source ~> concat.second
-      (concat.first, concat.out)
+      import Graph.Implicits._
+      val concat = builder.add(Concat[Out2]())
+      source ~> concat.in(1)
+      (concat.in(0), concat.out)
     })
   }
 
   /** INTERNAL API */
   override private[stream] def andThen[U](op: StageModule): Repr[U, Mat] = {
     //No need to copy here, op is a fresh instance
-    new Flow[In, U, Mat](module.grow(op).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Graphs.OutPort[U]])
+    new Flow[In, U, Mat](module.grow(op).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Outlet[U]])
   }
 
   private[stream] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
-    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Graphs.OutPort[U]])
+    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Outlet[U]])
   }
 
   private[stream] def andThenMat[U, Mat2, O >: Out](processorFactory: () ⇒ (Processor[O, U], Mat2)): Repr[U, Mat2] = {
     val op = Stages.DirectProcessor(processorFactory.asInstanceOf[() ⇒ (Processor[Any, Any], Any)])
-    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Graphs.OutPort[U]])
+    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Outlet[U]])
   }
 
   override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
     val newModule = module.withAttributes(attr)
-    new Flow(newModule, newModule.inPorts.head.asInstanceOf[Graphs.InPort[In]], newModule.outPorts.head.asInstanceOf[Graphs.OutPort[Out]])
+    new Flow(newModule, newModule.inPorts.head.asInstanceOf[Inlet[In]], newModule.outPorts.head.asInstanceOf[Outlet[Out]])
   }
 
   /**
@@ -150,7 +147,7 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Graphs.InPo
    * Applies given [[OperationAttributes]] to a given section.
    */
   def section[O, O2 >: Out, Mat2](attributes: OperationAttributes)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[In, O, Mat2] = {
-    this.section[O, O2, Mat2, Mat2](attributes, (parentm: Mat, subm: Mat2) ⇒ subm)(section)
+    this.section[O, O2, Mat2, Mat2](attributes, Keep.right)(section)
   }
 
 }

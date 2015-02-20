@@ -4,7 +4,7 @@
 package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
-import akka.stream.scaladsl.Graphs.SourcePorts
+import akka.stream.{ SourceShape, Inlet, Outlet }
 import akka.stream.stage.{ TerminationDirective, Directive, Context, PushPullStage }
 
 import scala.annotation.unchecked.uncheckedVariance
@@ -15,7 +15,7 @@ import org.reactivestreams.Publisher
 import scala.collection.immutable
 import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ ExecutionContext, Future }
-import akka.stream.FlowMaterializer
+import akka.stream.{ FlowMaterializer, Graph }
 import akka.stream.impl._
 import akka.actor.Cancellable
 import akka.actor.ActorRef
@@ -28,15 +28,15 @@ import org.reactivestreams.Subscriber
  * an “atomic” source, e.g. from a collection or a file. Materialization turns a Source into
  * a Reactive Streams `Publisher` (at least conceptually).
  */
-final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPort[Out])
-  extends FlowOps[Out, Mat] with Graphs.Graph[Graphs.SourcePorts[Out], Mat] {
+final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Outlet[Out])
+  extends FlowOps[Out, Mat] with Graph[SourceShape[Out], Mat] {
   private[stream] override val module: StreamLayout.Module = m
 
   def this(sourceModule: SourceModule[Out @uncheckedVariance, Mat]) = this(sourceModule, sourceModule.outPort)
 
   override type Repr[+O, +M] = Source[O, M]
 
-  override val ports = SourcePorts[Out](outlet)
+  override val shape = SourceShape[Out](outlet)
 
   def via[T, Mat2](flow: Flow[Out, T, Mat2]): Source[T, Mat2] =
     via(flow, (sourcem: Mat, flowm: Mat2) ⇒ flowm)
@@ -69,18 +69,18 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
     val sourceCopy = module.carbonCopy()
     new Source(
       sourceCopy.module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]),
-      sourceCopy.outPorts(outlet).asInstanceOf[Graphs.OutPort[Out]])
+      sourceCopy.outPorts(outlet).asInstanceOf[Outlet[Out]])
   }
 
   /** INTERNAL API */
   override private[scaladsl] def andThen[U](op: StageModule): Repr[U, Mat] = {
     // No need to copy here, op is a fresh instance
     // FIXME: currently combine ignores here
-    new Source(module.grow(op).connect(outlet, op.inPort), op.outPort.asInstanceOf[Graphs.OutPort[U]])
+    new Source(module.grow(op).connect(outlet, op.inPort), op.outPort.asInstanceOf[Outlet[U]])
   }
 
   override private[scaladsl] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
-    new Source(module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), op.outPort.asInstanceOf[Graphs.OutPort[U]])
+    new Source(module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), op.outPort.asInstanceOf[Outlet[U]])
   }
 
   /**
@@ -114,7 +114,7 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
    * emitted by that source is emitted after the last element of this
    * source.
    */
-  def concat[Out2 >: Out](second: Source[Out2, _]): Source[Out2, Unit] = Source.concat(this, second)
+  def concat[Out2 >: Out, M](second: Source[Out2, M]): Source[Out2, (Mat, M)] = Source.concat(this, second)
 
   /**
    * Concatenates a second source so that the first element
@@ -123,7 +123,7 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
    *
    * This is a shorthand for [[concat]]
    */
-  def ++[Out2 >: Out](second: Source[Out2, _]): Source[Out2, Unit] = concat(second)
+  def ++[Out2 >: Out, M](second: Source[Out2, M]): Source[Out2, (Mat, M)] = concat(second)
 
   /**
    * Applies given [[OperationAttributes]] to a given section.
@@ -133,8 +133,8 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
     new Source(
       module
         .grow(subFlow.module.wrap(), combine)
-        .connect(outlet, subFlow.ports.inlet),
-      subFlow.ports.outlet)
+        .connect(outlet, subFlow.shape.inlet),
+      subFlow.shape.outlet)
   }
 
   def section[O, O2 >: Out, Mat2](attributes: OperationAttributes)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Source[O, Mat2] = {
@@ -143,7 +143,7 @@ final class Source[+Out, +Mat](m: StreamLayout.Module, val outlet: Graphs.OutPor
 
   override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
     val newModule = module.withAttributes(attr)
-    new Source(newModule, newModule.outPorts.head.asInstanceOf[Graphs.OutPort[Out]])
+    new Source(newModule, newModule.outPorts.head.asInstanceOf[Outlet[Out]])
   }
 
 }
@@ -279,13 +279,14 @@ object Source extends SourceApply {
    * emitted by the second source is emitted after the last element of the first
    * source.
    */
-  def concat[T](source1: Source[T, _], source2: Source[T, _]): Source[T, Unit] = {
+  def concat[T, M1, M2](source1: Source[T, M1], source2: Source[T, M2]): Source[T, (M1, M2)] = {
     source1.via(Flow() { implicit builder ⇒
-      import FlowGraph.Implicits._
-      val concat = Concat[T]()
-      source2 ~> concat.second
-      (concat.first, concat.out)
+      import Graph.Implicits._
+      val concat = builder add Concat[T]()
+      source2 ~> concat.in(1)
+      (concat.in(0), concat.out)
     })
+    ??? // FIXME (the fix is already in a later commit by RK
   }
 
   /**

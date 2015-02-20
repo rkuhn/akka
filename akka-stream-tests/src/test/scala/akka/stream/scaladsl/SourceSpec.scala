@@ -81,8 +81,8 @@ class SourceSpec extends AkkaSpec {
 
       val s = Source(source, source, source, source, source)(Seq(_, _, _, _, _)) { implicit b ⇒
         (i0, i1, i2, i3, i4) ⇒
-          import FlowGraph.Implicits._
-          val m = Merge[Int](5)
+          import Graph.Implicits._
+          val m = b.add(Merge[Int](5))
           i0.outlet ~> m.in(0)
           i1.outlet ~> m.in(1)
           i2.outlet ~> m.in(2)

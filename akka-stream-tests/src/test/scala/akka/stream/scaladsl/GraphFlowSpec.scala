@@ -5,24 +5,24 @@ package akka.stream.scaladsl
 
 import akka.stream.FlowMaterializer
 import akka.stream.MaterializerSettings
-import akka.stream.scaladsl.Graphs.FlowPorts
 import akka.stream.testkit.AkkaSpec
 import akka.stream.testkit.StreamTestKit.SubscriberProbe
 import akka.stream.testkit.StreamTestKit
 import org.reactivestreams.Subscriber
+import akka.stream._
 
 object GraphFlowSpec {
   val source1 = Source(0 to 3)
 
-  val partialGraph = FlowGraph.partial { implicit b ⇒
-    import FlowGraph.Implicits._
+  val partialGraph = Graph.partial() { implicit b ⇒
+    import Graph.Implicits._
     val source2 = Source(4 to 9)
     val source3 = Source.empty[Int]
     val source4 = Source.empty[String]
 
-    val inMerge = Merge[Int](2)
-    val outMerge = Merge[String](2)
-    val m2 = Merge[Int](2)
+    val inMerge = b.add(Merge[Int](2))
+    val outMerge = b.add(Merge[String](2))
+    val m2 = b.add(Merge[Int](2))
 
     inMerge.out.map(_ * 2) ~> m2.in(0)
     m2.out.map(_ / 2).map(i ⇒ (i + 1).toString) ~> outMerge.in(0)
@@ -30,7 +30,7 @@ object GraphFlowSpec {
     source2 ~> inMerge.in(0)
     source3 ~> m2.in(1)
     source4 ~> outMerge.in(1)
-    FlowPorts(inMerge.in(1), outMerge.out)
+    FlowShape(inMerge.in(1), outMerge.out)
   }
 
   val stdRequests = 10
@@ -66,7 +66,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val flow = Flow(partialGraph) { implicit b ⇒
           partial ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
 
             (partial.inlet, partial.outlet.map(_.toInt).outlet)
         }
@@ -115,8 +115,8 @@ class GraphFlowSpec extends AkkaSpec {
             (importFlow.inlet, importFlow.outlet)
         }
 
-        FlowGraph() { implicit b ⇒
-          import FlowGraph.Implicits._
+        Graph.closed() { implicit b ⇒
+          import Graph.Implicits._
           Source(1 to 5) ~> flow ~> flow ~> Sink(probe)
         }.run()
 
@@ -130,7 +130,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val source = Source(partialGraph) { implicit b ⇒
           partial ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             source1 ~> partial.inlet
             partial.outlet.map(_.toInt).outlet
         }
@@ -160,7 +160,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val source = Source(partialGraph) { implicit b ⇒
           partial ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             source1 ~> partial.inlet
             partial.outlet
         }
@@ -175,7 +175,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val source = Source(partialGraph) { implicit b ⇒
           partial ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             source1 ~> partial.inlet
             partial.outlet
         }
@@ -195,14 +195,14 @@ class GraphFlowSpec extends AkkaSpec {
 
         val source = Source(Source(1 to 5)) { implicit b ⇒
           s ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             s.outlet.map(_ * 2).outlet
         }
 
-        FlowGraph(source, source)(Pair.apply) { implicit b ⇒
+        Graph.closed(source, source)(Pair.apply) { implicit b ⇒
           (s1, s2) ⇒
-            import FlowGraph.Implicits._
-            val merge = Merge[Int](2)
+            import Graph.Implicits._
+            val merge = b.add(Merge[Int](2))
             s1.outlet ~> merge.in(0)
             merge.out ~> Sink(probe)
             s2.outlet.map(_ * 10) ~> merge.in(1)
@@ -218,7 +218,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val sink = Sink(partialGraph) { implicit b ⇒
           partial ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             partial.outlet.map(_.toInt) ~> Sink(probe)
             partial.inlet
         }
@@ -248,7 +248,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val sink = Sink(partialGraph, Flow[String].map(_.toInt))(Pair.apply) { implicit b ⇒
           (partial, flow) ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             flow.outlet ~> partial.inlet
             partial.outlet.map(_.toInt) ~> Sink(probe)
             flow.inlet
@@ -271,7 +271,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val sink = Sink(Flow[String].map(_.toInt)) { implicit b ⇒
           flow ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             flow.outlet ~> Sink(probe)
             flow.inlet
         }
@@ -290,27 +290,27 @@ class GraphFlowSpec extends AkkaSpec {
 
         val flow = Flow(partialGraph) { implicit b ⇒
           partial ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             (partial.inlet, partial.outlet.map(_.toInt).outlet)
         }
 
         val source = Source(Flow[Int].map(_.toString), inSource)(Keep.right) { implicit b ⇒
           (flow, src) ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             src.outlet ~> flow.inlet
             flow.outlet
         }
 
         val sink = Sink(Flow[String].map(_.toInt), outSink)(Keep.right) { implicit b ⇒
           (flow, snk) ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             flow.outlet ~> snk.inlet
             flow.inlet
         }
 
-        val (m1, m2, m3) = FlowGraph(source, flow, sink)(Tuple3.apply) { implicit b ⇒
+        val (m1, m2, m3) = Graph.closed(source, flow, sink)(Tuple3.apply) { implicit b ⇒
           (src, f, snk) ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             src.outlet.map(_.toInt) ~> f.inlet
             f.outlet.map(_.toString) ~> snk.inlet
         }.run()
@@ -338,9 +338,9 @@ class GraphFlowSpec extends AkkaSpec {
             snk.inlet
         }
 
-        val (m1, m2) = FlowGraph(source, sink)(Pair.apply) { implicit b ⇒
+        val (m1, m2) = Graph.closed(source, sink)(Pair.apply) { implicit b ⇒
           (src, snk) ⇒
-            import FlowGraph.Implicits._
+            import Graph.Implicits._
             src.outlet ~> snk.inlet
         }.run()
 

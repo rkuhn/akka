@@ -14,7 +14,7 @@ import akka.stream.impl.Junctions._
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl.fusing.ActorInterpreter
 import akka.stream.scaladsl._
-import akka.stream.{ FlowMaterializer, MaterializerSettings }
+import akka.stream.{ FlowMaterializer, MaterializerSettings, InPort }
 import org.reactivestreams._
 
 import scala.concurrent.{ Await, ExecutionContext }
@@ -96,22 +96,23 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
         op match {
           case fanin: FaninModule ⇒
             val (props, inputs, output) = fanin match {
-              case MergeModule(ins, out, _) ⇒
-                (FairMerge.props(effectiveAttributes.settings(settings), ins.size), ins, out)
+              case MergeModule(shape, _) ⇒
+                (FairMerge.props(effectiveAttributes.settings(settings), shape.in.size), shape.in.toSeq, shape.out)
 
               case f: FlexiMergeModule[t, p] ⇒
-                val flexi = f.flexi(f.ports)
-                (FlexiMerge.props(effectiveAttributes.settings(settings), f.ports, flexi), f.ports.inlets, f.ports.outlets.head)
+                val flexi = f.flexi(f.shape)
+                (FlexiMerge.props(effectiveAttributes.settings(settings), f.shape, flexi), f.shape.inlets, f.shape.outlets.head)
               // TODO each materialization needs its own logic
 
-              case MergePreferredModule(preferred, ins, out, _) ⇒
-                (UnfairMerge.props(effectiveAttributes.settings(settings), ins.size + 1), preferred +: ins, out)
+              case MergePreferredModule(shape, _) ⇒
+                (UnfairMerge.props(effectiveAttributes.settings(settings), shape.inlets.size), shape.inlets, shape.out)
 
-              case ConcatModule(first, second, out, _) ⇒
-                (Concat.props(effectiveAttributes.settings(settings)), List(first, second), out)
+              case ConcatModule(shape, _) ⇒
+                require(shape.in.size == 2, "currently only supporting concatenation of exactly two inputs") // FIXME
+                (Concat.props(effectiveAttributes.settings(settings)), shape.in.toSeq, shape.out)
 
               case zip: ZipWithModule ⇒
-                (zip.props(effectiveAttributes.settings(settings)), zip.ins, zip.outPorts.head)
+                (zip.props(effectiveAttributes.settings(settings)), zip.shape.inlets, zip.outPorts.head)
             }
             val impl = actorOf(props, stageName(effectiveAttributes), effectiveAttributes.settings(settings).dispatcher)
             val publisher = new ActorPublisher[Any](impl)
@@ -124,14 +125,14 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
           case fanout: FanoutModule ⇒
             val (props, in, outs) = fanout match {
               case r: FlexiRouteModule[t, p] ⇒
-                val flexi = r.flexi(r.ports)
-                (FlexiRoute.props(effectiveAttributes.settings(settings), r.ports, flexi), r.ports.inlets.head, r.ports.outlets)
-              case BroadcastModule(in, outs, _) ⇒
-                (Broadcast.props(effectiveAttributes.settings(settings), outs.size), in, outs)
-              case BalanceModule(in, outs, waitForDownstreams, _) ⇒
-                (Balance.props(effectiveAttributes.settings(settings), outs.size, waitForDownstreams), in, outs)
-              case UnzipModule(in, left, right, _) ⇒
-                (Unzip.props(effectiveAttributes.settings(settings)), in, List(left, right))
+                val flexi = r.flexi(r.shape)
+                (FlexiRoute.props(effectiveAttributes.settings(settings), r.shape, flexi), r.shape.inlets.head: InPort, r.shape.outlets)
+              case BroadcastModule(shape, _) ⇒
+                (Broadcast.props(effectiveAttributes.settings(settings), shape.out.size), shape.in, shape.out.toSeq)
+              case BalanceModule(shape, waitForDownstreams, _) ⇒
+                (Balance.props(effectiveAttributes.settings(settings), shape.out.size, waitForDownstreams), shape.in, shape.out.toSeq)
+              case UnzipModule(shape, _) ⇒
+                (Unzip.props(effectiveAttributes.settings(settings)), shape.in, shape.outlets)
             }
             val impl = actorOf(props, stageName(effectiveAttributes), effectiveAttributes.settings(settings).dispatcher)
             val publishers = Vector.tabulate(outs.size)(id ⇒ new ActorPublisher[Any](impl) { // FIXME switch to List.tabulate for inputCount < 8?

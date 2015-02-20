@@ -4,17 +4,17 @@
 package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicReference
-
 import akka.actor.{ ActorRef, Props }
-import akka.stream.impl.StreamLayout.{ Mapping, Module, OutPort, InPort }
+import akka.stream.impl.StreamLayout.{ Mapping, Module }
 import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.scaladsl.{ Graphs, Sink, OperationAttributes, Source }
+import akka.stream.scaladsl.{ Sink, OperationAttributes, Source }
 import akka.stream.stage._
+import akka.stream.{ Inlet, Outlet, InPort, OutPort }
 import org.reactivestreams.{ Processor, Publisher, Subscriber, Subscription }
-
 import scala.annotation.unchecked.uncheckedVariance
 import scala.concurrent.{ Future, Promise }
 import scala.util.{ Failure, Success, Try }
+import akka.stream.SinkShape
 
 trait SinkModule[-In, Mat] extends StreamLayout.Module {
 
@@ -34,9 +34,8 @@ trait SinkModule[-In, Mat] extends StreamLayout.Module {
   override def downstreams: Map[OutPort, InPort] = Map.empty
   override def upstreams: Map[InPort, OutPort] = Map.empty
 
-  val inPort: Graphs.InPort[In] = new Graphs.InPort[In]("Sink.in")
-  override def inPorts: Set[InPort] = Set(inPort)
-  override def outPorts: Set[OutPort] = Set.empty
+  val inPort: Inlet[In] = new Inlet[In]("Sink.in")
+  override val shape = new SinkShape[In](inPort)
 
   protected def newInstance: SinkModule[In, Mat]
   override def carbonCopy: () ⇒ Mapping = () ⇒ {

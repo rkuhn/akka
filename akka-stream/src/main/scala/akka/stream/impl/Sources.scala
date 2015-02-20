@@ -6,7 +6,7 @@ package akka.stream.impl
 import java.util.concurrent.atomic.AtomicBoolean
 import akka.actor.{ PoisonPill, Cancellable, Props, ActorRef }
 import akka.stream.FlowMaterializer
-import akka.stream.scaladsl.{ Graphs, OperationAttributes }
+import akka.stream.scaladsl.OperationAttributes
 import org.reactivestreams._
 import scala.annotation.unchecked.uncheckedVariance
 import scala.annotation.tailrec
@@ -16,18 +16,17 @@ import scala.concurrent.duration.FiniteDuration
 import scala.util.control.NonFatal
 import scala.util.{ Success, Failure }
 import akka.stream.impl.StreamLayout.{ Module, Mapping }
+import akka.stream.{ Inlet, Outlet, InPort, OutPort }
+import akka.stream.SourceShape
 
 trait SourceModule[+Out, +Mat] extends Module {
 
-  private type IP = StreamLayout.InPort
-  private type OP = StreamLayout.OutPort
+  val outPort: Outlet[Out] = new Outlet[Out]("Source.out")
+  override val shape = new SourceShape[Out](outPort)
 
   override def subModules: Set[Module] = Set.empty
-  override def upstreams: Map[IP, OP] = Map.empty
-  override def downstreams: Map[OP, IP] = Map.empty
-  override def inPorts: Set[IP] = Set.empty
-  val outPort: Graphs.OutPort[Out] = new Graphs.OutPort[Out]("Source.out")
-  override val outPorts: Set[OP] = Set(outPort)
+  override def upstreams: Map[InPort, OutPort] = Map.empty
+  override def downstreams: Map[OutPort, InPort] = Map.empty
 
   /**
    * This method is only used for Sources that return true from [[#isActive]], which then must

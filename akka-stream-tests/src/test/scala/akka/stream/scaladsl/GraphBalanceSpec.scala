@@ -16,14 +16,14 @@ class GraphBalanceSpec extends AkkaSpec {
   implicit val materializer = FlowMaterializer(settings)
 
   "A balance" must {
-    import FlowGraph.Implicits._
+    import Graph.Implicits._
 
     "balance between subscribers which signal demand" in {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val balance = Balance[Int](2)
+      Graph.closed() { implicit b ⇒
+        val balance = b.add(Balance[Int](2))
         Source(List(1, 2, 3)) ~> balance.in
         balance.out(0) ~> Sink(c1)
         balance.out(1) ~> Sink(c2)
@@ -45,9 +45,9 @@ class GraphBalanceSpec extends AkkaSpec {
 
     "support waiting for demand from all downstream subscriptions" in {
       val s1 = StreamTestKit.SubscriberProbe[Int]()
-      val p2 = FlowGraph(Sink.publisher[Int]) { implicit b ⇒
+      val p2 = Graph.closed(Sink.publisher[Int]) { implicit b ⇒
         p2Sink ⇒
-          val balance = Balance[Int](2, waitForAllDownstreams = true)
+          val balance = b.add(Balance[Int](2, waitForAllDownstreams = true))
           Source(List(1, 2, 3)) ~> balance.in
           balance.out(0) ~> Sink(s1)
           balance.out(1) ~> p2Sink.inlet
@@ -75,9 +75,9 @@ class GraphBalanceSpec extends AkkaSpec {
     "support waiting for demand from all non-cancelled downstream subscriptions" in {
       val s1 = StreamTestKit.SubscriberProbe[Int]()
 
-      val (p2, p3) = FlowGraph(Sink.publisher[Int], Sink.publisher[Int])(Pair.apply) { implicit b ⇒
+      val (p2, p3) = Graph.closed(Sink.publisher[Int], Sink.publisher[Int])(Pair.apply) { implicit b ⇒
         (p2Sink, p3Sink) ⇒
-          val balance = Balance[Int](3, waitForAllDownstreams = true)
+          val balance = b.add(Balance[Int](3, waitForAllDownstreams = true))
           Source(List(1, 2, 3)) ~> balance.in
           balance.out(0) ~> Sink(s1)
           balance.out(1) ~> p2Sink.inlet
@@ -108,10 +108,10 @@ class GraphBalanceSpec extends AkkaSpec {
 
     "work with 5-way balance" in {
 
-      val (s1, s2, s3, s4, s5) = FlowGraph(Sink.head[Seq[Int]], Sink.head[Seq[Int]], Sink.head[Seq[Int]], Sink.head[Seq[Int]], Sink.head[Seq[Int]])(Tuple5.apply) {
+      val (s1, s2, s3, s4, s5) = Graph.closed(Sink.head[Seq[Int]], Sink.head[Seq[Int]], Sink.head[Seq[Int]], Sink.head[Seq[Int]], Sink.head[Seq[Int]])(Tuple5.apply) {
         implicit b ⇒
           (f1, f2, f3, f4, f5) ⇒
-            val balance = Balance[Int](5, waitForAllDownstreams = true)
+            val balance = b.add(Balance[Int](5, waitForAllDownstreams = true))
             Source(0 to 14) ~> balance.in
             balance.out(0).grouped(15) ~> f1.inlet
             balance.out(1).grouped(15) ~> f2.inlet
@@ -127,9 +127,9 @@ class GraphBalanceSpec extends AkkaSpec {
       val numElementsForSink = 10000
       val outputs = Sink.fold[Int, Int](0)(_ + _)
 
-      val (r1, r2, r3) = FlowGraph(outputs, outputs, outputs)(Tuple3.apply) { implicit b ⇒
+      val (r1, r2, r3) = Graph.closed(outputs, outputs, outputs)(Tuple3.apply) { implicit b ⇒
         (o1, o2, o3) ⇒
-          val balance = Balance[Int](3, waitForAllDownstreams = true)
+          val balance = b.add(Balance[Int](3, waitForAllDownstreams = true))
           Source(Stream.fill(numElementsForSink * 3)(1)) ~> balance.in
           balance.out(0) ~> o1.inlet
           balance.out(1) ~> o2.inlet
@@ -145,8 +145,8 @@ class GraphBalanceSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val balance = Balance[Int](2)
+      Graph.closed() { implicit b ⇒
+        val balance = b.add(Balance[Int](2))
         Source(List(1, 2, 3)) ~> balance.in
         balance.out(0) ~> Sink(c1)
         balance.out(1) ~> Sink(c2)
@@ -166,8 +166,8 @@ class GraphBalanceSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val balance = Balance[Int](2)
+      Graph.closed() { implicit b ⇒
+        val balance = b.add(Balance[Int](2))
         Source(List(1, 2, 3)) ~> balance.in
         balance.out(0) ~> Sink(c1)
         balance.out(1) ~> Sink(c2)
@@ -188,8 +188,8 @@ class GraphBalanceSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val balance = Balance[Int](2)
+      Graph.closed() { implicit b ⇒
+        val balance = b.add(Balance[Int](2))
         Source(p1.getPublisher) ~> balance.in
         balance.out(0) ~> Sink(c1)
         balance.out(1) ~> Sink(c2)

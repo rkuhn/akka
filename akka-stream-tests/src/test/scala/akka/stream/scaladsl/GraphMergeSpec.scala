@@ -3,26 +3,23 @@
  */
 package akka.stream.scaladsl
 
-import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ OutPort, InPort }
-import akka.stream.{ FlowMaterializer, MaterializerSettings }
+import akka.stream.{ FlowMaterializer, MaterializerSettings, Inlet, Outlet }
 
 import scala.concurrent.duration._
 
-import akka.stream.scaladsl.FlowGraph.Implicits._
 import akka.stream.testkit.{ TwoStreamsSetup, AkkaSpec, StreamTestKit }
-import FlowGraph.Implicits._
 
 class GraphMergeSpec extends TwoStreamsSetup {
+  import Graph.Implicits._
 
   override type Outputs = Int
 
-  override def fixture(b: FlowGraphBuilder): Fixture = new Fixture(b: FlowGraphBuilder) {
-    val merge = Merge[Outputs](2)(b)
+  override def fixture(b: Graph.Builder): Fixture = new Fixture(b: Graph.Builder) {
+    val merge = b add Merge[Outputs](2)
 
-    override def left: InPort[Outputs] = merge.in(0)
-    override def right: InPort[Outputs] = merge.in(1)
-    override def out: OutPort[Outputs] = merge.out
+    override def left: Inlet[Outputs] = merge.in(0)
+    override def right: Inlet[Outputs] = merge.in(1)
+    override def out: Outlet[Outputs] = merge.out
 
   }
 
@@ -35,9 +32,9 @@ class GraphMergeSpec extends TwoStreamsSetup {
       val source3 = Source(List[Int]())
       val probe = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val m1 = Merge[Int](2)
-        val m2 = Merge[Int](2)
+      Graph.closed() { implicit b ⇒
+        val m1 = b.add(Merge[Int](2))
+        val m2 = b.add(Merge[Int](2))
 
         source1 ~> m1.in(0)
         m1.out ~> Flow[Int].map(_ * 2) ~> m2.in(0)
@@ -69,8 +66,8 @@ class GraphMergeSpec extends TwoStreamsSetup {
 
       val probe = StreamTestKit.SubscriberProbe[Int]()
 
-      FlowGraph() { implicit b ⇒
-        val merge = Merge[Int](6)
+      Graph.closed() { implicit b ⇒
+        val merge = b.add(Merge[Int](6))
 
         source1 ~> merge.in(0)
         source2 ~> merge.in(1)

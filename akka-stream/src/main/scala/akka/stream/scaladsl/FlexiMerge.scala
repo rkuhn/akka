@@ -5,19 +5,12 @@ package akka.stream.scaladsl
 
 import akka.stream.impl.Junctions.FlexiMergeModule
 import akka.stream.scaladsl.FlexiMerge.MergeLogic
-import akka.stream.scaladsl.FlowGraph.FlowGraphBuilder
-import akka.stream.scaladsl.Graphs.{ InPort, Ports }
+import akka.stream.{ Inlet, Shape, InPort, Graph }
 import scala.collection.immutable
 import scala.collection.immutable.Seq
-import scala.language.higherKinds
-
-import scala.language.higherKinds
 import akka.stream.impl.StreamLayout
 
 object FlexiMerge {
-
-  private type OutP = StreamLayout.OutPort
-  private type InP = StreamLayout.InPort
 
   sealed trait ReadCondition[T]
 
@@ -30,11 +23,11 @@ object FlexiMerge {
    * has been completed. `IllegalArgumentException` is thrown if
    * that is not obeyed.
    */
-  final case class Read[T](input: InPort[T]) extends ReadCondition[T]
+  final case class Read[T](input: Inlet[T]) extends ReadCondition[T]
 
   object ReadAny {
-    def apply[T](inputs: immutable.Seq[InPort[T]]): ReadAny[T] = new ReadAny(inputs: _*)
-    def apply(p: Ports): ReadAny[Any] = new ReadAny(p.inlets.asInstanceOf[Seq[InPort[Any]]]: _*)
+    def apply[T](inputs: immutable.Seq[Inlet[T]]): ReadAny[T] = new ReadAny(inputs: _*)
+    def apply(p: Shape): ReadAny[Any] = new ReadAny(p.inlets.asInstanceOf[Seq[Inlet[Any]]]: _*)
   }
 
   /**
@@ -45,10 +38,10 @@ object FlexiMerge {
    * Cancelled and completed inputs are not used, i.e. it is allowed
    * to specify them in the list of `inputs`.
    */
-  final case class ReadAny[T](inputs: InPort[T]*) extends ReadCondition[T]
+  final case class ReadAny[T](inputs: Inlet[T]*) extends ReadCondition[T]
 
   object ReadPreferred {
-    def apply[T](preferred: InPort[T], secondaries: immutable.Seq[InPort[T]]): ReadPreferred[T] =
+    def apply[T](preferred: Inlet[T], secondaries: immutable.Seq[Inlet[T]]): ReadPreferred[T] =
       new ReadPreferred(preferred, secondaries: _*)
   }
 
@@ -62,11 +55,11 @@ object FlexiMerge {
    * Cancelled and completed inputs are not used, i.e. it is allowed
    * to specify them in the list of `inputs`.
    */
-  final case class ReadPreferred[T](preferred: InPort[T], secondaries: InPort[T]*) extends ReadCondition[T]
+  final case class ReadPreferred[T](preferred: Inlet[T], secondaries: Inlet[T]*) extends ReadCondition[T]
 
   object ReadAll {
-    def apply[T](inputs: immutable.Seq[InPort[T]]): ReadAll[T] = new ReadAll(new ReadAllInputs(_), inputs: _*)
-    def apply[T](inputs: InPort[T]*): ReadAll[T] = new ReadAll(new ReadAllInputs(_), inputs: _*)
+    def apply[T](inputs: immutable.Seq[Inlet[T]]): ReadAll[T] = new ReadAll(new ReadAllInputs(_), inputs: _*)
+    def apply[T](inputs: Inlet[T]*): ReadAll[T] = new ReadAll(new ReadAllInputs(_), inputs: _*)
   }
 
   /**
@@ -80,18 +73,18 @@ object FlexiMerge {
    * the resulting [[ReadAllInputs]] will then not contain values for this element, which can be
    * handled via supplying a default value instead of the value from the (now cancelled) input.
    */
-  final case class ReadAll[T](mkResult: immutable.Map[InP, Any] ⇒ ReadAllInputsBase, inputs: InPort[T]*) extends ReadCondition[ReadAllInputs]
+  final case class ReadAll[T](mkResult: immutable.Map[InPort, Any] ⇒ ReadAllInputsBase, inputs: Inlet[T]*) extends ReadCondition[ReadAllInputs]
 
   /** INTERNAL API */
-  sealed private[stream] trait ReadAllInputsBase
+  private[stream] trait ReadAllInputsBase
 
   /**
    * Provides typesafe accessors to values from inputs supplied to [[ReadAll]].
    */
-  final class ReadAllInputs(map: immutable.Map[InP, Any]) extends ReadAllInputsBase {
-    def apply[T](input: InPort[T]): T = map(input).asInstanceOf[T]
-    def get[T](input: InPort[T]): Option[T] = map.get(input).asInstanceOf[Option[T]]
-    def getOrElse[T](input: InPort[T], default: ⇒ T): T = map.getOrElse(input, default).asInstanceOf[T]
+  final class ReadAllInputs(map: immutable.Map[InPort, Any]) extends ReadAllInputsBase {
+    def apply[T](input: Inlet[T]): T = map(input).asInstanceOf[T]
+    def get[T](input: Inlet[T]): Option[T] = map.get(input).asInstanceOf[Option[T]]
+    def getOrElse[T](input: Inlet[T], default: ⇒ T): T = map.getOrElse(input, default).asInstanceOf[T]
   }
 
   /**
@@ -136,7 +129,7 @@ object FlexiMerge {
       /**
        * Cancel a specific upstream input stream.
        */
-      def cancel(input: InP): Unit
+      def cancel(input: InPort): Unit
 
       /**
        * Replace current [[CompletionHandling]].
@@ -154,7 +147,7 @@ object FlexiMerge {
      * The function returns next behavior or [[#SameState]] to keep current behavior.
      */
     sealed case class State[In](condition: ReadCondition[In])(
-      val onInput: (MergeLogicContext, InP, In) ⇒ State[_])
+      val onInput: (MergeLogicContext, InPort, In) ⇒ State[_])
 
     /**
      * Return this from [[State]] `onInput` to use same state for next element.
@@ -184,8 +177,8 @@ object FlexiMerge {
      * or it can be swallowed to continue with remaining inputs.
      */
     sealed case class CompletionHandling(
-      onComplete: (MergeLogicContext, InP) ⇒ State[_],
-      onError: (MergeLogicContext, InP, Throwable) ⇒ State[_])
+      onComplete: (MergeLogicContext, InPort) ⇒ State[_],
+      onError: (MergeLogicContext, InPort, Throwable) ⇒ State[_])
 
     /**
      * Will continue to operate until a read becomes unsatisfiable, then it completes.
@@ -223,12 +216,12 @@ object FlexiMerge {
  * @param ports ports that this junction exposes
  * @param attributes optional attributes for this vertex
  */
-abstract class FlexiMerge[Out, P <: Ports](private[stream] val ports: P, attributes: OperationAttributes) {
+abstract class FlexiMerge[Out, S <: Shape](val shape: S, attributes: OperationAttributes) extends Graph[S, Unit] {
+  val module: StreamLayout.Module = new FlexiMergeModule(shape, createMergeLogic)
 
-  type PortT = P
-  type InP = StreamLayout.InPort
+  type PortT = S
 
-  def createMergeLogic(p: P): MergeLogic[Out]
+  def createMergeLogic(s: S): MergeLogic[Out]
 
   override def toString = attributes.nameLifted match {
     case Some(n) ⇒ n
