@@ -5,7 +5,6 @@ package akka.stream.scaladsl
 
 import java.net.{ InetSocketAddress, URLEncoder }
 import akka.stream.impl.StreamLayout.Module
-
 import scala.collection.immutable
 import scala.concurrent.{ Promise, ExecutionContext, Future }
 import scala.concurrent.duration.Duration
@@ -30,6 +29,8 @@ import akka.stream.impl.io.TcpStreamActor
 import akka.stream.impl.io.TcpListenStreamActor
 import akka.stream.impl.io.DelayedInitProcessor
 import akka.stream.impl.io.StreamTcpManager
+import akka.stream.SourceShape
+import akka.stream.Outlet
 
 object StreamTcp extends ExtensionId[StreamTcp] with ExtensionIdProvider {
 
@@ -84,7 +85,8 @@ class StreamTcp(system: ExtendedActorSystem) extends akka.actor.Extension {
     val backlog: Int,
     val options: immutable.Traversable[SocketOption],
     val idleTimeout: Duration = Duration.Inf,
-    val attributes: OperationAttributes) extends SourceModule[IncomingConnection, Future[ServerBinding]] {
+    val attributes: OperationAttributes,
+    _shape: SourceShape[IncomingConnection]) extends SourceModule[IncomingConnection, Future[ServerBinding]](_shape) {
 
     override def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Publisher[IncomingConnection], Future[ServerBinding]) = {
       val localAddressPromise = Promise[InetSocketAddress]()
@@ -112,10 +114,10 @@ class StreamTcp(system: ExtendedActorSystem) extends akka.actor.Extension {
       (publisher, bindingFuture)
     }
 
-    override protected def newInstance: SourceModule[IncomingConnection, Future[ServerBinding]] =
-      new BindSource(endpoint, backlog, options, idleTimeout, attributes)
+    override protected def newInstance(s: SourceShape[IncomingConnection]): SourceModule[IncomingConnection, Future[ServerBinding]] =
+      new BindSource(endpoint, backlog, options, idleTimeout, attributes, shape)
     override def withAttributes(attr: OperationAttributes): Module =
-      new BindSource(endpoint, backlog, options, idleTimeout, attr)
+      new BindSource(endpoint, backlog, options, idleTimeout, attr, shape)
   }
 
   /**
@@ -125,7 +127,7 @@ class StreamTcp(system: ExtendedActorSystem) extends akka.actor.Extension {
            backlog: Int = 100,
            options: immutable.Traversable[SocketOption] = Nil,
            idleTimeout: Duration = Duration.Inf): Source[IncomingConnection, Future[ServerBinding]] = {
-    new Source(new BindSource(endpoint, backlog, options, idleTimeout, OperationAttributes.none))
+    new Source(new BindSource(endpoint, backlog, options, idleTimeout, OperationAttributes.none, SourceShape(new Outlet("BindSource.out"))))
   }
 
   def bindAndHandle(

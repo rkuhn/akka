@@ -4,7 +4,7 @@
 package akka.stream.javadsl
 
 import akka.stream._
-import akka.japi.Util
+import akka.japi.{ Util, Pair }
 import akka.stream.scaladsl
 import scala.annotation.unchecked.uncheckedVariance
 import scala.concurrent.Future
@@ -39,6 +39,12 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) {
 
   /** Converts this Flow to it's Scala DSL counterpart */
   def asScala: scaladsl.Flow[In, Out, Mat] = delegate
+
+  /**
+   * Transform only the materialized value of this Flow, leaving all other properties as they were.
+   */
+  def mapMaterialized[Mat2](f: japi.Function[Mat, Mat2]): Flow[In, Out, Mat2] =
+    new Flow(delegate.mapMaterialized(f.apply _))
 
   /**
    * Transform this [[Flow]] by appending the given processing steps.
@@ -295,8 +301,8 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) {
    * Returns a new `Flow` that concatenates a secondary `Source` to this flow so that,
    * the first element emitted by the given ("second") source is emitted after the last element of this Flow.
    */
-  def concat[M](second: javadsl.Source[Out @uncheckedVariance, M]): javadsl.Flow[In, Out, Unit] =
-    new Flow(delegate.concat(second.asScala))
+  def concat[M](second: javadsl.Source[Out @uncheckedVariance, M]): javadsl.Flow[In, Out, Mat @uncheckedVariance Pair M] =
+    new Flow(delegate.concat(second.asScala).mapMaterialized(p ⇒ Pair(p._1, p._2)))
 
   /**
    * Applies given [[OperationAttributes]] to a given section.
@@ -319,9 +325,15 @@ trait RunnableFlow[+Mat] {
    * Run this flow and return the [[MaterializedMap]] containing the values for the [[KeyedMaterializable]] of the flow.
    */
   def run(materializer: FlowMaterializer): Mat
+  /**
+   * Transform only the materialized value of this RunnableFlow, leaving all other properties as they were.
+   */
+  def mapMaterialized[Mat2](f: japi.Function[Mat, Mat2]): RunnableFlow[Mat2]
 }
 
 /** INTERNAL API */
 private[akka] class RunnableFlowAdapter[Mat](runnable: scaladsl.RunnableFlow[Mat]) extends RunnableFlow[Mat] {
+  override def mapMaterialized[Mat2](f: japi.Function[Mat, Mat2]): RunnableFlow[Mat2] =
+    new RunnableFlowAdapter(runnable.mapMaterialized(f.apply _))
   override def run(materializer: FlowMaterializer): Mat = runnable.run()(materializer)
 }

@@ -5,29 +5,57 @@ package akka.stream
 
 import scala.collection.immutable
 
-abstract class FanInShape[O] extends Shape {
-  final val out = new Outlet[O]("out")
+object FanInShape {
+  sealed trait Init[+O]
+  case class Name(name: String) extends Init[Nothing]
+  case class Ports[O](out: Outlet[O], ins: immutable.Seq[Inlet[_]]) extends Init[O]
+}
+
+abstract class FanInShape[O](init: FanInShape.Init[O]) extends Shape {
+  import FanInShape._
   
-  final override def outlets: immutable.Seq[Outlet[_]] = out :: Nil
+  final private[this] val (_out, _registered, _name) = init match {
+    case Name(name)   => (new Outlet[O](s"$name.out"), Nil.iterator, name)
+    case Ports(o, it) => (o, it.reverseIterator, "FanIn")
+  }
+  
+  final def out: Outlet[O] = _out
+  final override def outlets: immutable.Seq[Outlet[_]] = _out :: Nil
   final override def inlets: immutable.Seq[Inlet[_]] = _inlets
   
   private var _inlets: List[Inlet[_]] = Nil
   protected def newInlet[T](name: String): Inlet[T] = {
-    val p = new Inlet[T](name)
+    val p = if (_registered.hasNext) _registered.next().asInstanceOf[Inlet[T]] else new Inlet[T](s"${_name}.$name")
     _inlets ::= p
     p
   }
+  
+  protected def construct(init: Init[O]): FanInShape[O]
+  
+  def deepCopy(): FanInShape[O] = construct(Ports[O](new Outlet(_out.toString), inlets.map(i => new Inlet(i.toString))))
+  final def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): FanInShape[O] = {
+    require(outlets.size == 1, s"proposed outlets [${outlets.mkString(", ")}] do not fit FanInShape")
+    require(inlets.size == _inlets.size, s"proposed inlets [${inlets.mkString(", ")}] do not fit FanInShape")
+    construct(Ports[O](outlets.head.asInstanceOf[Outlet[O]], inlets))
+  }
 }
 
-class UniformFanInShape[T, O](n: Int) extends FanInShape[O] {
+class UniformFanInShape[T, O](val n: Int, _init: FanInShape.Init[O]) extends FanInShape[O](_init) {
+  def this(n: Int) = this(n, FanInShape.Name("UniformFanIn"))
+  def this(n: Int, name: String) = this(n, FanInShape.Name(name))
+  override protected def construct(init: FanInShape.Init[O]): FanInShape[O] = new UniformFanInShape(n, init)
+  override def deepCopy(): UniformFanInShape[T, O] = super.deepCopy().asInstanceOf[UniformFanInShape[T, O]]
+  
   val in: Array[Inlet[T]] = Array.tabulate(n)(i => newInlet[T](s"in$i"))
-  override def deepCopy(): UniformFanInShape[T, O] = new UniformFanInShape(n)
 }
 
-[2..#class FanInShape1[[#T0#], O] extends FanInShape[O] {
+[2..#class FanInShape1[[#T0#], O](_init: FanInShape.Init[O]) extends FanInShape[O](_init) {
+  def this(name: String) = this(FanInShape.Name(name))
+  override protected def construct(init: FanInShape.Init[O]): FanInShape[O] = new FanInShape1(init)
+  override def deepCopy(): FanInShape1[[#T0#], O] = super.deepCopy().asInstanceOf[FanInShape1[[#T0#], O]]
+  
   [#val in0 = newInlet[T0]("in0")#
   ]
-  override def deepCopy(): FanInShape1[[#T0#], O] = new FanInShape1
 }#
 
 ]

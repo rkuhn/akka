@@ -16,24 +16,15 @@ trait GraphApply {
 
   def closed[Mat](g1: Graph[Shape, Mat])(buildBlock: Graph.Builder ⇒ (g1.Shape) ⇒ Unit): RunnableFlow[Mat] = {
     val builder = new Graph.Builder
-    val p1 = builder.importGraph(g1, Keep.right)
+    val p1 = builder.add(g1)
     buildBlock(builder)(p1)
     builder.buildRunnable()
-  }
-
-  private def checkPartialPorts[S <: Shape](s: S, mod: Module): Unit = {
-    if (s.inlets.toSet != mod.inPorts)
-      throw new IllegalStateException("The input ports in the returned Ports instance must correspond to the unconnected ports")
-    if (s.outlets.toSet != mod.outPorts)
-      throw new IllegalStateException("The output ports in the returned Ports instance must correspond to the unconnected ports")
   }
 
   def partial[S <: Shape]()(buildBlock: Graph.Builder ⇒ S): Graph[S, Unit] = {
     val builder = new Graph.Builder
     val s = buildBlock(builder)
-    val mod = builder.module.wrap()
-
-    checkPartialPorts(s, mod)
+    val mod = builder.module.wrap().replaceShape(s)
 
     new Graph[S, Unit] {
       override def shape: S = s
@@ -43,11 +34,9 @@ trait GraphApply {
 
   def partial[S <: Shape, Mat](g1: Graph[Shape, Mat])(buildBlock: Graph.Builder ⇒ (g1.Shape) ⇒ S): Graph[S, Mat] = {
     val builder = new Graph.Builder
-    val s1 = builder.importGraph(g1, Keep.right)
+    val s1 = builder.add(g1)
     val s = buildBlock(builder)(s1)
-    val mod = builder.module.wrap()
-
-    checkPartialPorts(s, mod)
+    val mod = builder.module.wrap().replaceShape(s)
 
     new Graph[S, Mat] {
       override def shape: S = s
@@ -60,8 +49,8 @@ trait GraphApply {
   [2..#def closed[Mat, [#M1#]]([#g1: Graph[Shape, M1]#])(combineMat: ([#M1#]) ⇒ Mat)(buildBlock: Graph.Builder ⇒ ([#g1.Shape#]) ⇒ Unit): RunnableFlow[Mat] = {
     val builder = new Graph.Builder
     val curried = combineMat.curried
-    val s##1 = builder.importGraph(g##1, (_: Any, m##1: M##1) ⇒ curried(m##1))
-    [2..#val s1 = builder.importGraph(g1, (f: M1 ⇒ Any, m1: M1) ⇒ f(m1))#
+    val s##1 = builder.add(g##1, (_: Any, m##1: M##1) ⇒ curried(m##1))
+    [2..#val s1 = builder.add(g1, (f: M1 ⇒ Any, m1: M1) ⇒ f(m1))#
     ]
     buildBlock(builder)([#s1#])
     builder.buildRunnable()
@@ -72,13 +61,11 @@ trait GraphApply {
   [2..#def partial[S <: Shape, Mat, [#M1#]]([#g1: Graph[Shape, M1]#])(combineMat: ([#M1#]) ⇒ Mat)(buildBlock: Graph.Builder ⇒ ([#g1.Shape#]) ⇒ S): Graph[S, Mat] = {
     val builder = new Graph.Builder
     val curried = combineMat.curried
-    val s##1 = builder.importGraph(g##1, (_: Any, m##1: M##1) ⇒ curried(m##1))
-    [2..#val s1 = builder.importGraph(g1, (f: M1 ⇒ Any, m1: M1) ⇒ f(m1))#
+    val s##1 = builder.add(g##1, (_: Any, m##1: M##1) ⇒ curried(m##1))
+    [2..#val s1 = builder.add(g1, (f: M1 ⇒ Any, m1: M1) ⇒ f(m1))#
     ]
     val s = buildBlock(builder)([#s1#])
-    val mod = builder.module.wrap()
-
-    checkPartialPorts(s, mod)
+    val mod = builder.module.wrap().replaceShape(s)
 
     new Graph[S, Mat] {
       override def shape: S = s

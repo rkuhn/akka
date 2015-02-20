@@ -61,7 +61,7 @@ object GraphFlexiRouteSpec {
     }
   }
 
-  class Unzip[A, B] extends FlexiRoute[(A, B), FanOutShape2[(A, B), A, B]](new FanOutShape2, OperationAttributes.name("Unzip")) {
+  class Unzip[A, B] extends FlexiRoute[(A, B), FanOutShape2[(A, B), A, B]](new FanOutShape2("Unzip"), OperationAttributes.name("Unzip")) {
     import FlexiRoute._
 
     override def createRouteLogic(p: PortT) = new RouteLogic[(A, B)] {
@@ -77,7 +77,7 @@ object GraphFlexiRouteSpec {
     }
   }
 
-  class TestRoute extends FlexiRoute[String, FanOutShape2[String, String, String]](new FanOutShape2, OperationAttributes.name("TestRoute")) {
+  class TestRoute extends FlexiRoute[String, FanOutShape2[String, String, String]](new FanOutShape2("TestRoute"), OperationAttributes.name("TestRoute")) {
     import FlexiRoute._
 
     var throwFromOnComplete = false

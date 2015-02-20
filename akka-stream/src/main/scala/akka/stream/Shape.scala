@@ -24,11 +24,17 @@ abstract class Shape {
   def outlets: immutable.Seq[Outlet[_]]
 
   /**
-   * Create a copy of this Ports object, returning the same type as the
+   * Create a copy of this Shape object, returning the same type as the
    * original; this constraint can unfortunately not be expressed in the
    * type system.
    */
   def deepCopy(): Shape
+
+  /**
+   * Create a copy of this Shape object, returning the same type as the
+   * original but containing the ports given within the passed-in Shape.
+   */
+  def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): Shape
 
   /**
    * Java API: get a list of all input ports
@@ -39,6 +45,31 @@ abstract class Shape {
    * Java API: get a list of all output ports
    */
   def getOutlets: java.util.List[Outlet[_]] = outlets.asJava
+
+  /**
+   * Compare this to another shape and determine whether the set of ports is the same (ignoring their ordering).
+   */
+  def hasSamePortsAs(s: Shape): Boolean =
+    inlets.toSet == s.inlets.toSet && outlets.toSet == s.outlets.toSet
+
+  /**
+   * Compare this to another shape and determine whether the arrangement of ports is the same (including their ordering).
+   */
+  def hasSameShapeAs(s: Shape): Boolean =
+    inlets == s.inlets && outlets == s.outlets
+
+  /**
+   * Asserting version of [[#hasSamePortsAs]].
+   */
+  def requireSamePortsAs(s: Shape): Unit = require(hasSamePortsAs(s), nonCorrespondingMessage(s))
+
+  /**
+   * Asserting version of [[#hasSameShapeAs]].
+   */
+  def requireSameShapeAs(s: Shape): Unit = require(hasSameShapeAs(s), nonCorrespondingMessage(s))
+
+  private def nonCorrespondingMessage(s: Shape) =
+    s"The inlets [${s.inlets.mkString(", ")}] and outlets [${s.outlets.mkString(", ")}] must correspond to the inlets [${inlets.mkString(", ")}] and outlets [${outlets.mkString(", ")}]"
 }
 
 /**
@@ -59,6 +90,11 @@ object EmptyShape extends Shape {
   override val inlets = Nil
   override val outlets = Nil
   override def deepCopy() = this
+  override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): Shape = {
+    require(inlets.isEmpty, s"proposed inlets [${inlets.mkString(", ")}] do not fit EmptyShape")
+    require(outlets.isEmpty, s"proposed outlets [${outlets.mkString(", ")}] do not fit EmptyShape")
+    this
+  }
 
   /**
    * Java API: obtain EmptyShape instance
@@ -70,6 +106,7 @@ case class AmorphousShape(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Se
   override def deepCopy() = AmorphousShape(
     inlets.map(i ⇒ new Inlet[Any](i.toString)),
     outlets.map(o ⇒ new Outlet[Any](o.toString)))
+  override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): Shape = AmorphousShape(inlets, outlets)
 }
 
 final case class SourceShape[+T](outlet: Outlet[T]) extends Shape {
@@ -77,6 +114,11 @@ final case class SourceShape[+T](outlet: Outlet[T]) extends Shape {
   override val outlets: immutable.Seq[Outlet[_]] = List(outlet)
 
   override def deepCopy(): SourceShape[T] = SourceShape(new Outlet(outlet.toString))
+  override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): Shape = {
+    require(inlets.isEmpty, s"proposed inlets [${inlets.mkString(", ")}] do not fit SourceShape")
+    require(outlets.size == 1, s"proposed outlets [${outlets.mkString(", ")}] do not fit SourceShape")
+    SourceShape(outlets.head)
+  }
 }
 
 final case class FlowShape[-I, +O](inlet: Inlet[I], outlet: Outlet[O]) extends Shape {
@@ -84,6 +126,11 @@ final case class FlowShape[-I, +O](inlet: Inlet[I], outlet: Outlet[O]) extends S
   override val outlets: immutable.Seq[Outlet[_]] = List(outlet)
 
   override def deepCopy(): FlowShape[I, O] = FlowShape(new Inlet(inlet.toString), new Outlet(outlet.toString))
+  override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): Shape = {
+    require(inlets.size == 1, s"proposed inlets [${inlets.mkString(", ")}] do not fit FlowShape")
+    require(outlets.size == 1, s"proposed outlets [${outlets.mkString(", ")}] do not fit FlowShape")
+    FlowShape(inlets.head, outlets.head)
+  }
 }
 
 final case class SinkShape[-T](inlet: Inlet[T]) extends Shape {
@@ -91,6 +138,11 @@ final case class SinkShape[-T](inlet: Inlet[T]) extends Shape {
   override val outlets: immutable.Seq[Outlet[_]] = Nil
 
   override def deepCopy(): SinkShape[T] = SinkShape(new Inlet(inlet.toString))
+  override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): Shape = {
+    require(inlets.size == 1, s"proposed inlets [${inlets.mkString(", ")}] do not fit SinkShape")
+    require(outlets.isEmpty, s"proposed outlets [${outlets.mkString(", ")}] do not fit SinkShape")
+    SinkShape(inlets.head)
+  }
 }
 
 /**
@@ -103,4 +155,9 @@ final case class BidiShape[-In1, +Out1, -In2, +Out2](in1: Inlet[In1], out1: Outl
 
   override def deepCopy(): BidiShape[In1, Out1, In2, Out2] =
     BidiShape(new Inlet(in1.toString), new Outlet(out1.toString), new Inlet(in2.toString), new Outlet(out2.toString))
+  override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): Shape = {
+    require(inlets.size == 2, s"proposed inlets [${inlets.mkString(", ")}] do not fit BidiShape")
+    require(outlets.size == 2, s"proposed outlets [${outlets.mkString(", ")}] do not fit BidiShape")
+    BidiShape(inlets(0), outlets(0), inlets(1), outlets(1))
+  }
 }

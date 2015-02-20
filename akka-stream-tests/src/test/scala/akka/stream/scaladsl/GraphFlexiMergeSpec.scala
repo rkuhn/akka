@@ -59,7 +59,7 @@ object GraphFlexiMergeSpec {
     }
   }
 
-  class MyZip[A, B] extends FlexiMerge[(A, B), FanInShape2[A, B, (A, B)]](new FanInShape2, OperationAttributes.name("MyZip")) {
+  class MyZip[A, B] extends FlexiMerge[(A, B), FanInShape2[A, B, (A, B)]](new FanInShape2("MyZip"), OperationAttributes.name("MyZip")) {
     def createMergeLogic(p: PortT): MergeLogic[(A, B)] = new MergeLogic[(A, B)] {
       var lastInA: A = _
 
@@ -80,7 +80,7 @@ object GraphFlexiMergeSpec {
   }
 
   class TripleCancellingZip[A, B, C](var cancelAfter: Int = Int.MaxValue, defVal: Option[A] = None)
-    extends FlexiMerge[(A, B, C), FanInShape3[A, B, C, (A, B, C)]](new FanInShape3, OperationAttributes.name("TripleCancellingZip")) {
+    extends FlexiMerge[(A, B, C), FanInShape3[A, B, C, (A, B, C)]](new FanInShape3("TripleCancellingZip"), OperationAttributes.name("TripleCancellingZip")) {
     def createMergeLogic(p: PortT) = new MergeLogic[(A, B, C)] {
       override def initialState = State(ReadAll(p.in0, p.in1, p.in2)) {
         case (ctx, input, inputs) ⇒

@@ -4,7 +4,7 @@
 package akka.stream.impl
 
 import akka.stream.scaladsl.{ Keep, OperationAttributes }
-import akka.stream.{ InPort, OutPort, Shape, EmptyShape, AmorphousShape }
+import akka.stream.{ Inlet, Outlet, InPort, OutPort, Shape, EmptyShape, AmorphousShape }
 import org.reactivestreams.{ Subscription, Publisher, Subscriber }
 
 /**
@@ -22,10 +22,13 @@ private[akka] object StreamLayout {
   case class Transform(f: Any ⇒ Any, dep: MaterializedValueNode) extends MaterializedValueNode
   case object Ignore extends MaterializedValueNode
 
-  case class Mapping(module: Module, inPorts: Map[InPort, InPort], outPorts: Map[OutPort, OutPort])
-
   trait Module {
     def shape: Shape
+    /**
+     * Verify that the given Shape has the same ports and return a new module with that shape.
+     * Concrete implementations may throw UnsupportedOperationException where applicable.
+     */
+    def replaceShape(s: Shape): Module
 
     final lazy val inPorts: Set[InPort] = shape.inlets.toSet
     final lazy val outPorts: Set[OutPort] = shape.outlets.toSet
@@ -45,10 +48,6 @@ private[akka] object StreamLayout {
         downstreams.updated(from, to),
         upstreams.updated(to, from),
         materializedValueComputation,
-        carbonCopy = () ⇒ {
-          val mapping = this.carbonCopy()
-          mapping.copy(module = mapping.module.connect(mapping.outPorts(from), mapping.inPorts(to)))
-        },
         attributes)
     }
 
@@ -59,10 +58,6 @@ private[akka] object StreamLayout {
         downstreams,
         upstreams,
         Transform(f, this.materializedValueComputation),
-        carbonCopy = () ⇒ {
-          val copy = this.carbonCopy()
-          copy.copy(module = copy.module.transformMaterializedValue(f))
-        },
         attributes)
     }
 
@@ -83,11 +78,6 @@ private[akka] object StreamLayout {
         if (f eq Keep.left) materializedValueComputation
         else if (f eq Keep.right) that.materializedValueComputation
         else Combine(f.asInstanceOf[(Any, Any) ⇒ Any], this.materializedValueComputation, that.materializedValueComputation),
-        carbonCopy = () ⇒ {
-          val copy1 = this.carbonCopy()
-          val copy2 = that.carbonCopy()
-          Mapping(copy1.module.grow(copy2.module, f), copy1.inPorts ++ copy2.inPorts, copy1.outPorts ++ copy2.outPorts)
-        },
         attributes)
     }
 
@@ -98,10 +88,6 @@ private[akka] object StreamLayout {
         downstreams,
         upstreams,
         Atomic(this),
-        carbonCopy = () ⇒ {
-          val copy = this.carbonCopy()
-          copy.copy(module = copy.module.wrap())
-        },
         attributes)
     }
 
@@ -112,7 +98,7 @@ private[akka] object StreamLayout {
     def upstreams: Map[InPort, OutPort]
 
     def materializedValueComputation: MaterializedValueNode = Atomic(this)
-    def carbonCopy: () ⇒ Mapping
+    def carbonCopy: Module
 
     def attributes: OperationAttributes
     def withAttributes(attributes: OperationAttributes): Module
@@ -121,26 +107,27 @@ private[akka] object StreamLayout {
     final override def equals(obj: scala.Any): Boolean = super.equals(obj)
   }
 
-  object EmptyModule extends Module {
-    override def shape = EmptyShape
+  case class EmptyModuleWithShape(shape: Shape, attributes: OperationAttributes) extends Module {
+    override def replaceShape(s: Shape) = copy(shape.copyFromPorts(s.inlets, s.outlets))
 
     override def subModules: Set[Module] = Set.empty
 
     override def downstreams: Map[OutPort, InPort] = Map.empty
     override def upstreams: Map[InPort, OutPort] = Map.empty
 
-    override def withAttributes(attributes: OperationAttributes): Module = this
-    override def attributes: OperationAttributes = OperationAttributes.none
+    override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)
 
-    private val emptyMapping = Mapping(this, Map.empty, Map.empty)
-    override val carbonCopy: () ⇒ Mapping = () ⇒ emptyMapping
+    override val carbonCopy: Module = copy(shape.deepCopy())
 
     override def isRunnable: Boolean = false
     override def isAtomic: Boolean = false
     override def materializedValueComputation: MaterializedValueNode = Ignore
 
-    override def grow(that: Module): Module = that
+    override def wrap(): Module = this
+  }
 
+  object EmptyModule extends EmptyModuleWithShape(EmptyShape, OperationAttributes.none) {
+    override def grow(that: Module): Module = that
     override def wrap(): Module = this
   }
 
@@ -150,15 +137,35 @@ private[akka] object StreamLayout {
     downstreams: Map[OutPort, InPort],
     upstreams: Map[InPort, OutPort],
     override val materializedValueComputation: MaterializedValueNode,
-    override val carbonCopy: () ⇒ Mapping,
     attributes: OperationAttributes) extends Module {
 
-    override def withAttributes(attributes: OperationAttributes): Module = copy(
-      attributes = attributes,
-      carbonCopy = () ⇒ {
-        val that = this.carbonCopy()
-        that.copy(module = that.module.withAttributes(attributes))
-      })
+    override def replaceShape(s: Shape): Module = {
+      shape.requireSamePortsAs(s)
+      copy(shape = s)
+    }
+
+    override def carbonCopy: Module = {
+      import scala.collection.mutable
+      val out = mutable.Map[OutPort, OutPort]()
+      val in = mutable.Map[InPort, InPort]()
+
+      val subs = subModules map { s ⇒
+        val n = s.carbonCopy
+        out ++= s.shape.outlets.zip(n.shape.outlets)
+        in ++= s.shape.inlets.zip(n.shape.inlets)
+        n
+      }
+
+      val downs = downstreams.map(p ⇒ (out(p._1), in(p._2)))
+      val ups = upstreams.map(p ⇒ (in(p._1), out(p._2)))
+
+      val newShape = shape.copyFromPorts(shape.inlets.map(in.asInstanceOf[Inlet[_] ⇒ Inlet[_]]),
+        shape.outlets.map(out.asInstanceOf[Outlet[_] ⇒ Outlet[_]]))
+
+      copy(subModules = subs, shape = newShape, downstreams = downs, upstreams = ups)
+    }
+
+    override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)
 
     override def toString = {
       "\nModules: \n" + subModules.toSeq.map(m ⇒ "   " + m.getClass.getName).mkString("\n") + "\n" +

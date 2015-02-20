@@ -23,6 +23,11 @@ object GraphOpsIntegrationSpec {
       override def deepCopy() = ShufflePorts(
         new Inlet[In](in1.toString), new Inlet[In](in2.toString),
         new Outlet[Out](out1.toString), new Outlet[Out](out2.toString))
+      override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]) = {
+        assert(inlets.size == this.inlets.size)
+        assert(outlets.size == this.outlets.size)
+        ShufflePorts(inlets(0), inlets(1), outlets(0), outlets(1))
+      }
     }
 
     def apply[In, Out](pipeline: Flow[In, Out, _]): Graph[ShufflePorts[In, Out], Unit] = {
@@ -148,7 +153,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
     }
 
     "be able to run plain flow" in {
-      val p = Source(List(1, 2, 3)).runWith(Sink.publisher)
+      val p = Source(List(1, 2, 3)).runWith(Sink.publisher())
       val s = SubscriberProbe[Int]
       val flow = Flow[Int].map(_ * 2)
       Graph.closed() { implicit builder ⇒

@@ -5,7 +5,7 @@ package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicReference
 import akka.actor.{ ActorRef, Props }
-import akka.stream.impl.StreamLayout.{ Mapping, Module }
+import akka.stream.impl.StreamLayout.Module
 import akka.stream.scaladsl.OperationAttributes._
 import akka.stream.scaladsl.{ Sink, OperationAttributes, Source }
 import akka.stream.stage._
@@ -14,40 +14,28 @@ import org.reactivestreams.{ Processor, Publisher, Subscriber, Subscription }
 import scala.annotation.unchecked.uncheckedVariance
 import scala.concurrent.{ Future, Promise }
 import scala.util.{ Failure, Success, Try }
-import akka.stream.SinkShape
+import akka.stream.{ Shape, SinkShape }
+import akka.event.Logging.simpleName
 
-trait SinkModule[-In, Mat] extends StreamLayout.Module {
+abstract class SinkModule[-In, Mat](val shape: SinkShape[In]) extends Module {
 
-  /**
-   * This method is only used for Sinks that return true from [[#isActive]], which then must
-   * implement it.
-   */
   def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Subscriber[In] @uncheckedVariance, Mat)
-
-  /**
-   * This method indicates whether this Sink can create a Subscriber instead of being
-   * attached to a Publisher. This is only used if the Flow does not contain any
-   * operations.
-   */
 
   override def subModules: Set[Module] = Set.empty
   override def downstreams: Map[OutPort, InPort] = Map.empty
   override def upstreams: Map[InPort, OutPort] = Map.empty
 
-  val inPort: Inlet[In] = new Inlet[In]("Sink.in")
-  override val shape = new SinkShape[In](inPort)
+  override def replaceShape(s: Shape): Module =
+    if (s == shape) this
+    else throw new UnsupportedOperationException("cannot replace the shape of a Sink, you need to wrap it in a Graph for that")
 
-  protected def newInstance: SinkModule[In, Mat]
-  override def carbonCopy: () ⇒ Mapping = () ⇒ {
-    val copy = newInstance
-    Mapping(copy, Map(inPort -> copy.inPort), Map.empty)
+  // This is okay since we the only caller of this method is right below.
+  protected def newInstance(s: SinkShape[In] @uncheckedVariance): SinkModule[In, Mat]
+
+  override def carbonCopy: Module = {
+    val in = new Inlet[In](shape.inlet.toString)
+    newInstance(SinkShape(in))
   }
-}
-
-object PublisherSink {
-  def apply[T](): PublisherSink[T] = new PublisherSink[T]
-  def withFanout[T](initialBufferSize: Int, maximumBufferSize: Int): FanoutPublisherSink[T] =
-    new FanoutPublisherSink[T](initialBufferSize, maximumBufferSize)
 }
 
 /**
@@ -56,7 +44,7 @@ object PublisherSink {
  * elements to fill the internal buffers it will assert back-pressure until
  * a subscriber connects and creates demand for elements to be emitted.
  */
-class PublisherSink[In](val attributes: OperationAttributes = OperationAttributes.none) extends SinkModule[In, Publisher[In]] {
+class PublisherSink[In](val attributes: OperationAttributes, shape: SinkShape[In]) extends SinkModule[In, Publisher[In]](shape) {
 
   override def toString: String = "PublisherSink"
 
@@ -70,15 +58,16 @@ class PublisherSink[In](val attributes: OperationAttributes = OperationAttribute
     (sub, pub)
   }
 
-  override protected def newInstance: SinkModule[In, Publisher[In]] = new PublisherSink[In](attributes)
-  override def withAttributes(attr: OperationAttributes): Module = new PublisherSink[In](attr)
+  override protected def newInstance(shape: SinkShape[In]): SinkModule[In, Publisher[In]] = new PublisherSink[In](attributes, shape)
+  override def withAttributes(attr: OperationAttributes): Module = new PublisherSink[In](attr, shape)
 }
 
 final class FanoutPublisherSink[In](
   initialBufferSize: Int,
   maximumBufferSize: Int,
-  val attributes: OperationAttributes = OperationAttributes.none)
-  extends SinkModule[In, Publisher[In]] {
+  val attributes: OperationAttributes,
+  shape: SinkShape[In])
+  extends SinkModule[In, Publisher[In]](shape) {
 
   override def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Subscriber[In], Publisher[In]) = {
     val fanoutActor = materializer.actorOf(
@@ -87,16 +76,14 @@ final class FanoutPublisherSink[In](
     (fanoutProcessor, fanoutProcessor)
   }
 
-  override protected def newInstance: SinkModule[In, Publisher[In]] =
-    new FanoutPublisherSink[In](initialBufferSize, maximumBufferSize, attributes)
+  override protected def newInstance(shape: SinkShape[In]): SinkModule[In, Publisher[In]] =
+    new FanoutPublisherSink[In](initialBufferSize, maximumBufferSize, attributes, shape)
 
   override def withAttributes(attr: OperationAttributes): Module =
-    new FanoutPublisherSink[In](initialBufferSize, maximumBufferSize, attr)
+    new FanoutPublisherSink[In](initialBufferSize, maximumBufferSize, attr, shape)
 }
 
 object HeadSink {
-  def apply[T](): HeadSink[T] = new HeadSink[T]
-
   /** INTERNAL API */
   private[akka] class HeadSinkSubscriber[In](p: Promise[In]) extends Subscriber[In] {
     private val sub = new AtomicReference[Subscription]
@@ -118,7 +105,7 @@ object HeadSink {
  * the Future into the corresponding failed state) or the end-of-stream
  * (failing the Future with a NoSuchElementException).
  */
-class HeadSink[In](val attributes: OperationAttributes = OperationAttributes.none) extends SinkModule[In, Future[In]] {
+class HeadSink[In](val attributes: OperationAttributes, shape: SinkShape[In]) extends SinkModule[In, Future[In]](shape) {
 
   override def create(materializer: ActorBasedFlowMaterializer, flowName: String) = {
     val p = Promise[In]()
@@ -126,8 +113,8 @@ class HeadSink[In](val attributes: OperationAttributes = OperationAttributes.non
     (sub, p.future)
   }
 
-  override protected def newInstance: SinkModule[In, Future[In]] = new HeadSink[In](attributes)
-  override def withAttributes(attr: OperationAttributes): Module = new HeadSink[In](attr)
+  override protected def newInstance(shape: SinkShape[In]): SinkModule[In, Future[In]] = new HeadSink[In](attributes, shape)
+  override def withAttributes(attr: OperationAttributes): Module = new HeadSink[In](attr, shape)
 
   override def toString: String = "HeadSink"
 }
@@ -136,30 +123,30 @@ class HeadSink[In](val attributes: OperationAttributes = OperationAttributes.non
  * Attaches a subscriber to this stream which will just discard all received
  * elements.
  */
-final class BlackholeSink(val attributes: OperationAttributes = OperationAttributes.none) extends SinkModule[Any, Unit] {
+final class BlackholeSink(val attributes: OperationAttributes, shape: SinkShape[Any]) extends SinkModule[Any, Unit](shape) {
 
   override def create(materializer: ActorBasedFlowMaterializer, flowName: String) =
     (new BlackholeSubscriber[Any](materializer.settings.maxInputBufferSize), ())
 
-  override protected def newInstance: SinkModule[Any, Unit] = new BlackholeSink(attributes)
-  override def withAttributes(attr: OperationAttributes): Module = new BlackholeSink(attr)
+  override protected def newInstance(shape: SinkShape[Any]): SinkModule[Any, Unit] = new BlackholeSink(attributes, shape)
+  override def withAttributes(attr: OperationAttributes): Module = new BlackholeSink(attr, shape)
 }
 
 /**
  * Attaches a subscriber to this stream.
  */
-final class SubscriberSink[In](subscriber: Subscriber[In], val attributes: OperationAttributes = OperationAttributes.none) extends SinkModule[In, Unit] {
+final class SubscriberSink[In](subscriber: Subscriber[In], val attributes: OperationAttributes, shape: SinkShape[In]) extends SinkModule[In, Unit](shape) {
 
   override def create(materializer: ActorBasedFlowMaterializer, flowName: String) = (subscriber, ())
 
-  override protected def newInstance: SinkModule[In, Unit] = new SubscriberSink[In](subscriber, attributes)
-  override def withAttributes(attr: OperationAttributes): Module = new SubscriberSink[In](subscriber, attr)
+  override protected def newInstance(shape: SinkShape[In]): SinkModule[In, Unit] = new SubscriberSink[In](subscriber, attributes, shape)
+  override def withAttributes(attr: OperationAttributes): Module = new SubscriberSink[In](subscriber, attr, shape)
 }
 
 /**
  * A sink that immediately cancels its upstream upon materialization.
  */
-final class CancelSink(val attributes: OperationAttributes = OperationAttributes.none) extends SinkModule[Any, Unit] {
+final class CancelSink(val attributes: OperationAttributes, shape: SinkShape[Any]) extends SinkModule[Any, Unit](shape) {
 
   /**
    * This method is only used for Sinks that return true from [[#isActive]], which then must
@@ -175,21 +162,21 @@ final class CancelSink(val attributes: OperationAttributes = OperationAttributes
     (subscriber, ())
   }
 
-  override protected def newInstance: SinkModule[Any, Unit] = new CancelSink(attributes)
-  override def withAttributes(attr: OperationAttributes): Module = new CancelSink(attr)
+  override protected def newInstance(shape: SinkShape[Any]): SinkModule[Any, Unit] = new CancelSink(attributes, shape)
+  override def withAttributes(attr: OperationAttributes): Module = new CancelSink(attr, shape)
 }
 
 /**
  * Creates and wraps an actor into [[org.reactivestreams.Subscriber]] from the given `props`,
  * which should be [[akka.actor.Props]] for an [[akka.stream.actor.ActorSubscriber]].
  */
-final class PropsSink[In](props: Props, val attributes: OperationAttributes = OperationAttributes.none) extends SinkModule[In, ActorRef] {
+final class PropsSink[In](props: Props, val attributes: OperationAttributes, shape: SinkShape[In]) extends SinkModule[In, ActorRef](shape) {
 
   override def create(materializer: ActorBasedFlowMaterializer, flowName: String) = {
     val subscriberRef = materializer.actorOf(props, name = s"$flowName-props")
     (akka.stream.actor.ActorSubscriber[In](subscriberRef), subscriberRef)
   }
 
-  override protected def newInstance: SinkModule[In, ActorRef] = new PropsSink[In](props, attributes)
-  override def withAttributes(attr: OperationAttributes): Module = new PropsSink[In](props, attr)
+  override protected def newInstance(shape: SinkShape[In]): SinkModule[In, ActorRef] = new PropsSink[In](props, attributes, shape)
+  override def withAttributes(attr: OperationAttributes): Module = new PropsSink[In](props, attr, shape)
 }

@@ -63,7 +63,7 @@ object Sink extends SinkCreate {
    * that can handle one [[org.reactivestreams.Subscriber]].
    */
   def publisher[In](): Sink[In, Publisher[In]] =
-    new Sink(scaladsl.Sink.publisher)
+    new Sink(scaladsl.Sink.publisher())
 
   /**
    * A `Sink` that will invoke the given procedure for each received element. The sink is materialized
@@ -114,4 +114,10 @@ class Sink[-In, +Mat](delegate: scaladsl.Sink[In, Mat]) {
   // TODO shouldn’t this return M?
   def runWith[M](source: javadsl.Source[In, M], materializer: FlowMaterializer): Mat =
     asScala.runWith(source.asScala)(materializer)
+
+  /**
+   * Transform only the materialized value of this Sink, leaving all other properties as they were.
+   */
+  def mapMaterialized[Mat2](f: japi.Function[Mat, Mat2]): Sink[In, Mat2] =
+    new Sink(delegate.mapMaterialized(f.apply _))
 }

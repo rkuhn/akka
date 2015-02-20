@@ -129,7 +129,7 @@ object Source extends SourceCreate {
    * Creates a `Source` that is materialized as a [[org.reactivestreams.Subscriber]]
    */
   def subscriber[T](): Source[T, Subscriber[T]] =
-    new Source(scaladsl.Source.subscriber)
+    new Source(scaladsl.Source.subscriber())
 
   /**
    * Concatenates two sources so that the first element
@@ -153,6 +153,12 @@ class Source[+Out, +Mat](delegate: scaladsl.Source[Out, Mat]) {
 
   /** Converts this Java DSL element to it's Scala DSL counterpart. */
   def asScala: scaladsl.Source[Out, Mat] = delegate
+
+  /**
+   * Transform only the materialized value of this Source, leaving all other properties as they were.
+   */
+  def mapMaterialized[Mat2](f: japi.Function[Mat, Mat2]): Source[Out, Mat2] =
+    new Source(delegate.mapMaterialized(f.apply _))
 
   /**
    * Transform this [[Source]] by appending the given processing stages.

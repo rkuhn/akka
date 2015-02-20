@@ -64,11 +64,11 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
       override protected def materializeAtomic(atomic: Module, effectiveAttributes: OperationAttributes): Any = atomic match {
         case sink: SinkModule[_, _] ⇒
           val (sub, mat) = sink.create(ActorBasedFlowMaterializer.this, stageName(effectiveAttributes))
-          assignPort(sink.inPort, sub.asInstanceOf[Subscriber[Any]])
+          assignPort(sink.shape.inlet, sub.asInstanceOf[Subscriber[Any]])
           mat
         case source: SourceModule[_, _] ⇒
           val (pub, mat) = source.create(ActorBasedFlowMaterializer.this, stageName(effectiveAttributes))
-          assignPort(source.outPort, pub.asInstanceOf[Publisher[Any]])
+          assignPort(source.shape.outlet, pub.asInstanceOf[Publisher[Any]])
           mat
 
         case stage: StageModule ⇒
@@ -94,7 +94,7 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
 
       private def materializeJunction(op: JunctionModule, effectiveAttributes: OperationAttributes): Unit = {
         op match {
-          case fanin: FaninModule ⇒
+          case fanin: FanInModule ⇒
             val (props, inputs, output) = fanin match {
               case MergeModule(shape, _) ⇒
                 (FairMerge.props(effectiveAttributes.settings(settings), shape.in.size), shape.in.toSeq, shape.out)
@@ -122,7 +122,7 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
             }
             assignPort(output, publisher)
 
-          case fanout: FanoutModule ⇒
+          case fanout: FanOutModule ⇒
             val (props, in, outs) = fanout match {
               case r: FlexiRouteModule[t, p] ⇒
                 val flexi = r.flexi(r.shape)

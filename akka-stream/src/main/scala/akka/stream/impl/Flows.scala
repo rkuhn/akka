@@ -6,6 +6,10 @@ package akka.stream.impl
 import akka.stream._
 
 trait FlowModule[In, Out, Mat] extends StreamLayout.Module {
+  override def replaceShape(s: Shape) =
+    if (s == shape) this
+    else throw new UnsupportedOperationException("cannot replace the shape of a FlowModule")
+
   override def subModules = Set.empty
   override def downstreams = Map.empty
   override def upstreams = Map.empty
