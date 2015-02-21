@@ -192,8 +192,4 @@ private[akka] object Stages {
     override protected def newInstance: StageModule = this.copy()
   }
 
-  //  final case class DirectProcessorWithKey(p: () ⇒ (Processor[Any, Any], Any), key: Key[_], attributes: OperationAttributes = processorWithKey) extends StageModule {
-  //    //def withAttributes(attributes: OperationAttributes) = copy(attributes = attributes)
-  //  }
-
 }

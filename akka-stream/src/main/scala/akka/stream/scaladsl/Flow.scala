@@ -4,7 +4,7 @@
 package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
-import akka.stream.impl.StreamLayout.{ Module, EmptyModuleWithShape }
+import akka.stream.impl.StreamLayout.{ Module }
 import akka.stream.{ FlowShape, Inlet, Outlet, InPort, OutPort, SinkShape }
 import akka.stream.scaladsl.OperationAttributes._
 import akka.stream.{ TimerTransformer, TransformerLike, OverflowStrategy, FlowMaterializer, FlattenStrategy, Graph }
@@ -140,12 +140,12 @@ object Flow extends FlowApply {
   /**
    * Creates an empty `Flow` of type `T`
    */
-  def empty[T]: Flow[T, T, Unit] = new Flow(EmptyModuleWithShape(shape("Flow"), none))
+  def empty[T]: Flow[T, T, Unit] = new Flow(Stages.Identity())
 
   /**
    * Creates an empty `Flow` of type `T`
    */
-  def empty[T](name: String): Flow[T, T, Unit] = new Flow(EmptyModuleWithShape(shape(name), named(name)))
+  def empty[T](name: String): Flow[T, T, Unit] = new Flow(Stages.Identity(named(name)))
 
   /**
    * Helper to create `Flow` without a [[Source]] or a [[Sink]].

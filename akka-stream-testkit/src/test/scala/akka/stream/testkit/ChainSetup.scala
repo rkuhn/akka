@@ -23,7 +23,7 @@ class ChainSetup[In, Out](
 
   val upstream = StreamTestKit.PublisherProbe[In]()
   val downstream = StreamTestKit.SubscriberProbe[Out]()
-  private val s = Source(upstream).via(stream(Flow[In].map(x ⇒ x)))
+  private val s = Source(upstream).via(stream(Flow[In]("buh").map(x ⇒ x)))
   val publisher = toPublisher(s, materializer)
   val upstreamSubscription = upstream.expectSubscription()
   publisher.subscribe(downstream)

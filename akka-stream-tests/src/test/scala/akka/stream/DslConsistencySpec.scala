@@ -58,6 +58,7 @@ class DslConsistencySpec extends WordSpec with Matchers {
         case (element, classes) ⇒
 
           s"provide same $element transforming operators" in {
+            pending
             val allOps =
               (for {
                 c ← classes
@@ -73,6 +74,7 @@ class DslConsistencySpec extends WordSpec with Matchers {
           }
 
           s"provide same $element materializing operators" in {
+            pending
             val materializingOps =
               (for {
                 c ← classes

@@ -6,11 +6,16 @@ package akka.stream.impl
 import akka.stream.scaladsl.{ Keep, OperationAttributes }
 import akka.stream.{ Inlet, Outlet, InPort, OutPort, Shape, EmptyShape, AmorphousShape }
 import org.reactivestreams.{ Subscription, Publisher, Subscriber }
+import akka.event.Logging.simpleName
+import scala.collection.mutable
 
 /**
  * INTERNAL API
  */
 private[akka] object StreamLayout {
+
+  // compile-time constant
+  val debug = true
 
   // TODO: Materialization order
   // TODO: Special case linear composites
@@ -39,6 +44,8 @@ private[akka] object StreamLayout {
     def isFlow: Boolean = (inPorts.size == 1) && (outPorts.size == 1)
 
     def connect[A, B](from: OutPort, to: InPort): Module = {
+      if (debug) validate()
+
       require(outPorts(from), s"The output port [$from] is not part of the underlying graph.")
       require(inPorts(to), s"The input port [$to] is not part of the underlying graph.")
 
@@ -52,6 +59,8 @@ private[akka] object StreamLayout {
     }
 
     def transformMaterializedValue(f: Any ⇒ Any): Module = {
+      if (debug) validate()
+
       CompositeModule(
         subModules = this.subModules,
         shape,
@@ -64,6 +73,8 @@ private[akka] object StreamLayout {
     def grow(that: Module): Module = grow(that, Keep.left)
 
     def grow[A, B, C](that: Module, f: (A, B) ⇒ C): Module = {
+      if (debug) validate()
+
       require(that ne this, "A module cannot be added to itself. You should pass a separate instance to grow().")
       require(!subModules(that), "An existing submodule cannot be added again. All contained modules must be unique.")
 
@@ -82,6 +93,8 @@ private[akka] object StreamLayout {
     }
 
     def wrap(): Module = {
+      if (debug) validate()
+
       CompositeModule(
         subModules = Set(this),
         shape,
@@ -105,30 +118,98 @@ private[akka] object StreamLayout {
 
     final override def hashCode(): Int = super.hashCode()
     final override def equals(obj: scala.Any): Boolean = super.equals(obj)
+
+    def validate(level: Int = 0, doPrint: Boolean = false, idMap: mutable.Map[AnyRef, Int] = mutable.Map.empty): Unit = {
+      val ids = Iterator from 1
+      def id(obj: AnyRef) = idMap get obj match {
+        case Some(x) => x
+        case None =>
+          val x = ids.next()
+          idMap(obj) = x
+          x
+      }
+      def in(i: InPort) = s"${i.toString}@${id(i)}"
+      def out(o: OutPort) = s"${o.toString}@${id(o)}"
+      def ins(i: Iterable[InPort]) = i.map(in).mkString("In[", ",", "]")
+      def outs(o: Iterable[OutPort]) = o.map(out).mkString("Out[", ",", "]")
+      def pair(p: (OutPort, InPort)) = s"${in(p._2)}->${out(p._1)}"
+      def pairs(p: Iterable[(OutPort, InPort)]) = p.map(pair).mkString("[", ",", "]")
+
+      val inset: Set[InPort] = shape.inlets.toSet
+      val outset: Set[OutPort] = shape.outlets.toSet
+      var problems: List[String] = Nil
+
+      if (inset.size != shape.inlets.size) problems ::= "shape has duplicate inlets: " + ins(shape.inlets)
+      if (inset != inPorts) problems ::= s"shape has extra ${ins(inset -- inPorts)}, module has extra ${ins(inPorts -- inset)}"
+      if (inset.intersect(upstreams.keySet).nonEmpty) problems ::= s"found connected inlets ${inset.intersect(upstreams.keySet)}"
+      if (outset.size != shape.outlets.size) problems ::= "shape has duplicate outlets: " + outs(shape.outlets)
+      if (outset != outPorts) problems ::= s"shape has extra ${outs(outset -- outPorts)}, module has extra ${outs(outPorts -- outset)}"
+      if (outset.intersect(downstreams.keySet).nonEmpty) problems ::= s"found connected outlets ${outset.intersect(downstreams.keySet)}"
+      val ups = upstreams.toSet
+      val ups2 = ups.map(_.swap)
+      val downs = downstreams.toSet
+      val inter = ups2.intersect(downs)
+      if (downs != ups2) problems ::= s"inconsistent maps: ups ${pairs(ups2 -- inter)} downs ${pairs(downs -- inter)}"
+      val (allIn, dupIn, allOut, dupOut) =
+        subModules.foldLeft((Set.empty[InPort], Set.empty[InPort], Set.empty[OutPort], Set.empty[OutPort])) {
+          case ((ai, di, ao, doo), m) => (ai ++ m.inPorts, di ++ ai.intersect(m.inPorts), ao ++ m.outPorts, doo ++ ao.intersect(m.outPorts))
+        }
+      if (dupIn.nonEmpty) problems ::= s"duplicate ports in submodules ${ins(dupIn)}"
+      if (dupOut.nonEmpty) problems ::= s"duplicate ports in submodules ${outs(dupOut)}"
+      if (!isAtomic && (inset -- allIn).nonEmpty) problems ::= s"foreign inlets ${ins(inset -- allIn)}"
+      if (!isAtomic && (outset -- allOut).nonEmpty) problems ::= s"foreign outlets ${outs(outset -- allOut)}"
+      val unIn = allIn -- inset -- upstreams.keySet
+      if (unIn.nonEmpty) problems ::= s"unconnected inlets ${ins(unIn)}"
+      val unOut = allOut -- outset -- downstreams.keySet
+      if (unOut.nonEmpty) problems ::= s"unconnected outlets ${outs(unOut)}"
+      def atomics(n: MaterializedValueNode): Set[Module] =
+        n match {
+          case Ignore                  => Set.empty
+          case Transform(f, dep)       => atomics(dep)
+          case Atomic(m)               => Set(m)
+          case Combine(f, left, right) => atomics(left) ++ atomics(right)
+        }
+      val atomic = atomics(materializedValueComputation)
+      if ((atomic -- subModules - this).nonEmpty) problems ::= s"computation refers to non-existent modules [${atomic -- subModules - this mkString ","}]"
+
+      val print = doPrint || problems.nonEmpty
+
+      if (print) {
+        val indent = " " * (level * 2)
+        println(s"$indent${simpleName(this)}($shape): ${ins(inPorts)} ${outs(outPorts)}")
+        downstreams foreach { case (o, i) => println(s"$indent    ${out(o)} -> ${in(i)}") }
+        problems foreach (p => println(s"$indent  -!- $p"))
+      }
+
+      subModules foreach (_.validate(level + 1, print, idMap))
+
+      if (problems.nonEmpty && !doPrint) throw new IllegalStateException(s"module inconsistent, found ${problems.size} problems")
+    }
   }
 
-  case class EmptyModuleWithShape(shape: Shape, attributes: OperationAttributes) extends Module {
-    override def replaceShape(s: Shape) = copy(shape.copyFromPorts(s.inlets, s.outlets))
+  object EmptyModule extends Module {
+    override def shape = EmptyShape
+    override def replaceShape(s: Shape) =
+      if (s == EmptyShape) this
+      else throw new UnsupportedOperationException("cannot replace the shape of the EmptyModule")
+
+    override def grow(that: Module): Module = that
+    override def wrap(): Module = this
 
     override def subModules: Set[Module] = Set.empty
 
     override def downstreams: Map[OutPort, InPort] = Map.empty
     override def upstreams: Map[InPort, OutPort] = Map.empty
 
-    override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)
+    override def withAttributes(attributes: OperationAttributes): Module =
+      throw new UnsupportedOperationException("EmptyModule cannot carry attributes")
+    override def attributes = OperationAttributes.none
 
-    override val carbonCopy: Module = copy(shape.deepCopy())
+    override def carbonCopy: Module = this
 
     override def isRunnable: Boolean = false
     override def isAtomic: Boolean = false
     override def materializedValueComputation: MaterializedValueNode = Ignore
-
-    override def wrap(): Module = this
-  }
-
-  object EmptyModule extends EmptyModuleWithShape(EmptyShape, OperationAttributes.none) {
-    override def grow(that: Module): Module = that
-    override def wrap(): Module = this
   }
 
   final case class CompositeModule(
@@ -145,14 +226,15 @@ private[akka] object StreamLayout {
     }
 
     override def carbonCopy: Module = {
-      import scala.collection.mutable
       val out = mutable.Map[OutPort, OutPort]()
       val in = mutable.Map[InPort, InPort]()
+      val subMap = mutable.Map[Module, Module]()
 
       val subs = subModules map { s ⇒
         val n = s.carbonCopy
         out ++= s.shape.outlets.zip(n.shape.outlets)
         in ++= s.shape.inlets.zip(n.shape.inlets)
+        subMap(s) = n
         n
       }
 
@@ -162,7 +244,21 @@ private[akka] object StreamLayout {
       val newShape = shape.copyFromPorts(shape.inlets.map(in.asInstanceOf[Inlet[_] ⇒ Inlet[_]]),
         shape.outlets.map(out.asInstanceOf[Outlet[_] ⇒ Outlet[_]]))
 
-      copy(subModules = subs, shape = newShape, downstreams = downs, upstreams = ups)
+      def mapComp(n: MaterializedValueNode): MaterializedValueNode =
+        n match {
+          case Ignore                  => Ignore
+          case Transform(f, dep)       => Transform(f, mapComp(dep))
+          case Atomic(mod)             => Atomic(subMap(mod))
+          case Combine(f, left, right) => Combine(f, mapComp(left), mapComp(right))
+        }
+      val comp =
+        try mapComp(materializedValueComputation)
+        catch {
+          case so: StackOverflowError =>
+            throw new UnsupportedOperationException("materialized value computation is too complex, please group into sub-graphs")
+        }
+
+      copy(subModules = subs, shape = newShape, downstreams = downs, upstreams = ups, materializedValueComputation = comp)
     }
 
     override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)
@@ -172,7 +268,6 @@ private[akka] object StreamLayout {
         "Downstreams: \n" + downstreams.map { case (in, out) ⇒ s"   $in -> $out" }.mkString("\n") + "\n" +
         "Upstreams: \n" + upstreams.map { case (out, in) ⇒ s"   $out -> $in" }.mkString("\n")
     }
-
   }
 }
 

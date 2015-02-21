@@ -52,6 +52,8 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
   private[this] def createFlowName(): String = s"$namePrefix-${nextFlowNameCount()}"
 
   override def materialize[Mat](runnableFlow: RunnableFlow[Mat]): Mat = {
+    runnableFlow.module.validate()
+    
     val session = new MaterializerSession(runnableFlow.module) {
       private val flowName = createFlowName()
       private var nextId = 0
