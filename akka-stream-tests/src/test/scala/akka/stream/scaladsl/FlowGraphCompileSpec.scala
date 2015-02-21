@@ -104,7 +104,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
      *                  f6 ---> b.add(out2)
      */
     "detect cycle in " in {
-      pending
+      pending // FIXME needs cycle detection capability
       intercept[IllegalArgumentException] {
         Graph.closed() { b ⇒
           val merge = b.add(Merge[String](2))
@@ -122,6 +122,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
 
     }
 
+    // FIXME all of the following need the “wire-through” capability that Shapes don’t yet possess
     //    "express complex topologies in a readable way" in {
     //      Graph.closed() { implicit b ⇒
     //        b.allowCycles()
@@ -211,7 +212,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     //    }
 
     "distinguish between input and output ports" in {
-      intercept[IllegalArgumentException] {
+      intercept[IllegalStateException] {
         Graph.closed() { implicit b ⇒
           val zip = b.add(Zip[Int, String]())
           val unzip = b.add(Unzip[Int, String]())
@@ -224,7 +225,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
           "Flow(List(1, 2, 3)) ~> zip.left ~> wrongOut" shouldNot compile
           """Flow(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in ~> whatever""" shouldNot compile
         }
-      }.getMessage should include("empty")
+      }.getMessage should include("unconnected")
     }
 
     "build with variance" in {
@@ -239,20 +240,20 @@ class FlowGraphCompileSpec extends AkkaSpec {
 
     "build with implicits and variance" in {
       Graph.closed() { implicit b ⇒
-        val inA = b add Source(PublisherProbe[Fruit]())
-        val inB = b add Source(PublisherProbe[Apple]())
+        def appleSource = b.add(Source(PublisherProbe[Apple]))
+        def fruitSource = b.add(Source(PublisherProbe[Fruit]))
         val outA = b add Sink(SubscriberProbe[Fruit]())
         val outB = b add Sink(SubscriberProbe[Fruit]())
-        val merge = b add Merge[Fruit](12)
+        val merge = b add Merge[Fruit](11)
         val unzip = b add Unzip[Int, String]()
         val whatever = b add Sink.publisher[Any]
         import Graph.Implicits._
         b.add(Source[Fruit](apples)) ~> merge.in(0)
-        Source[Apple](apples) ~> merge.in(1)
-        inA ~> merge.in(2)
-        inB ~> merge.in(3)
-        inA ~> Flow[Fruit].map(identity) ~> merge.in(4)
-        inB ~> Flow[Apple].map(identity) ~> merge.in(5)
+        appleSource ~> merge.in(1)
+        appleSource ~> merge.in(2)
+        fruitSource ~> merge.in(3)
+        fruitSource ~> Flow[Fruit].map(identity) ~> merge.in(4)
+        appleSource ~> Flow[Apple].map(identity) ~> merge.in(5)
         b.add(Source(apples)) ~> merge.in(6)
         b.add(Source(apples)) ~> Flow[Fruit].map(identity) ~> merge.in(7)
         b.add(Source(apples)) ~> Flow[Apple].map(identity) ~> merge.in(8)
@@ -261,7 +262,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
         b.add(Source(apples)) ~> Flow[Apple] ~> merge.in(9)
         b.add(Source(apples)) ~> Flow[Apple] ~> outB
         b.add(Source(apples)) ~> Flow[Apple] ~> b.add(Sink.publisher[Fruit])
-        inB ~> Flow[Apple] ~> merge.in(11)
+        appleSource ~> Flow[Apple] ~> merge.in(10)
 
         Source(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in
         unzip.out1 ~> whatever

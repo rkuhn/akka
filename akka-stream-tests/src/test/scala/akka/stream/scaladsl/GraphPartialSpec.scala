@@ -107,7 +107,7 @@ class GraphPartialSpec extends AkkaSpec {
           flow.outlet ~> sink.inlet
       }.run()
 
-      Await.result(fut, 3.seconds) should be(0)
+      Await.result(fut, 3.seconds) should be(1)
 
     }
   }

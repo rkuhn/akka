@@ -52,8 +52,7 @@ private[akka] object StreamLayout {
       CompositeModule(
         subModules,
         AmorphousShape(shape.inlets.filterNot(_ == to), shape.outlets.filterNot(_ == from)),
-        downstreams.updated(from, to),
-        upstreams.updated(to, from),
+        (from, to) :: connections,
         materializedValueComputation,
         attributes)
     }
@@ -64,8 +63,7 @@ private[akka] object StreamLayout {
       CompositeModule(
         subModules = this.subModules,
         shape,
-        downstreams,
-        upstreams,
+        connections,
         Transform(f, this.materializedValueComputation),
         attributes)
     }
@@ -84,8 +82,7 @@ private[akka] object StreamLayout {
       CompositeModule(
         modules1 ++ modules2,
         AmorphousShape(shape.inlets ++ that.shape.inlets, shape.outlets ++ that.shape.outlets),
-        this.downstreams ++ that.downstreams,
-        this.upstreams ++ that.upstreams,
+        connections reverse_::: that.connections,
         if (f eq Keep.left) materializedValueComputation
         else if (f eq Keep.right) that.materializedValueComputation
         else Combine(f.asInstanceOf[(Any, Any) ⇒ Any], this.materializedValueComputation, that.materializedValueComputation),
@@ -98,8 +95,13 @@ private[akka] object StreamLayout {
       CompositeModule(
         subModules = Set(this),
         shape,
-        downstreams,
-        upstreams,
+        connections,
+        /*
+         * Wrapping like this shields the outer module from the details of the
+         * materialized value computation of its submodules, which is important
+         * to keep the re-binding of identities to computation nodes manageable
+         * in carbonCopy.
+         */
         Atomic(this),
         attributes)
     }
@@ -107,8 +109,12 @@ private[akka] object StreamLayout {
     def subModules: Set[Module]
     def isAtomic: Boolean = subModules.isEmpty
 
-    def downstreams: Map[OutPort, InPort]
-    def upstreams: Map[InPort, OutPort]
+    /**
+     * A list of connections whose port-wise ordering is STABLE across carbonCopy.
+     */
+    def connections: List[(OutPort, InPort)] = Nil
+    final lazy val downstreams: Map[OutPort, InPort] = connections.toMap
+    final lazy val upstreams: Map[InPort, OutPort] = connections.map(_.swap).toMap
 
     def materializedValueComputation: MaterializedValueNode = Atomic(this)
     def carbonCopy: Module
@@ -122,8 +128,8 @@ private[akka] object StreamLayout {
     def validate(level: Int = 0, doPrint: Boolean = false, idMap: mutable.Map[AnyRef, Int] = mutable.Map.empty): Unit = {
       val ids = Iterator from 1
       def id(obj: AnyRef) = idMap get obj match {
-        case Some(x) => x
-        case None =>
+        case Some(x) ⇒ x
+        case None ⇒
           val x = ids.next()
           idMap(obj) = x
           x
@@ -152,7 +158,7 @@ private[akka] object StreamLayout {
       if (downs != ups2) problems ::= s"inconsistent maps: ups ${pairs(ups2 -- inter)} downs ${pairs(downs -- inter)}"
       val (allIn, dupIn, allOut, dupOut) =
         subModules.foldLeft((Set.empty[InPort], Set.empty[InPort], Set.empty[OutPort], Set.empty[OutPort])) {
-          case ((ai, di, ao, doo), m) => (ai ++ m.inPorts, di ++ ai.intersect(m.inPorts), ao ++ m.outPorts, doo ++ ao.intersect(m.outPorts))
+          case ((ai, di, ao, doo), m) ⇒ (ai ++ m.inPorts, di ++ ai.intersect(m.inPorts), ao ++ m.outPorts, doo ++ ao.intersect(m.outPorts))
         }
       if (dupIn.nonEmpty) problems ::= s"duplicate ports in submodules ${ins(dupIn)}"
       if (dupOut.nonEmpty) problems ::= s"duplicate ports in submodules ${outs(dupOut)}"
@@ -164,10 +170,10 @@ private[akka] object StreamLayout {
       if (unOut.nonEmpty) problems ::= s"unconnected outlets ${outs(unOut)}"
       def atomics(n: MaterializedValueNode): Set[Module] =
         n match {
-          case Ignore                  => Set.empty
-          case Transform(f, dep)       => atomics(dep)
-          case Atomic(m)               => Set(m)
-          case Combine(f, left, right) => atomics(left) ++ atomics(right)
+          case Ignore                  ⇒ Set.empty
+          case Transform(f, dep)       ⇒ atomics(dep)
+          case Atomic(m)               ⇒ Set(m)
+          case Combine(f, left, right) ⇒ atomics(left) ++ atomics(right)
         }
       val atomic = atomics(materializedValueComputation)
       if ((atomic -- subModules - this).nonEmpty) problems ::= s"computation refers to non-existent modules [${atomic -- subModules - this mkString ","}]"
@@ -177,8 +183,8 @@ private[akka] object StreamLayout {
       if (print) {
         val indent = " " * (level * 2)
         println(s"$indent${simpleName(this)}($shape): ${ins(inPorts)} ${outs(outPorts)}")
-        downstreams foreach { case (o, i) => println(s"$indent    ${out(o)} -> ${in(i)}") }
-        problems foreach (p => println(s"$indent  -!- $p"))
+        downstreams foreach { case (o, i) ⇒ println(s"$indent    ${out(o)} -> ${in(i)}") }
+        problems foreach (p ⇒ println(s"$indent  -!- $p"))
       }
 
       subModules foreach (_.validate(level + 1, print, idMap))
@@ -198,9 +204,6 @@ private[akka] object StreamLayout {
 
     override def subModules: Set[Module] = Set.empty
 
-    override def downstreams: Map[OutPort, InPort] = Map.empty
-    override def upstreams: Map[InPort, OutPort] = Map.empty
-
     override def withAttributes(attributes: OperationAttributes): Module =
       throw new UnsupportedOperationException("EmptyModule cannot carry attributes")
     override def attributes = OperationAttributes.none
@@ -215,8 +218,7 @@ private[akka] object StreamLayout {
   final case class CompositeModule(
     subModules: Set[Module],
     shape: Shape,
-    downstreams: Map[OutPort, InPort],
-    upstreams: Map[InPort, OutPort],
+    override val connections: List[(OutPort, InPort)],
     override val materializedValueComputation: MaterializedValueNode,
     attributes: OperationAttributes) extends Module {
 
@@ -234,31 +236,35 @@ private[akka] object StreamLayout {
         val n = s.carbonCopy
         out ++= s.shape.outlets.zip(n.shape.outlets)
         in ++= s.shape.inlets.zip(n.shape.inlets)
+        s.connections.zip(n.connections) foreach {
+          case ((oldOut, oldIn), (newOut, newIn)) ⇒
+            out(oldOut) = newOut
+            in(oldIn) = newIn
+        }
         subMap(s) = n
         n
       }
 
-      val downs = downstreams.map(p ⇒ (out(p._1), in(p._2)))
-      val ups = upstreams.map(p ⇒ (in(p._1), out(p._2)))
-
       val newShape = shape.copyFromPorts(shape.inlets.map(in.asInstanceOf[Inlet[_] ⇒ Inlet[_]]),
         shape.outlets.map(out.asInstanceOf[Outlet[_] ⇒ Outlet[_]]))
 
+      val conn = connections.map(p ⇒ (out(p._1), in(p._2)))
+
       def mapComp(n: MaterializedValueNode): MaterializedValueNode =
         n match {
-          case Ignore                  => Ignore
-          case Transform(f, dep)       => Transform(f, mapComp(dep))
-          case Atomic(mod)             => Atomic(subMap(mod))
-          case Combine(f, left, right) => Combine(f, mapComp(left), mapComp(right))
+          case Ignore                  ⇒ Ignore
+          case Transform(f, dep)       ⇒ Transform(f, mapComp(dep))
+          case Atomic(mod)             ⇒ Atomic(subMap(mod))
+          case Combine(f, left, right) ⇒ Combine(f, mapComp(left), mapComp(right))
         }
       val comp =
         try mapComp(materializedValueComputation)
         catch {
-          case so: StackOverflowError =>
+          case so: StackOverflowError ⇒
             throw new UnsupportedOperationException("materialized value computation is too complex, please group into sub-graphs")
         }
 
-      copy(subModules = subs, shape = newShape, downstreams = downs, upstreams = ups, materializedValueComputation = comp)
+      copy(subModules = subs, shape = newShape, connections = conn, materializedValueComputation = comp)
     }
 
     override def withAttributes(attributes: OperationAttributes): Module = copy(attributes = attributes)

@@ -25,8 +25,6 @@ abstract class SourceModule[+Out, +Mat](val shape: SourceShape[Out]) extends Mod
   def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Publisher[Out] @uncheckedVariance, Mat)
 
   override def subModules: Set[Module] = Set.empty
-  override def upstreams: Map[InPort, OutPort] = Map.empty
-  override def downstreams: Map[OutPort, InPort] = Map.empty
 
   override def replaceShape(s: Shape): Module =
     if (s == shape) this

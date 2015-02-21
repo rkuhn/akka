@@ -353,7 +353,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       sub2.request(2)
       sub1.cancel()
 
-      s2.expectNext("onCancel: out0")
+      s2.expectNext("onCancel: TestRoute.out0")
       s1.expectNoMsg(200.millis)
 
       autoPublisher.sendNext("c")
@@ -416,7 +416,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       sub2.request(2)
       sub1.cancel()
 
-      s2.expectNext("onCancel: out0")
+      s2.expectNext("onCancel: TestRoute.out0")
       sub2.cancel()
 
       autoPublisher.subscription.expectCancellation()

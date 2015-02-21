@@ -22,8 +22,6 @@ abstract class SinkModule[-In, Mat](val shape: SinkShape[In]) extends Module {
   def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Subscriber[In] @uncheckedVariance, Mat)
 
   override def subModules: Set[Module] = Set.empty
-  override def downstreams: Map[OutPort, InPort] = Map.empty
-  override def upstreams: Map[InPort, OutPort] = Map.empty
 
   override def replaceShape(s: Shape): Module =
     if (s == shape) this

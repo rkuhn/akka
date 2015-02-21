@@ -21,9 +21,6 @@ object Junctions {
   sealed trait JunctionModule extends Module {
     override def subModules: Set[Module] = Set.empty
 
-    override def downstreams: Map[OutPort, InPort] = Map.empty
-    override def upstreams: Map[InPort, OutPort] = Map.empty
-
     override def replaceShape(s: Shape): Module =
       if (s.getClass == shape.getClass) this
       else throw new UnsupportedOperationException("cannot change the shape of a " + simpleName(this))

@@ -589,12 +589,12 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       val outputs =
         for (_ ← 1 to 8) yield {
           val next = s.expectNext()
-          if (next.startsWith("onInput: ")) next.charAt(9) else next.charAt(14)
+          if (next.startsWith("onInput: ")) next.substring(9) else next.substring(12)
         }
-      val one = Seq('a')
-      val two = Seq('b', 'c', 'd')
-      val three = Seq('e', 'f')
-      val four = Set('1', '2')
+      val one = Seq("a")
+      val two = Seq("b", "c", "d")
+      val three = Seq("e", "f")
+      val four = Set("UniformFanIn.in1", "UniformFanIn.in2")
       outputs.filter(one.contains) should ===(one)
       outputs.filter(two.contains) should ===(two)
       outputs.filter(three.contains) should ===(three)
@@ -659,11 +659,11 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       val outputs =
         for (_ ← 1 to 5) yield {
           val next = s.expectNext()
-          if (next.startsWith("onInput: ")) next.charAt(9) else next.charAt(14)
+          if (next.startsWith("onInput: ")) next.substring(9) else next.substring(12)
         }
-      val one = Seq('a', 'b')
-      val two = Seq('c')
-      val three = Set('1', '2')
+      val one = Seq("a", "b")
+      val two = Seq("c")
+      val three = Set("UniformFanIn.in1", "UniformFanIn.in2")
       outputs.filter(one.contains) should ===(one)
       outputs.filter(two.contains) should ===(two)
       outputs.filter(three.contains).toSet should ===(three)

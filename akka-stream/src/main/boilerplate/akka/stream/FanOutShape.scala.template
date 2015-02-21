@@ -16,17 +16,17 @@ abstract class FanOutShape[I](init: FanOutShape.Init[I]) extends Shape {
   
   final private[this] val (_in, _registered, _name) = init match {
     case Name(name)   => (new Inlet[I](s"$name.in"), Nil.iterator, name)
-    case Ports(o, it) => (o, it.reverseIterator, "FanOut")
+    case Ports(o, it) => (o, it.iterator, "FanOut")
   }
   
   final def in: Inlet[I] = _in
   final override def outlets: immutable.Seq[Outlet[_]] = _outlets
   final override def inlets: immutable.Seq[Inlet[_]] = in :: Nil
   
-  private var _outlets: List[Outlet[_]] = Nil
+  private var _outlets: Vector[Outlet[_]] = Vector.empty
   protected def newOutlet[T](name: String): Outlet[T] = {
     val p = if (_registered.hasNext) _registered.next().asInstanceOf[Outlet[T]] else new Outlet[T](s"${_name}.$name")
-    _outlets ::= p
+    _outlets :+= p
     p
   }
   

@@ -53,7 +53,7 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
 
   override def materialize[Mat](runnableFlow: RunnableFlow[Mat]): Mat = {
     runnableFlow.module.validate()
-    
+
     val session = new MaterializerSession(runnableFlow.module) {
       private val flowName = createFlowName()
       private var nextId = 0
@@ -107,7 +107,7 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
               // TODO each materialization needs its own logic
 
               case MergePreferredModule(shape, _) ⇒
-                (UnfairMerge.props(effectiveAttributes.settings(settings), shape.inlets.size), shape.inlets, shape.out)
+                (UnfairMerge.props(effectiveAttributes.settings(settings), shape.inlets.size), shape.preferred +: shape.in.toSeq, shape.out)
 
               case ConcatModule(shape, _) ⇒
                 require(shape.in.size == 2, "currently only supporting concatenation of exactly two inputs") // FIXME

@@ -105,8 +105,10 @@ object Graph extends GraphApply {
      * connected.
      */
     def add[S <: Shape](graph: Graph[S, _]): S = {
-      moduleInProgress = moduleInProgress.grow(graph.module)
-      graph.shape
+      if (StreamLayout.debug) graph.module.validate()
+      val copy = graph.module.carbonCopy
+      moduleInProgress = moduleInProgress.grow(copy)
+      graph.shape.copyFromPorts(copy.shape.inlets, copy.shape.outlets).asInstanceOf[S]
     }
 
     /**
@@ -116,8 +118,10 @@ object Graph extends GraphApply {
      * Flow, Sink and Graph.
      */
     private[stream] def add[S <: Shape, A, B](graph: Graph[S, _], combine: (A, B) ⇒ Any): S = {
-      moduleInProgress = moduleInProgress.grow(graph.module, combine)
-      graph.shape
+      if (StreamLayout.debug) graph.module.validate()
+      val copy = graph.module.carbonCopy
+      moduleInProgress = moduleInProgress.grow(copy, combine)
+      graph.shape.copyFromPorts(copy.shape.inlets, copy.shape.outlets).asInstanceOf[S]
     }
 
     def add[T](s: Source[T, _]): Outlet[T] = add(s: Graph[SourceShape[T], _]).outlet

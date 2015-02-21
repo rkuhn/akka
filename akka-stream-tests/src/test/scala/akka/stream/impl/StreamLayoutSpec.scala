@@ -16,8 +16,6 @@ class StreamLayoutSpec extends AkkaSpec {
     override def replaceShape(s: Shape): Module = ???
 
     override def subModules: Set[Module] = Set.empty
-    override def downstreams: Map[OutPort, InPort] = Map.empty
-    override def upstreams: Map[InPort, OutPort] = Map.empty
 
     override def carbonCopy: Module = ???
 
