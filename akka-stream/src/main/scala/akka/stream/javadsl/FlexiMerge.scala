@@ -260,7 +260,7 @@ object FlexiMerge {
             wrapState(newDelegateState)
           })
 
-      class MergeLogicContextWrapper[In](delegate: MergeLogicContext) extends FlexiMerge.MergeLogicContext[Out] {
+      class MergeLogicContextWrapper(delegate: MergeLogicContext) extends FlexiMerge.MergeLogicContext[Out] {
         override def isDemandAvailable: Boolean = delegate.isDemandAvailable
         override def emit(elem: Out): Unit = delegate.emit(elem)
         override def complete(): Unit = delegate.complete()

@@ -105,8 +105,6 @@ private[akka] class FlexiMergeImpl[T, S <: Shape](
         case Read(input) ⇒
           require(indexOf.contains(input), s"Unknown input handle $input")
           val inputIdx = indexOf(input)
-          require(!inputBunch.isCancelled(inputIdx), s"Read not allowed from cancelled $input")
-          require(!inputBunch.isDepleted(inputIdx), s"Read not allowed from depleted $input")
           inputBunch.unmarkAllInputs()
           inputBunch.markInput(inputIdx)
       }

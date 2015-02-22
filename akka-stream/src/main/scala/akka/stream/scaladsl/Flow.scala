@@ -171,6 +171,12 @@ object Flow extends FlowApply {
    */
   def apply[T](name: String): Flow[T, T, Unit] = empty(name)
 
+  /**
+   * A graph with the shape of a source logically is a source, this method makes
+   * it so also in type.
+   */
+  def wrap[I, O, M](g: Graph[FlowShape[I, O], M]): Flow[I, O, M] = new Flow(g.module)
+
 }
 
 /**

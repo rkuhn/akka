@@ -221,7 +221,11 @@ object Source extends SourceApply {
     })
   }
 
-  def wrap[T, M](g: Graph[SourceShape[T], M]): Source[T, M] = ??? // FIXME (and add for Flow and Sink as well)
+  /**
+   * A graph with the shape of a source logically is a source, this method makes
+   * it so also in type.
+   */
+  def wrap[T, M](g: Graph[SourceShape[T], M]): Source[T, M] = new Source(g.module)
 
   /**
    * Helper to create [[Source]] from `Iterable`.
