@@ -281,20 +281,20 @@ object FlowGraph {
   def builder(): Builder = new Builder(new scaladsl.FlowGraph.Builder)
 
   class Builder(delegate: scaladsl.FlowGraph.Builder) {
-    def addEdge[A, B, M](from: Outlet[A], via: Flow[A, B, M], to: Inlet[B]): Unit = delegate.addEdge(from, via.asScala, to)
+    def flow[A, B, M](from: Outlet[A], via: Flow[A, B, M], to: Inlet[B]): Unit = delegate.addEdge(from, via.asScala, to)
 
-    def addEdge[T](from: Outlet[T], to: Inlet[T]): Unit = delegate.addEdge(from, to)
+    def edge[T](from: Outlet[T], to: Inlet[T]): Unit = delegate.addEdge(from, to)
 
     /**
      * Import a graph into this module, performing a deep copy, discarding its
      * materialized value and returning the copied Ports that are now to be
      * connected.
      */
-    def add[S <: Shape](graph: Graph[S, _]): S = delegate.add(graph)
+    def graph[S <: Shape](graph: Graph[S, _]): S = delegate.add(graph)
 
-    def add[T](source: Source[T, _]): Outlet[T] = delegate.add(source.asScala)
+    def source[T](source: Source[T, _]): Outlet[T] = delegate.add(source.asScala)
 
-    def add[T](sink: Sink[T, _]): Inlet[T] = delegate.add(sink.asScala)
+    def sink[T](sink: Sink[T, _]): Inlet[T] = delegate.add(sink.asScala)
 
     def run(mat: FlowMaterializer): Unit = delegate.buildRunnable().run()(mat)
   }

@@ -51,10 +51,10 @@ public class FlexiMergeTest {
               @Override
               public void apply(Builder b, SinkShape<List<String>> sink)
                   throws Exception {
-                final UniformFanInShape<String, String> merge = b.add(new Fair<String>());
-                b.addEdge(b.add(in1), merge.in(0));
-                b.addEdge(b.add(in2), merge.in(1));
-                b.addEdge(merge.out(), Flow.of(String.class).grouped(10), sink.inlet());
+                final UniformFanInShape<String, String> merge = b.graph(new Fair<String>());
+                b.edge(b.source(in1), merge.in(0));
+                b.edge(b.source(in2), merge.in(1));
+                b.flow(merge.out(), Flow.of(String.class).grouped(10), sink.inlet());
               }
             }).run(materializer);
 
@@ -73,10 +73,10 @@ public class FlexiMergeTest {
               @Override
               public void apply(Builder b, SinkShape<List<String>> sink)
                   throws Exception {
-                final UniformFanInShape<String, String> merge = b.add(new StrictRoundRobin<String>());
-                b.addEdge(b.add(in1), merge.in(0));
-                b.addEdge(b.add(in2), merge.in(1));
-                b.addEdge(merge.out(), Flow.of(String.class).grouped(10), sink.inlet());
+                final UniformFanInShape<String, String> merge = b.graph(new StrictRoundRobin<String>());
+                b.edge(b.source(in1), merge.in(0));
+                b.edge(b.source(in2), merge.in(1));
+                b.flow(merge.out(), Flow.of(String.class).grouped(10), sink.inlet());
               }
             }).run(materializer);
 
@@ -97,10 +97,10 @@ public class FlexiMergeTest {
               @Override
               public void apply(Builder b, SinkShape<List<Pair<Integer, String>>> sink)
                   throws Exception {
-                final FanInShape2<Integer, String, Pair<Integer, String>> zip = b.add(new Zip<Integer, String>());
-                b.addEdge(b.add(inA), zip.in0());
-                b.addEdge(b.add(inB), zip.in1());
-                b.addEdge(zip.out(), Flow.<Pair<Integer, String>> create().grouped(10), sink.inlet());
+                final FanInShape2<Integer, String, Pair<Integer, String>> zip = b.graph(new Zip<Integer, String>());
+                b.edge(b.source(inA), zip.in0());
+                b.edge(b.source(inB), zip.in1());
+                b.flow(zip.out(), Flow.<Pair<Integer, String>> create().grouped(10), sink.inlet());
               }
             }).run(materializer);
     
@@ -125,11 +125,11 @@ public class FlexiMergeTest {
               public void apply(Builder b, SinkShape<List<Triple<Long, Integer, String>>> sink)
                   throws Exception {
                 final FanInShape3<Long, Integer, String, Triple<Long, Integer, String>> zip =
-                    b.add(new TripleZip<Long, Integer, String>());
-                b.addEdge(b.add(inA), zip.in0());
-                b.addEdge(b.add(inB), zip.in1());
-                b.addEdge(b.add(inC), zip.in2());
-                b.addEdge(zip.out(), Flow.<Triple<Long, Integer, String>> create().grouped(10), sink.inlet());
+                    b.graph(new TripleZip<Long, Integer, String>());
+                b.edge(b.source(inA), zip.in0());
+                b.edge(b.source(inB), zip.in1());
+                b.edge(b.source(inC), zip.in2());
+                b.flow(zip.out(), Flow.<Triple<Long, Integer, String>> create().grouped(10), sink.inlet());
               }
             }).run(materializer);
 

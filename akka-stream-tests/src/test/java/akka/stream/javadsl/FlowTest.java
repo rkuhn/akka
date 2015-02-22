@@ -283,9 +283,9 @@ public class FlowTest extends StreamTest {
     final Source<String, BoxedUnit> source = Source.factory().create(new Function<FlowGraph.Builder, Outlet<String>>() {
       @Override
       public Outlet<String> apply(Builder b) throws Exception {
-        final UniformFanInShape<String, String> merge = b.add(Merge.<String> create(2));
-        b.addEdge(b.add(in1), f1, merge.in(0));
-        b.addEdge(b.add(in2), f2, merge.in(1));
+        final UniformFanInShape<String, String> merge = b.graph(Merge.<String> create(2));
+        b.flow(b.source(in1), f1, merge.in(0));
+        b.flow(b.source(in2), f2, merge.in(1));
         return merge.out();
       }
     });
@@ -305,10 +305,10 @@ public class FlowTest extends StreamTest {
     final Iterable<Integer> input2 = Arrays.asList(1, 2, 3);
 
     final Builder b = FlowGraph.builder();
-    final Outlet<String> in1 = b.add(Source.from(input1));
-    final Outlet<Integer> in2 = b.add(Source.from(input2));
-    final FanInShape2<String, Integer, Pair<String, Integer>> zip = b.add(Zip.<String, Integer> create());
-    final Inlet<Pair<String, Integer>> out = b.add(Sink
+    final Outlet<String> in1 = b.source(Source.from(input1));
+    final Outlet<Integer> in2 = b.source(Source.from(input2));
+    final FanInShape2<String, Integer, Pair<String, Integer>> zip = b.graph(Zip.<String, Integer> create());
+    final Inlet<Pair<String, Integer>> out = b.sink(Sink
         .foreach(new Procedure<Pair<String, Integer>>() {
           @Override
           public void apply(Pair<String, Integer> param) throws Exception {
@@ -316,9 +316,9 @@ public class FlowTest extends StreamTest {
           }
         }));
     
-    b.addEdge(in1, zip.in0());
-    b.addEdge(in2, zip.in1());
-    b.addEdge(zip.out(), out);
+    b.edge(in1, zip.in0());
+    b.edge(in2, zip.in1());
+    b.edge(zip.out(), out);
     
     b.run(materializer);
 
