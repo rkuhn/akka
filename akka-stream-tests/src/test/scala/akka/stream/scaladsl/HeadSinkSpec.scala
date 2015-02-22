@@ -38,7 +38,7 @@ class HeadSinkSpec extends AkkaSpec with ScriptedTest {
       val p = StreamTestKit.PublisherProbe[Int]()
       val f = Sink.head[Int]
       val s = Source.subscriber[Int]
-      val (subscriber, future) = s.to(f, (sub, fut: Future[Int]) ⇒ (sub, fut)).run()
+      val (subscriber, future) = s.toMat(f)(Keep.both).run()
 
       p.subscribe(subscriber)
       val proc = p.expectSubscription

@@ -36,12 +36,15 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
 
   override val shape: SourceShape[Out] = module.shape.asInstanceOf[SourceShape[Out]]
 
-  def via[T, Mat2](flow: Flow[Out, T, Mat2]): Source[T, Mat2] = via(flow, Keep.right[Mat, Mat2])
+  /**
+   * Transform this [[akka.stream.scaladsl.Source]] by appending the given processing stages.
+   */
+  def via[T, Mat2](flow: Flow[Out, T, Mat2]): Source[T, Mat] = viaMat(flow)(Keep.left)
 
   /**
    * Transform this [[akka.stream.scaladsl.Source]] by appending the given processing stages.
    */
-  def via[T, Mat2, Mat3](flow: Flow[Out, T, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Source[T, Mat3] = {
+  def viaMat[T, Mat2, Mat3](flow: Flow[Out, T, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Source[T, Mat3] = {
     val flowCopy = flow.module.carbonCopy
     new Source(
       module
@@ -50,14 +53,17 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
         .replaceShape(SourceShape(flowCopy.shape.outlets.head)))
   }
 
-  def to[Mat2](sink: Sink[Out, Mat2]): RunnableFlow[Mat2] =
-    to(sink, (sourcem: Mat, sinkm: Mat2) ⇒ sinkm)
+  /**
+   * Connect this [[akka.stream.scaladsl.Source]] to a [[akka.stream.scaladsl.Sink]],
+   * concatenating the processing steps of both.
+   */
+  def to[Mat2](sink: Sink[Out, Mat2]): RunnableFlow[Mat] = toMat(sink)(Keep.left)
 
   /**
    * Connect this [[akka.stream.scaladsl.Source]] to a [[akka.stream.scaladsl.Sink]],
    * concatenating the processing steps of both.
    */
-  def to[Mat2, Mat3](sink: Sink[Out, Mat2], combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
+  def toMat[Mat2, Mat3](sink: Sink[Out, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
     val sinkCopy = sink.module.carbonCopy
     RunnableFlow(module
       .grow(sinkCopy, combine)
@@ -93,7 +99,7 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
    * Connect this `Source` to a `Sink` and run it. The returned value is the materialized value
    * of the `Sink`, e.g. the `Publisher` of a [[akka.stream.scaladsl.Sink#publisher]].
    */
-  def runWith[Mat2](sink: Sink[Out, Mat2])(implicit materializer: FlowMaterializer): Mat2 = to(sink).run()
+  def runWith[Mat2](sink: Sink[Out, Mat2])(implicit materializer: FlowMaterializer): Mat2 = toMat(sink)(Keep.right).run()
 
   /**
    * Shortcut for running this `Source` with a fold function.
@@ -362,9 +368,9 @@ object Source extends SourceApply {
    * source.
    */
   def concat[T, Mat1, Mat2](source1: Source[T, Mat1], source2: Source[T, Mat2]): Source[T, (Mat1, Mat2)] =
-    wrap(Graph.partial(source1, source2)(Keep.both) { implicit b ⇒
+    wrap(FlowGraph.partial(source1, source2)(Keep.both) { implicit b ⇒
       (s1, s2) ⇒
-        import Graph.Implicits._
+        import FlowGraph.Implicits._
         val c = b.add(Concat[T]())
         s1.outlet ~> c.in(0)
         s2.outlet ~> c.in(1)

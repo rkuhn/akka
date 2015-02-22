@@ -7,16 +7,18 @@ import akka.actor.ActorRef
 import akka.actor.Props
 import akka.stream.javadsl
 import akka.stream.scaladsl
-import akka.stream.{ FlowMaterializer, Inlet }
+import akka.stream._
 import org.reactivestreams.Publisher
 import org.reactivestreams.Subscriber
-
 import scala.concurrent.Future
+import akka.stream.impl.StreamLayout
 
 /** Java API */
-object Sink extends SinkCreate {
+object Sink {
 
   import akka.stream.scaladsl.JavaConverters._
+
+  val factory: SinkCreate = new SinkCreate {}
 
   /** Adapt [[scaladsl.Sink]] for use within Java DSL */
   def adapt[O, M](sink: scaladsl.Sink[O, M]): javadsl.Sink[O, M] =
@@ -103,7 +105,10 @@ object Sink extends SinkCreate {
  * A `Sink` is a set of stream processing steps that has one open input and an attached output.
  * Can be used as a `Subscriber`
  */
-class Sink[-In, +Mat](delegate: scaladsl.Sink[In, Mat]) {
+class Sink[-In, +Mat](delegate: scaladsl.Sink[In, Mat]) extends Graph[SinkShape[In], Mat] {
+
+  override def shape: SinkShape[In] = delegate.shape
+  private[stream] def module: StreamLayout.Module = delegate.module
 
   /** Converts this Sink to it's Scala DSL counterpart */
   def asScala: scaladsl.Sink[In, Mat] = delegate
@@ -112,7 +117,7 @@ class Sink[-In, +Mat](delegate: scaladsl.Sink[In, Mat]) {
    * Connect this `Sink` to a `Source` and run it.
    */
   // TODO shouldn’t this return M?
-  def runWith[M](source: javadsl.Source[In, M], materializer: FlowMaterializer): Mat =
+  def runWith[M](source: javadsl.Source[In, M], materializer: FlowMaterializer): M =
     asScala.runWith(source.asScala)(materializer)
 
   /**

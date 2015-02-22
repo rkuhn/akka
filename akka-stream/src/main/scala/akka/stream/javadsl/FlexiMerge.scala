@@ -10,10 +10,12 @@ import scala.collection.immutable
 import java.util.{ List ⇒ JList }
 import akka.japi.Util.immutableIndexedSeq
 import akka.stream._
+import akka.stream.impl.StreamLayout
+import akka.stream.impl.Junctions.FlexiMergeModule
 
 object FlexiMerge {
 
-  sealed trait ReadCondition
+  sealed trait ReadCondition[T]
 
   /**
    * Read condition for the [[State]] that will be
@@ -24,7 +26,7 @@ object FlexiMerge {
    * has been completed. `IllegalArgumentException` is thrown if
    * that is not obeyed.
    */
-  class Read(val input: InPort) extends ReadCondition
+  class Read[T](val input: Inlet[T]) extends ReadCondition[T]
 
   /**
    * Read condition for the [[State]] that will be
@@ -34,7 +36,7 @@ object FlexiMerge {
    * Cancelled and completed inputs are not used, i.e. it is allowed
    * to specify them in the list of `inputs`.
    */
-  class ReadAny(val inputs: JList[InPort]) extends ReadCondition
+  class ReadAny[T](val inputs: JList[InPort]) extends ReadCondition[T]
 
   /**
    * Read condition for the [[FlexiMerge#State]] that will be
@@ -46,7 +48,7 @@ object FlexiMerge {
    * Cancelled and completed inputs are not used, i.e. it is allowed
    * to specify them in the list of `inputs`.
    */
-  class ReadPreferred(val preferred: InPort, val secondaries: JList[InPort]) extends ReadCondition
+  class ReadPreferred[T](val preferred: InPort, val secondaries: JList[InPort]) extends ReadCondition[T]
 
   /**
    * Read condition for the [[FlexiMerge#State]] that will be
@@ -59,7 +61,7 @@ object FlexiMerge {
    * the resulting [[ReadAllInputs]] will then not contain values for this element, which can be
    * handled via supplying a default value instead of the value from the (now cancelled) input.
    */
-  class ReadAll(val inputs: JList[InPort]) extends ReadCondition
+  class ReadAll(val inputs: JList[InPort]) extends ReadCondition[ReadAllInputs]
 
   /**
    * Provides typesafe accessors to values from inputs supplied to [[ReadAll]].
@@ -125,8 +127,8 @@ object FlexiMerge {
    * or it can be swallowed to continue with remaining inputs.
    */
   abstract class CompletionHandling[Out] {
-    def onComplete(ctx: MergeLogicContext[Out], input: InPort): State[Out]
-    def onError(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[Out]
+    def onComplete(ctx: MergeLogicContext[Out], input: InPort): State[_, Out]
+    def onError(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[_, Out]
   }
 
   /**
@@ -138,8 +140,8 @@ object FlexiMerge {
    * The `onInput` method is called when an `element` was read from the `input`.
    * The method returns next behavior or [[MergeLogic#sameState]] to keep current behavior.
    */
-  abstract class State[Out](val condition: ReadCondition) {
-    def onInput(ctx: MergeLogicContext[Out], input: InPort, element: AnyRef): State[Out]
+  abstract class State[T, Out](val condition: ReadCondition[T]) {
+    def onInput(ctx: MergeLogicContext[Out], input: InPort, element: T): State[_, Out]
   }
 
   /**
@@ -148,23 +150,23 @@ object FlexiMerge {
    *
    * Concrete instance is supposed to be created by implementing [[FlexiMerge#createMergeLogic]].
    */
-  abstract class MergeLogic[Out] {
-    def initialState: State[Out]
+  abstract class MergeLogic[T, Out] {
+    def initialState: State[T, Out]
     def initialCompletionHandling: CompletionHandling[Out] = defaultCompletionHandling
     /**
      * Return this from [[State]] `onInput` to use same state for next element.
      */
-    def sameState: State[Out] = FlexiMerge.sameStateInstance.asInstanceOf[State[Out]]
+    def sameState[U]: State[U, Out] = FlexiMerge.sameStateInstance.asInstanceOf[State[U, Out]]
 
     /**
      * Convenience to create a [[Read]] condition.
      */
-    def read(input: InPort): Read = new Read(input)
+    def read[U](input: Inlet[U]): Read[U] = new Read(input)
 
     /**
      * Convenience to create a [[ReadAny]] condition.
      */
-    @varargs def readAny(inputs: InPort*): ReadAny = {
+    @varargs def readAny[U](inputs: InPort*): ReadAny[U] = {
       import scala.collection.JavaConverters._
       new ReadAny(inputs.asJava)
     }
@@ -172,7 +174,7 @@ object FlexiMerge {
     /**
      * Convenience to create a [[ReadPreferred]] condition.
      */
-    @varargs def readPreferred(preferred: InPort, secondaries: InPort*): ReadPreferred = {
+    @varargs def readPreferred[U](preferred: InPort, secondaries: InPort*): ReadPreferred[U] = {
       import scala.collection.JavaConverters._
       new ReadPreferred(preferred, secondaries.asJava)
     }
@@ -191,9 +193,9 @@ object FlexiMerge {
      */
     def defaultCompletionHandling: CompletionHandling[Out] =
       new CompletionHandling[Out] {
-        override def onComplete(ctx: MergeLogicContext[Out], input: InPort): State[Out] =
+        override def onComplete(ctx: MergeLogicContext[Out], input: InPort): State[_, Out] =
           sameState
-        override def onError(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[Out] = {
+        override def onError(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[_, Out] = {
           ctx.error(cause)
           sameState
         }
@@ -205,19 +207,19 @@ object FlexiMerge {
      */
     def eagerClose: CompletionHandling[Out] =
       new CompletionHandling[Out] {
-        override def onComplete(ctx: MergeLogicContext[Out], input: InPort): State[Out] = {
+        override def onComplete(ctx: MergeLogicContext[Out], input: InPort): State[_, Out] = {
           ctx.complete()
           sameState
         }
-        override def onError(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[Out] = {
+        override def onError(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[_, Out] = {
           ctx.error(cause)
           sameState
         }
       }
   }
 
-  private val sameStateInstance = new State[Any](new ReadAny(java.util.Collections.emptyList[InPort])) {
-    override def onInput(ctx: MergeLogicContext[Any], input: InPort, element: AnyRef): State[Any] =
+  private val sameStateInstance = new State[AnyRef, Any](new ReadAny(java.util.Collections.emptyList[InPort])) {
+    override def onInput(ctx: MergeLogicContext[Any], input: InPort, element: AnyRef): State[AnyRef, Any] =
       throw new UnsupportedOperationException("SameState.onInput should not be called")
 
     override def toString: String = "SameState"
@@ -227,14 +229,14 @@ object FlexiMerge {
    * INTERNAL API
    */
   private[akka] object Internal {
-    class MergeLogicWrapper[Out](delegate: MergeLogic[Out]) extends scaladsl.FlexiMerge.MergeLogic[Out] {
+    class MergeLogicWrapper[T, Out](delegate: MergeLogic[T, Out]) extends scaladsl.FlexiMerge.MergeLogic[Out] {
 
-      override def initialState: State[_] = wrapState(delegate.initialState)
+      override def initialState: State[T] = wrapState(delegate.initialState)
 
       override def initialCompletionHandling: this.CompletionHandling =
         wrapCompletionHandling(delegate.initialCompletionHandling)
 
-      private def wrapState(delegateState: FlexiMerge.State[Out]): State[_] =
+      private def wrapState[U](delegateState: FlexiMerge.State[U, Out]): State[U] =
         if (sameStateInstance == delegateState)
           SameState
         else
@@ -270,14 +272,14 @@ object FlexiMerge {
 
     }
 
-    private def toAnyRefSeq(l: JList[InPort]) = immutableIndexedSeq(l).asInstanceOf[immutable.Seq[Inlet[AnyRef]]]
+    private def toSeq[T](l: JList[InPort]) = immutableIndexedSeq(l).asInstanceOf[immutable.Seq[Inlet[T]]]
 
-    def convertReadCondition(condition: ReadCondition): scaladsl.FlexiMerge.ReadCondition[AnyRef] = {
+    def convertReadCondition[T](condition: ReadCondition[T]): scaladsl.FlexiMerge.ReadCondition[T] = {
       condition match {
-        case r: ReadAny       ⇒ scaladsl.FlexiMerge.ReadAny(toAnyRefSeq(r.inputs))
-        case r: ReadPreferred ⇒ scaladsl.FlexiMerge.ReadPreferred(r.preferred.asInstanceOf[Inlet[AnyRef]], toAnyRefSeq(r.secondaries))
-        case r: Read          ⇒ scaladsl.FlexiMerge.Read(r.input.asInstanceOf[Inlet[AnyRef]])
-        case r: ReadAll       ⇒ scaladsl.FlexiMerge.ReadAll(new ReadAllInputs(_), toAnyRefSeq(r.inputs): _*).asInstanceOf[scaladsl.FlexiMerge.ReadCondition[AnyRef]]
+        case r: ReadAny[_]       ⇒ scaladsl.FlexiMerge.ReadAny(toSeq[T](r.inputs))
+        case r: ReadPreferred[_] ⇒ scaladsl.FlexiMerge.ReadPreferred(r.preferred.asInstanceOf[Inlet[T]], toSeq[T](r.secondaries))
+        case r: Read[_]          ⇒ scaladsl.FlexiMerge.Read(r.input)
+        case r: ReadAll          ⇒ scaladsl.FlexiMerge.ReadAll(new ReadAllInputs(_), toSeq[AnyRef](r.inputs): _*).asInstanceOf[scaladsl.FlexiMerge.ReadCondition[ReadAllInputs]]
       }
     }
 
@@ -300,13 +302,12 @@ object FlexiMerge {
  *
  * @param attributes optional attributes for this vertex
  */
-abstract class FlexiMerge[S <: Shape](val attributes: OperationAttributes) {
+abstract class FlexiMerge[T, Out, S <: Shape](val shape: S, val attributes: OperationAttributes) extends Graph[S, Unit] {
   import FlexiMerge._
 
-  def this() = this(OperationAttributes.none)
+  val module: StreamLayout.Module = new FlexiMergeModule(shape, (s: S) ⇒ new Internal.MergeLogicWrapper(createMergeLogic(s)))
 
-  // FIXME can the type parameter make sense at all?
-  def createMergeLogic(): MergeLogic[_]
+  def createMergeLogic(s: S): MergeLogic[T, Out]
 
   override def toString = attributes.asScala.nameLifted match {
     case Some(n) ⇒ n

@@ -81,7 +81,7 @@ object Concat {
     }
 }
 
-object Graph extends GraphApply {
+object FlowGraph extends GraphApply {
 
   class Builder private[stream] () {
     private var moduleInProgress: Module = EmptyModule
@@ -183,24 +183,24 @@ object Graph extends GraphApply {
   object Implicits {
 
     trait CombinerBase[+T] extends Any {
-      def importAndGetPort(b: Graph.Builder): Outlet[T]
+      def importAndGetPort(b: FlowGraph.Builder): Outlet[T]
 
-      def ~>(to: Inlet[T])(implicit b: Graph.Builder): Unit = {
+      def ~>(to: Inlet[T])(implicit b: FlowGraph.Builder): Unit = {
         b.addEdge(importAndGetPort(b), to)
       }
 
-      def ~>[Out](via: Flow[T, Out, _])(implicit b: Graph.Builder): PortOps[Out, Unit] = {
+      def ~>[Out](via: Flow[T, Out, _])(implicit b: FlowGraph.Builder): PortOps[Out, Unit] = {
         val s = b.add(via)
         b.addEdge(importAndGetPort(b), s.inlet)
         s.outlet
       }
 
-      def ~>(to: Sink[T, _])(implicit b: Graph.Builder): Unit = {
+      def ~>(to: Sink[T, _])(implicit b: FlowGraph.Builder): Unit = {
         b.addEdge(importAndGetPort(b), b.add(to))
       }
     }
 
-    class PortOps[+Out, +Mat](val outlet: Outlet[Out], b: Graph.Builder) extends FlowOps[Out, Mat] with CombinerBase[Out] {
+    class PortOps[+Out, +Mat](val outlet: Outlet[Out], b: FlowGraph.Builder) extends FlowOps[Out, Mat] with CombinerBase[Out] {
       override type Repr[+O, +M] = PortOps[O, M]
 
       override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] =
@@ -217,14 +217,14 @@ object Graph extends GraphApply {
         new PortOps(op.shape.outlet.asInstanceOf[Outlet[U]], b)
       }
 
-      override def importAndGetPort(b: Graph.Builder): Outlet[Out] = outlet
+      override def importAndGetPort(b: FlowGraph.Builder): Outlet[Out] = outlet
     }
 
     import scala.language.implicitConversions
-    implicit def port2flow[T](from: Outlet[T])(implicit b: Graph.Builder): PortOps[T, Unit] = new PortOps(from, b)
+    implicit def port2flow[T](from: Outlet[T])(implicit b: FlowGraph.Builder): PortOps[T, Unit] = new PortOps(from, b)
 
     implicit class SourceArrow[T](val s: Source[T, _]) extends AnyVal with CombinerBase[T] {
-      override def importAndGetPort(b: Graph.Builder): Outlet[T] = b.add(s)
+      override def importAndGetPort(b: FlowGraph.Builder): Outlet[T] = b.add(s)
     }
 
   }

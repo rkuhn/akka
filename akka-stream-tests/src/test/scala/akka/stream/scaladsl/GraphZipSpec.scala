@@ -8,11 +8,11 @@ import akka.stream.testkit.TwoStreamsSetup
 import akka.stream._
 
 class GraphZipSpec extends TwoStreamsSetup {
-  import Graph.Implicits._
+  import FlowGraph.Implicits._
 
   override type Outputs = (Int, Int)
 
-  override def fixture(b: Graph.Builder): Fixture = new Fixture(b: Graph.Builder) {
+  override def fixture(b: FlowGraph.Builder): Fixture = new Fixture(b: FlowGraph.Builder) {
     val zip = b.add(Zip[Int, Int]())
 
     override def left: Inlet[Int] = zip.in0
@@ -25,7 +25,7 @@ class GraphZipSpec extends TwoStreamsSetup {
     "work in the happy case" in {
       val probe = StreamTestKit.SubscriberProbe[(Int, String)]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val zip = b.add(Zip[Int, String]())
 
         Source(1 to 4) ~> zip.in0

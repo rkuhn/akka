@@ -28,12 +28,15 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
 
   override type Repr[+O, +M] = Flow[In @uncheckedVariance, O, M]
 
-  def via[T, Mat2](flow: Flow[Out, T, Mat2]): Flow[In, T, Mat2] = via(flow, Keep.right[Mat, Mat2])
+  /**
+   * Transform this [[Flow]] by appending the given processing steps.
+   */
+  def via[T, Mat2](flow: Flow[Out, T, Mat2]): Flow[In, T, Mat] = viaMat(flow)(Keep.left)
 
   /**
    * Transform this [[Flow]] by appending the given processing steps.
    */
-  def via[T, Mat2, Mat3](flow: Flow[Out, T, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
+  def viaMat[T, Mat2, Mat3](flow: Flow[Out, T, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
     val flowCopy = flow.module.carbonCopy
     new Flow(
       module
@@ -42,14 +45,17 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
         .replaceShape(FlowShape(shape.inlet, flowCopy.shape.outlets.head)))
   }
 
+  /**
+   * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
+   */
   def to[Mat2](sink: Sink[Out, Mat2]): Sink[In, Mat] = {
-    to(sink, Keep.left)
+    toMat(sink)(Keep.left)
   }
 
   /**
    * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
    */
-  def to[Mat2, Mat3](sink: Sink[Out, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Sink[In, Mat3] = {
+  def toMat[Mat2, Mat3](sink: Sink[Out, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Sink[In, Mat3] = {
     val sinkCopy = sink.module.carbonCopy
     new Sink(
       module
@@ -58,13 +64,16 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
         .replaceShape(SinkShape(shape.inlet)))
   }
 
+  /**
+   * Transform the materialized value of this Flow, leaving all other properties as they were.
+   */
   def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Repr[Out, Mat2] =
     new Flow(module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]))
 
   /**
    * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
    */
-  def join[Mat2, Mat3](flow: Flow[Out, In, Mat2], combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
+  def joinMat[Mat2, Mat3](flow: Flow[Out, In, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
     val flowCopy = flow.module.carbonCopy
     RunnableFlow(
       module
@@ -73,18 +82,21 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
         .connect(flowCopy.shape.outlets.head, shape.inlet))
   }
 
-  def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[Mat2] = {
-    join(flow, (_: Mat, m2: Mat2) ⇒ m2)
+  /**
+   * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
+   */
+  def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[(Mat, Mat2)] = {
+    joinMat(flow)(Keep.both)
   }
 
   def concat[Out2 >: Out, Mat2](source: Source[Out2, Mat2]): Flow[In, Out2, (Mat, Mat2)] = {
-    this.via(Flow(source) { implicit builder ⇒
+    this.viaMat(Flow(source) { implicit builder ⇒
       s ⇒
-        import Graph.Implicits._
+        import FlowGraph.Implicits._
         val concat = builder.add(Concat[Out2]())
         s.outlet ~> concat.in(1)
         (concat.in(0), concat.out)
-    }, Keep.both[Mat, Mat2])
+    })(Keep.both)
   }
 
   /** INTERNAL API */
@@ -111,7 +123,7 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
    * and `Publisher` of a [[PublisherSink]].
    */
   def runWith[Mat1, Mat2](source: Source[In, Mat1], sink: Sink[Out, Mat2])(implicit materializer: FlowMaterializer): (Mat1, Mat2) = {
-    source.via(this, (sm: Mat1, fm: Mat) ⇒ sm).to(sink, (sourcem: Mat1, sinkm: Mat2) ⇒ (sourcem, sinkm)).run()
+    source.via(this).toMat(sink)(Keep.both).run()
   }
 
   def section[O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[In, O, Mat3] = {
@@ -164,7 +176,7 @@ object Flow extends FlowApply {
 /**
  * Flow with attached input and output, can be executed.
  */
-case class RunnableFlow[Mat](private[stream] val module: StreamLayout.Module) {
+case class RunnableFlow[+Mat](private[stream] val module: StreamLayout.Module) {
   assert(module.isRunnable)
 
   /**

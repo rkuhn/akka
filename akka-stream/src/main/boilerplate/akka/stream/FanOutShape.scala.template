@@ -46,7 +46,8 @@ class UniformFanOutShape[I, O](n: Int, _init: FanOutShape.Init[I]) extends FanOu
   override protected def construct(init: FanOutShape.Init[I]): FanOutShape[I] = new UniformFanOutShape(n, init)
   override def deepCopy(): UniformFanOutShape[I, O] = super.deepCopy().asInstanceOf[UniformFanOutShape[I, O]]
   
-  val out: Array[Outlet[O]] = Array.tabulate(n)(i => newOutlet[O](s"out$i"))
+  val outArray: Array[Outlet[O]] = Array.tabulate(n)(i => newOutlet[O](s"out$i"))
+  def out(n: Int): Outlet[O] = outArray(n)
 }
 
 [2..#class FanOutShape1[I, [#O0#]](_init: FanOutShape.Init[I]) extends FanOutShape[I](_init) {

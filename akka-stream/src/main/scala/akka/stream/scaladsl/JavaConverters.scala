@@ -20,8 +20,8 @@ private[akka] object JavaConverters {
   implicit final class AddAsJavaSink[In, Mat](val sink: scaladsl.Sink[In, Mat]) extends AnyVal {
     def asJava: javadsl.Sink[In, Mat] = new javadsl.Sink(sink)
   }
-  implicit final class AsAsJavaFlowGraphBuilder[Out](val builder: scaladsl.Graph.Builder) extends AnyVal {
-    def asJava: javadsl.Graph.Builder = new javadsl.Graph.Builder(builder)
+  implicit final class AsAsJavaFlowGraphBuilder[Out](val builder: scaladsl.FlowGraph.Builder) extends AnyVal {
+    def asJava: javadsl.FlowGraph.Builder = new javadsl.FlowGraph.Builder(builder)
   }
 
   implicit final class AddAsScalaSource[Out, Mat](val source: javadsl.Source[Out, Mat]) extends AnyVal {
@@ -33,7 +33,7 @@ private[akka] object JavaConverters {
   implicit final class AddAsScalaSink[In, Mat](val sink: javadsl.Sink[In, Mat]) extends AnyVal {
     def asScala: scaladsl.Sink[In, Mat] = sink.asScala
   }
-  implicit final class AsAsScalaFlowGraphBuilder[Out](val builder: javadsl.Graph.Builder) extends AnyVal {
-    def asScala: Graph.Builder = builder.asScala
+  implicit final class AsAsScalaFlowGraphBuilder[Out](val builder: javadsl.FlowGraph.Builder) extends AnyVal {
+    def asScala: FlowGraph.Builder = builder.asScala
   }
 }

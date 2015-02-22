@@ -56,7 +56,7 @@ object StreamTcp extends ExtensionId[StreamTcp] with ExtensionIdProvider {
      * Convenience shortcut for: `flow.join(handler).run()`.
      */
     def handleWith[Mat](handler: Flow[ByteString, ByteString, Mat])(implicit materializer: FlowMaterializer): Mat =
-      flow.join(handler).run()
+      flow.joinMat(handler)(Keep.right).run()
 
   }
 
@@ -138,8 +138,7 @@ class StreamTcp(system: ExtendedActorSystem) extends akka.actor.Extension {
     idleTimeout: Duration = Duration.Inf)(implicit m: FlowMaterializer): Future[ServerBinding] = {
     bind(endpoint, backlog, options, idleTimeout).to(Sink.foreach { conn: IncomingConnection ⇒
       conn.flow.join(handler).run()
-    }, (bindm: Future[ServerBinding], _: Future[Unit]) ⇒ bindm)
-      .run()
+    }).run()
   }
 
   /**

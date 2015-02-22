@@ -5,6 +5,7 @@ package akka.stream.javadsl
 
 import akka.stream._
 import akka.stream.scaladsl
+import akka.japi.Pair
 
 /**
  * Merge several streams, taking elements as they arrive from input streams
@@ -200,24 +201,30 @@ object Unzip {
    *
    * @param attributes attributes for this vertex
    */
-  def create[A, B](attributes: OperationAttributes): Graph[FanOutShape2[(A, B), A, B], Unit] = scaladsl.Unzip[A, B](attributes.asScala)
+  def create[A, B](attributes: OperationAttributes): Graph[FanOutShape2[A Pair B, A, B], Unit] =
+    scaladsl.FlowGraph.partial() { implicit b ⇒
+      val unzip = b.add(scaladsl.Unzip[A, B](attributes.asScala))
+      val tuple = b.add(scaladsl.Flow[A Pair B].map(p ⇒ (p.first, p.second)))
+      b.addEdge(tuple.outlet, unzip.in)
+      new FanOutShape2(FanOutShape.Ports(tuple.inlet, unzip.out0 :: unzip.out1 :: Nil))
+    }
 
   /**
    * Creates a new `Unzip` vertex with the specified output types and attributes.
    */
-  def create[A, B](): Graph[FanOutShape2[(A, B), A, B], Unit] = create(OperationAttributes.none)
+  def create[A, B](): Graph[FanOutShape2[A Pair B, A, B], Unit] = create(OperationAttributes.none)
 
   /**
    * Creates a new `Unzip` vertex with the specified output types.
    */
-  def create[A, B](left: Class[A], right: Class[B]): Graph[FanOutShape2[(A, B), A, B], Unit] = create[A, B]()
+  def create[A, B](left: Class[A], right: Class[B]): Graph[FanOutShape2[A Pair B, A, B], Unit] = create[A, B]()
 
   /**
    * Creates a new `Unzip` vertex with the specified output types and attributes.
    *
    * @param attributes optional attributes for this vertex
    */
-  def create[A, B](left: Class[A], right: Class[B], attributes: OperationAttributes): Graph[FanOutShape2[(A, B), A, B], Unit] =
+  def create[A, B](left: Class[A], right: Class[B], attributes: OperationAttributes): Graph[FanOutShape2[A Pair B, A, B], Unit] =
     create[A, B](attributes)
 
 }
@@ -261,7 +268,9 @@ object Concat {
 
 // flow graph //
 
-object Graph extends GraphCreate {
+object FlowGraph {
+
+  val factory: GraphCreate = new GraphCreate {}
 
   /**
    * Start building a [[FlowGraph]] or [[PartialFlowGraph]].
@@ -269,9 +278,9 @@ object Graph extends GraphCreate {
    * The [[FlowGraphBuilder]] is mutable and not thread-safe,
    * thus you should construct your Graph and then share the constructed immutable [[FlowGraph]].
    */
-  def builder(): Builder = new Builder(new scaladsl.Graph.Builder)
+  def builder(): Builder = new Builder(new scaladsl.FlowGraph.Builder)
 
-  class Builder(delegate: scaladsl.Graph.Builder) {
+  class Builder(delegate: scaladsl.FlowGraph.Builder) {
     def addEdge[A, B, M](from: Outlet[A], via: Flow[A, B, M], to: Inlet[B]): Unit = delegate.addEdge(from, via.asScala, to)
 
     def addEdge[T](from: Outlet[T], to: Inlet[T]): Unit = delegate.addEdge(from, to)
@@ -282,5 +291,11 @@ object Graph extends GraphCreate {
      * connected.
      */
     def add[S <: Shape](graph: Graph[S, _]): S = delegate.add(graph)
+
+    def add[T](source: Source[T, _]): Outlet[T] = delegate.add(source.asScala)
+
+    def add[T](sink: Sink[T, _]): Inlet[T] = delegate.add(sink.asScala)
+
+    def run(mat: FlowMaterializer): Unit = delegate.buildRunnable().run()(mat)
   }
 }

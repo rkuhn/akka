@@ -17,18 +17,18 @@ abstract class TwoStreamsSetup extends AkkaSpec {
 
   type Outputs
 
-  abstract class Fixture(b: Graph.Builder) {
+  abstract class Fixture(b: FlowGraph.Builder) {
     def left: Inlet[Int]
     def right: Inlet[Int]
     def out: Outlet[Outputs]
   }
 
-  def fixture(b: Graph.Builder): Fixture
+  def fixture(b: FlowGraph.Builder): Fixture
 
   def setup(p1: Publisher[Int], p2: Publisher[Int]) = {
     val subscriber = StreamTestKit.SubscriberProbe[Outputs]()
-    Graph.closed() { implicit b ⇒
-      import Graph.Implicits._
+    FlowGraph.closed() { implicit b ⇒
+      import FlowGraph.Implicits._
       val f = fixture(b)
 
       Source(p1) ~> f.left

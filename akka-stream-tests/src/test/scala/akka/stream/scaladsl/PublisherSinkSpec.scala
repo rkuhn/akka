@@ -18,9 +18,9 @@ class PublisherSinkSpec extends AkkaSpec {
 
     "be unique when created twice" in {
 
-      val (pub1, pub2) = Graph.closed(Sink.publisher[Int], Sink.publisher[Int])(Pair.apply) { implicit b ⇒
+      val (pub1, pub2) = FlowGraph.closed(Sink.publisher[Int], Sink.publisher[Int])(Pair.apply) { implicit b ⇒
         (p1, p2) ⇒
-          import Graph.Implicits._
+          import FlowGraph.Implicits._
 
           val bcast = b.add(Broadcast[Int](2))
 

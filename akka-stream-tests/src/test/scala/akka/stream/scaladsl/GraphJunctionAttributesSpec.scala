@@ -27,7 +27,7 @@ class GraphJunctionAttributesSpec extends AkkaSpec {
       case object FastTick extends FastTick
 
       val source = Source[(SlowTick, List[FastTick])]() { implicit b ⇒
-        import Graph.Implicits._
+        import FlowGraph.Implicits._
 
         val slow = Source(0.seconds, 100.millis, SlowTick)
         val fast = Source(0.seconds, 10.millis, FastTick)

@@ -17,11 +17,14 @@ import scala.concurrent.duration.FiniteDuration
 import scala.language.higherKinds
 import scala.language.implicitConversions
 import akka.stream.stage.Stage
+import akka.stream.impl.StreamLayout
 
 /** Java API */
-object Source extends SourceCreate {
+object Source {
 
   import scaladsl.JavaConverters._
+
+  val factory: SourceCreate = new SourceCreate {}
 
   /** Adapt [[scaladsl.Source]] for use within JavaDSL */
   def adapt[O, M](source: scaladsl.Source[O, M]): Source[O, M] =
@@ -146,10 +149,13 @@ object Source extends SourceCreate {
  * A `Source` is a set of stream processing steps that has one open output and an attached input.
  * Can be used as a `Publisher`
  */
-class Source[+Out, +Mat](delegate: scaladsl.Source[Out, Mat]) {
+class Source[+Out, +Mat](delegate: scaladsl.Source[Out, Mat]) extends Graph[SourceShape[Out], Mat] {
   import akka.stream.scaladsl.JavaConverters._
 
   import scala.collection.JavaConverters._
+
+  override def shape: SourceShape[Out] = delegate.shape
+  private[stream] def module: StreamLayout.Module = delegate.module
 
   /** Converts this Java DSL element to it's Scala DSL counterpart. */
   def asScala: scaladsl.Source[Out, Mat] = delegate
@@ -163,21 +169,33 @@ class Source[+Out, +Mat](delegate: scaladsl.Source[Out, Mat]) {
   /**
    * Transform this [[Source]] by appending the given processing stages.
    */
-  def via[T, M](flow: javadsl.Flow[Out, T, M]): javadsl.Source[T, M] =
+  def via[T, M](flow: javadsl.Flow[Out, T, M]): javadsl.Source[T, Mat] =
     new Source(delegate.via(flow.asScala))
+
+  /**
+   * Transform this [[Source]] by appending the given processing stages.
+   */
+  def via[T, M, M2](flow: javadsl.Flow[Out, T, M], combine: japi.Function2[Mat, M, M2]): javadsl.Source[T, M2] =
+    new Source(delegate.viaMat(flow.asScala)(combinerToScala(combine)))
 
   /**
    * Connect this [[Source]] to a [[Sink]], concatenating the processing steps of both.
    */
-  def to[M](sink: javadsl.Sink[Out, M]): javadsl.RunnableFlow[M] =
+  def to[M](sink: javadsl.Sink[Out, M]): javadsl.RunnableFlow[Mat] =
     new RunnableFlowAdapter(delegate.to(sink.asScala))
+
+  /**
+   * Connect this [[Source]] to a [[Sink]], concatenating the processing steps of both.
+   */
+  def to[M, M2](sink: javadsl.Sink[Out, M], combine: japi.Function2[Mat, M, M2]): javadsl.RunnableFlow[M2] =
+    new RunnableFlowAdapter(delegate.toMat(sink.asScala)(combinerToScala(combine)))
 
   /**
    * Connect this `Source` to a `Sink` and run it. The returned value is the materialized value
    * of the `Sink`, e.g. the `Publisher` of a `Sink.publisher()`.
    */
   def runWith[M](sink: Sink[Out, M], materializer: FlowMaterializer): M =
-    delegate.to(sink.asScala).run()(materializer)
+    delegate.runWith(sink.asScala)(materializer)
 
   /**
    * Shortcut for running this `Source` with a fold function.

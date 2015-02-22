@@ -43,7 +43,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
 
   "A Graph" should {
     "build simple merge" in {
-      Graph.closed() { b ⇒
+      FlowGraph.closed() { b ⇒
         val merge = b.add(Merge[String](2))
         b.addEdge(b.add(in1), f1, merge.in(0))
         b.addEdge(b.add(in2), f2, merge.in(1))
@@ -52,7 +52,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     }
 
     "build simple broadcast" in {
-      Graph.closed() { b ⇒
+      FlowGraph.closed() { b ⇒
         val bcast = b.add(Broadcast[String](2))
         b.addEdge(b.add(in1), f1, bcast.in)
         b.addEdge(bcast.out(0), f2, b.add(out1))
@@ -61,7 +61,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     }
 
     "build simple balance" in {
-      Graph.closed() { b ⇒
+      FlowGraph.closed() { b ⇒
         val balance = b.add(Balance[String](2))
         b.addEdge(b.add(in1), f1, balance.in)
         b.addEdge(balance.out(0), f2, b.add(out1))
@@ -70,7 +70,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     }
 
     "build simple merge - broadcast" in {
-      Graph.closed() { b ⇒
+      FlowGraph.closed() { b ⇒
         val merge = b.add(Merge[String](2))
         val bcast = b.add(Broadcast[String](2))
         b.addEdge(b.add(in1), f1, merge.in(0))
@@ -82,8 +82,8 @@ class FlowGraphCompileSpec extends AkkaSpec {
     }
 
     "build simple merge - broadcast with implicits" in {
-      Graph.closed() { implicit b ⇒
-        import Graph.Implicits._
+      FlowGraph.closed() { implicit b ⇒
+        import FlowGraph.Implicits._
         val merge = b.add(Merge[String](2))
         val bcast = b.add(Broadcast[String](2))
         b.add(in1) ~> f1 ~> merge.in(0)
@@ -106,7 +106,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     "detect cycle in " in {
       pending // FIXME needs cycle detection capability
       intercept[IllegalArgumentException] {
-        Graph.closed() { b ⇒
+        FlowGraph.closed() { b ⇒
           val merge = b.add(Merge[String](2))
           val bcast1 = b.add(Broadcast[String](2))
           val bcast2 = b.add(Broadcast[String](2))
@@ -124,7 +124,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
 
     // FIXME all of the following need the “wire-through” capability that Shapes don’t yet possess
     //    "express complex topologies in a readable way" in {
-    //      Graph.closed() { implicit b ⇒
+    //      FlowGraph.closed() { implicit b ⇒
     //        b.allowCycles()
     //        val merge = b.add(Merge[String]
     //        val bcast1 = b.add(Broadcast[String]
@@ -138,7 +138,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     //    }
 
     //    "build broadcast - merge" in {
-    //      Graph.closed() { implicit b ⇒
+    //      FlowGraph.closed() { implicit b ⇒
     //        val bcast = b.add(Broadcast[String]
     //        val bcast2 = b.add(Broadcast[String]
     //        val merge = b.add(Merge[String]
@@ -150,7 +150,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
 
     //    "build wikipedia Topological_sorting" in {
     //      // see https://en.wikipedia.org/wiki/Topological_sorting#mediaviewer/File:Directed_acyclic_graph.png
-    //      Graph.closed() { implicit b ⇒
+    //      FlowGraph.closed() { implicit b ⇒
     //        val b3 = b.add(Broadcast[String]
     //        val b7 = b.add(Broadcast[String]
     //        val b11 = b.add(Broadcast[String]
@@ -178,7 +178,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     //    }
 
     //    "make it optional to specify flows" in {
-    //      Graph.closed() { implicit b ⇒
+    //      FlowGraph.closed() { implicit b ⇒
     //        val merge = b.add(Merge[String]
     //        val bcast = b.add(Broadcast[String]
     //        import FlowGraphImplicits._
@@ -189,7 +189,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     //    }
     //
     //    "chain input and output ports" in {
-    //      Graph.closed() { implicit b ⇒
+    //      FlowGraph.closed() { implicit b ⇒
     //        val zip = Zip[Int, String]
     //        val out = Sink.publisher[(Int, String)]
     //        import FlowGraphImplicits._
@@ -199,7 +199,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     //    }
     //
     //    "build unzip - zip" in {
-    //      Graph.closed() { implicit b ⇒
+    //      FlowGraph.closed() { implicit b ⇒
     //        val zip = Zip[Int, String]
     //        val unzip = Unzip[Int, String]
     //        val out = Sink.publisher[(Int, String)]
@@ -213,7 +213,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
 
     "distinguish between input and output ports" in {
       intercept[IllegalStateException] {
-        Graph.closed() { implicit b ⇒
+        FlowGraph.closed() { implicit b ⇒
           val zip = b.add(Zip[Int, String]())
           val unzip = b.add(Unzip[Int, String]())
           val wrongOut = Sink.publisher[(Int, Int)]
@@ -230,7 +230,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
 
     "build with variance" in {
       val out = Sink(SubscriberProbe[Fruit]())
-      Graph.closed() { b ⇒
+      FlowGraph.closed() { b ⇒
         val merge = b.add(Merge[Fruit](2))
         b.addEdge(b add Source[Fruit](apples), Flow[Fruit], merge.in(0))
         b.addEdge(b add Source[Apple](apples), Flow[Apple], merge.in(1))
@@ -239,7 +239,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     }
 
     "build with implicits and variance" in {
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         def appleSource = b.add(Source(PublisherProbe[Apple]))
         def fruitSource = b.add(Source(PublisherProbe[Fruit]))
         val outA = b add Sink(SubscriberProbe[Fruit]())
@@ -247,7 +247,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
         val merge = b add Merge[Fruit](11)
         val unzip = b add Unzip[Int, String]()
         val whatever = b add Sink.publisher[Any]
-        import Graph.Implicits._
+        import FlowGraph.Implicits._
         b.add(Source[Fruit](apples)) ~> merge.in(0)
         appleSource ~> merge.in(1)
         appleSource ~> merge.in(2)
@@ -278,33 +278,33 @@ class FlowGraphCompileSpec extends AkkaSpec {
     }
 
     "build with plain flow without junctions" in {
-      Graph.closed() { b ⇒
+      FlowGraph.closed() { b ⇒
         b.addEdge(b.add(in1), f1, b.add(out1))
       }.run()
-      Graph.closed() { b ⇒
+      FlowGraph.closed() { b ⇒
         b.addEdge(b.add(in1), f1, b.add(f2.to(out1)))
       }.run()
-      Graph.closed() { b ⇒
+      FlowGraph.closed() { b ⇒
         b.addEdge(b.add(in1 via f1), f2, b.add(out1))
       }.run()
-      Graph.closed() { implicit b ⇒
-        import Graph.Implicits._
+      FlowGraph.closed() { implicit b ⇒
+        import FlowGraph.Implicits._
         b.add(in1) ~> f1 ~> b.add(out1)
       }.run()
-      Graph.closed() { implicit b ⇒
-        import Graph.Implicits._
+      FlowGraph.closed() { implicit b ⇒
+        import FlowGraph.Implicits._
         b.add(in1) ~> b.add(out1)
       }.run()
-      Graph.closed() { implicit b ⇒
-        import Graph.Implicits._
+      FlowGraph.closed() { implicit b ⇒
+        import FlowGraph.Implicits._
         b.add(in1) ~> b.add(f1 to out1)
       }.run()
-      Graph.closed() { implicit b ⇒
-        import Graph.Implicits._
+      FlowGraph.closed() { implicit b ⇒
+        import FlowGraph.Implicits._
         b.add(in1 via f1) ~> b.add(out1)
       }.run()
-      Graph.closed() { implicit b ⇒
-        import Graph.Implicits._
+      FlowGraph.closed() { implicit b ⇒
+        import FlowGraph.Implicits._
         b.add(in1 via f1) ~> b.add(f2 to out1)
       }.run()
     }

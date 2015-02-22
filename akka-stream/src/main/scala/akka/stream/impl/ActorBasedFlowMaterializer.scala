@@ -99,7 +99,7 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
           case fanin: FanInModule ⇒
             val (props, inputs, output) = fanin match {
               case MergeModule(shape, _) ⇒
-                (FairMerge.props(effectiveAttributes.settings(settings), shape.in.size), shape.in.toSeq, shape.out)
+                (FairMerge.props(effectiveAttributes.settings(settings), shape.inArray.size), shape.inArray.toSeq, shape.out)
 
               case f: FlexiMergeModule[t, p] ⇒
                 val flexi = f.flexi(f.shape)
@@ -107,11 +107,11 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
               // TODO each materialization needs its own logic
 
               case MergePreferredModule(shape, _) ⇒
-                (UnfairMerge.props(effectiveAttributes.settings(settings), shape.inlets.size), shape.preferred +: shape.in.toSeq, shape.out)
+                (UnfairMerge.props(effectiveAttributes.settings(settings), shape.inlets.size), shape.preferred +: shape.inArray.toSeq, shape.out)
 
               case ConcatModule(shape, _) ⇒
-                require(shape.in.size == 2, "currently only supporting concatenation of exactly two inputs") // FIXME
-                (Concat.props(effectiveAttributes.settings(settings)), shape.in.toSeq, shape.out)
+                require(shape.inArray.size == 2, "currently only supporting concatenation of exactly two inputs") // FIXME
+                (Concat.props(effectiveAttributes.settings(settings)), shape.inArray.toSeq, shape.out)
 
               case zip: ZipWithModule ⇒
                 (zip.props(effectiveAttributes.settings(settings)), zip.shape.inlets, zip.outPorts.head)
@@ -130,9 +130,9 @@ case class ActorBasedFlowMaterializer(override val settings: MaterializerSetting
                 val flexi = r.flexi(r.shape)
                 (FlexiRoute.props(effectiveAttributes.settings(settings), r.shape, flexi), r.shape.inlets.head: InPort, r.shape.outlets)
               case BroadcastModule(shape, _) ⇒
-                (Broadcast.props(effectiveAttributes.settings(settings), shape.out.size), shape.in, shape.out.toSeq)
+                (Broadcast.props(effectiveAttributes.settings(settings), shape.outArray.size), shape.in, shape.outArray.toSeq)
               case BalanceModule(shape, waitForDownstreams, _) ⇒
-                (Balance.props(effectiveAttributes.settings(settings), shape.out.size, waitForDownstreams), shape.in, shape.out.toSeq)
+                (Balance.props(effectiveAttributes.settings(settings), shape.outArray.size, waitForDownstreams), shape.in, shape.outArray.toSeq)
               case UnzipModule(shape, _) ⇒
                 (Unzip.props(effectiveAttributes.settings(settings)), shape.in, shape.outlets)
             }

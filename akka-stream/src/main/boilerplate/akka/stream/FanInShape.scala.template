@@ -46,7 +46,8 @@ class UniformFanInShape[T, O](val n: Int, _init: FanInShape.Init[O]) extends Fan
   override protected def construct(init: FanInShape.Init[O]): FanInShape[O] = new UniformFanInShape(n, init)
   override def deepCopy(): UniformFanInShape[T, O] = super.deepCopy().asInstanceOf[UniformFanInShape[T, O]]
   
-  val in: Array[Inlet[T]] = Array.tabulate(n)(i => newInlet[T](s"in$i"))
+  val inArray: Array[Inlet[T]] = Array.tabulate(n)(i => newInlet[T](s"in$i"))
+  def in(n: Int): Inlet[T] = inArray(n)
 }
 
 [2..#class FanInShape1[[#T0#], O](_init: FanInShape.Init[O]) extends FanInShape[O](_init) {

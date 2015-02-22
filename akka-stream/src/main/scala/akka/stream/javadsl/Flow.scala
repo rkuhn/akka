@@ -10,10 +10,13 @@ import scala.annotation.unchecked.uncheckedVariance
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
 import akka.stream.stage.Stage
+import akka.stream.impl.StreamLayout
 
-object Flow extends FlowCreate {
+object Flow {
 
   import akka.stream.scaladsl.JavaConverters._
+
+  val factory: FlowCreate = new FlowCreate {}
 
   /** Adapt [[scaladsl.Flow]] for use within Java DSL */
   def adapt[I, O, M](flow: scaladsl.Flow[I, O, M]): javadsl.Flow[I, O, M] =
@@ -33,9 +36,12 @@ object Flow extends FlowCreate {
 }
 
 /** Create a `Flow` which can process elements of type `T`. */
-class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) {
+class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) extends Graph[FlowShape[In, Out], Mat] {
   import scala.collection.JavaConverters._
   import akka.stream.scaladsl.JavaConverters._
+
+  override def shape: FlowShape[In, Out] = delegate.shape
+  private[stream] def module: StreamLayout.Module = delegate.module
 
   /** Converts this Flow to it's Scala DSL counterpart */
   def asScala: scaladsl.Flow[In, Out, Mat] = delegate
@@ -49,8 +55,14 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) {
   /**
    * Transform this [[Flow]] by appending the given processing steps.
    */
-  def via[T, M](flow: javadsl.Flow[Out, T, M]): javadsl.Flow[In, T, M] =
+  def via[T, M](flow: javadsl.Flow[Out, T, M]): javadsl.Flow[In, T, Mat] =
     new Flow(delegate.via(flow.asScala))
+
+  /**
+   * Transform this [[Flow]] by appending the given processing steps.
+   */
+  def via[T, M, M2](flow: javadsl.Flow[Out, T, M], combine: japi.Function2[Mat, M, M2]): javadsl.Flow[In, T, M2] =
+    new Flow(delegate.viaMat(flow.asScala)(combinerToScala(combine)))
 
   /**
    * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
@@ -59,11 +71,22 @@ class Flow[-In, +Out, +Mat](delegate: scaladsl.Flow[In, Out, Mat]) {
     new Sink(delegate.to(sink.asScala))
 
   /**
+   * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
+   */
+  def to[M, M2](sink: javadsl.Sink[Out, M], combine: japi.Function2[Mat, M, M2]): javadsl.Sink[In, M2] =
+    new Sink(delegate.toMat(sink.asScala)(combinerToScala(combine)))
+
+  /**
    * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
    */
-  // TODO shouldn’t this combine the materialized values?
-  def join[M](flow: javadsl.Flow[Out, In, M]): javadsl.RunnableFlow[M] =
-    new RunnableFlowAdapter(delegate.join(flow.asScala))
+  def join[M](flow: javadsl.Flow[Out, In, M]): javadsl.RunnableFlow[Mat @uncheckedVariance Pair M] =
+    new RunnableFlowAdapter(delegate.join(flow.asScala).mapMaterialized(p ⇒ new Pair(p._1, p._2)))
+
+  /**
+   * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
+   */
+  def join[M, M2](flow: javadsl.Flow[Out, In, M], combine: japi.Function2[Mat, M, M2]): javadsl.RunnableFlow[M2] =
+    new RunnableFlowAdapter(delegate.joinMat(flow.asScala)(combinerToScala(combine)))
 
   /**
    * Connect the `KeyedSource` to this `Flow` and then connect it to the `KeyedSink` and run it.
