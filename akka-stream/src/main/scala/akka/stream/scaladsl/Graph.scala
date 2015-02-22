@@ -10,8 +10,9 @@ import akka.stream.impl._
 import akka.stream.impl.StreamLayout._
 import akka.stream._
 import OperationAttributes.name
-
 import scala.collection.immutable
+import scala.annotation.unchecked.uncheckedVariance
+import scala.annotation.tailrec
 
 object Merge {
   def apply[T](inputPorts: Int, attributes: OperationAttributes = OperationAttributes.none): Graph[UniformFanInShape[T, T], Unit] =
@@ -182,26 +183,50 @@ object FlowGraph extends GraphApply {
 
   object Implicits {
 
-    trait CombinerBase[+T] extends Any {
-      def importAndGetPort(b: FlowGraph.Builder): Outlet[T]
+    @tailrec
+    private def find[I, O](b: Builder, junction: UniformFanOutShape[I, O], n: Int): Outlet[O] = {
+      if (n == junction.outArray.length)
+        throw new IllegalStateException(s"no more outlets free on $junction")
+      else if (b.module.downstreams.contains(junction.out(n))) find(b, junction, n + 1)
+      else junction.out(n)
+    }
 
-      def ~>(to: Inlet[T])(implicit b: FlowGraph.Builder): Unit = {
+    trait CombinerBase[T] extends Any {
+      def importAndGetPort(b: Builder): Outlet[T]
+
+      def ~>(to: Inlet[T])(implicit b: Builder): Unit = {
         b.addEdge(importAndGetPort(b), to)
       }
 
-      def ~>[Out](via: Flow[T, Out, _])(implicit b: FlowGraph.Builder): PortOps[Out, Unit] = {
+      def ~>[Out](via: Flow[T, Out, _])(implicit b: Builder): PortOps[Out, Unit] = {
         val s = b.add(via)
         b.addEdge(importAndGetPort(b), s.inlet)
         s.outlet
       }
 
-      def ~>(to: Sink[T, _])(implicit b: FlowGraph.Builder): Unit = {
+      def ~>[Out](junction: UniformFanInShape[T, Out])(implicit b: Builder): PortOps[Out, Unit] = {
+        def bind(n: Int): Unit = {
+          if (n == junction.inArray.length)
+            throw new IllegalStateException(s"no more inlets free on $junction")
+          else if (b.module.upstreams.contains(junction.in(n))) bind(n + 1)
+          else b.addEdge(importAndGetPort(b), junction.in(n))
+        }
+        bind(0)
+        junction.out
+      }
+
+      def ~>[Out](junction: UniformFanOutShape[T, Out])(implicit b: Builder): PortOps[Out, Unit] = {
+        b.addEdge(importAndGetPort(b), junction.in)
+        find(b, junction, 0)
+      }
+
+      def ~>(to: Sink[T, _])(implicit b: Builder): Unit = {
         b.addEdge(importAndGetPort(b), b.add(to))
       }
     }
 
-    class PortOps[+Out, +Mat](val outlet: Outlet[Out], b: FlowGraph.Builder) extends FlowOps[Out, Mat] with CombinerBase[Out] {
-      override type Repr[+O, +M] = PortOps[O, M]
+    class PortOps[Out, Mat](val outlet: Outlet[Out], b: Builder) extends FlowOps[Out, Mat] with CombinerBase[Out] {
+      override type Repr[+O, +M] = PortOps[O, M] @uncheckedVariance
 
       override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] =
         throw new UnsupportedOperationException("Cannot set attributes on chained ops from a junction output port")
@@ -217,14 +242,19 @@ object FlowGraph extends GraphApply {
         new PortOps(op.shape.outlet.asInstanceOf[Outlet[U]], b)
       }
 
-      override def importAndGetPort(b: FlowGraph.Builder): Outlet[Out] = outlet
+      override def importAndGetPort(b: Builder): Outlet[Out] = outlet
     }
 
     import scala.language.implicitConversions
-    implicit def port2flow[T](from: Outlet[T])(implicit b: FlowGraph.Builder): PortOps[T, Unit] = new PortOps(from, b)
+    
+    implicit def port2flow[T](from: Outlet[T])(implicit b: Builder): PortOps[T, Unit] =
+      new PortOps(from, b)
+    
+    implicit def fanOut2flow[I, O](j: UniformFanOutShape[I, O])(implicit b: Builder): PortOps[O, Unit] =
+      new PortOps(find(b, j, 0), b)
 
     implicit class SourceArrow[T](val s: Source[T, _]) extends AnyVal with CombinerBase[T] {
-      override def importAndGetPort(b: FlowGraph.Builder): Outlet[T] = b.add(s)
+      override def importAndGetPort(b: Builder): Outlet[T] = b.add(s)
     }
 
   }
