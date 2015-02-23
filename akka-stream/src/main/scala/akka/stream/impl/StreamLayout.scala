@@ -67,7 +67,7 @@ private[akka] object StreamLayout {
       if (debug) validate()
 
       CompositeModule(
-        subModules = this.subModules,
+        subModules = if (this.isAtomic) Set(this) else this.subModules,
         shape,
         connections,
         Transform(f, this.materializedValueComputation),
@@ -109,7 +109,7 @@ private[akka] object StreamLayout {
          * in carbonCopy.
          */
         Atomic(this),
-        attributes)
+        OperationAttributes.none)
     }
 
     def subModules: Set[Module]

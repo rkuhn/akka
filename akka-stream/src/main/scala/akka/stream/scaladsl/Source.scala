@@ -139,10 +139,10 @@ final class Source[+Out, +Mat](private[stream] override val module: Module)
    * Applies given [[OperationAttributes]] to a given section.
    */
   def section[O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Source[O, Mat3] = {
-    val subFlow = section(Flow[O2]).module.carbonCopy.withAttributes(attributes)
+    val subFlow = section(Flow[O2]).module.carbonCopy.withAttributes(attributes).wrap()
     new Source(
       module
-        .growConnect(subFlow.wrap(), shape.outlet, subFlow.shape.inlets.head, combine)
+        .growConnect(subFlow, shape.outlet, subFlow.shape.inlets.head, combine)
         .replaceShape(SourceShape(subFlow.shape.outlets.head)))
   }
 
