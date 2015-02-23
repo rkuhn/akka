@@ -4,16 +4,15 @@
 
 package akka.http.engine.server
 
-import akka.stream.impl.BlackholeSink
+import akka.stream.scaladsl.OperationAttributes._
+import akka.stream.scaladsl._
 import akka.stream._
 
-import scala.collection.immutable.Seq
+import scala.collection.immutable
 import scala.util.control.NonFatal
 import akka.actor.{ ActorRef, Props }
 import akka.util.ByteString
 import akka.event.LoggingAdapter
-import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.scaladsl._
 import akka.stream.stage.PushPullStage
 import akka.http.engine.parsing.{ HttpHeaderParser, HttpRequestParser }
 import akka.http.engine.rendering.{ ResponseRenderingContext, HttpResponseRendererFactory }
@@ -36,14 +35,17 @@ private[http] object HttpServer {
     override def inlets: Seq[Inlet[_]] = bytesIn :: httpResponses :: Nil
     override def outlets: Seq[Outlet[_]] = bytesOut :: httpRequests :: Nil
 
-    override def deepCopy(): Shape = HttpServerPorts(
-      new InPort(bytesIn.toString),
-      new OutPort(bytesOut.toString),
-      new InPort(httpRequests.toString),
-      new OutPort(httpResponses.toString))
+    override def deepCopy() = HttpServerPorts(
+      new Inlet(bytesIn.toString),
+      new Outlet(bytesOut.toString),
+      new Inlet(httpRequests.toString),
+      new Outlet(httpResponses.toString))
 
-    override def copyFromPorts(inlets: Seq[Inlet[_]], outlets: Seq[Outlet[_]]): Shape = {
-
+    override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]): Shape = {
+      require(inlets.size == 2, s"proposed inlets [${inlets.mkString(", ")}] do not fit BidiShape")
+      require(outlets.size == 2, s"proposed outlets [${outlets.mkString(", ")}] do not fit BidiShape")
+      HttpServerPorts(inlets(0).asInstanceOf[Inlet[ByteString]], outlets(0).asInstanceOf[Outlet[ByteString]],
+        inlets(1).asInstanceOf[Inlet[HttpResponse]], outlets(1).asInstanceOf[Outlet[HttpRequest]])
     }
   }
 
@@ -110,7 +112,7 @@ private[http] object HttpServer {
       (requestParsing, renderer) ⇒
         import FlowGraph.Implicits._
 
-        val bypassFanout = Broadcast[RequestOutput](2, OperationAttributes.name("bypassFanout"))
+        val bypassFanout = b.add(Broadcast[RequestOutput](2, OperationAttributes.name("bypassFanout")))
         val bypassMerge = b.add(new BypassMerge(settings, log))
         val bypassInput = bypassMerge.in0
         val bypassOneHundredContinueInput = bypassMerge.in1
@@ -124,10 +126,8 @@ private[http] object HttpServer {
         oneHundredContinueSource ~> bypassOneHundredContinueInput
 
         HttpServerPorts(
-          // FIXME FIXME FIXME: This resolveport should not be here, this is a quick workaround of a core bug
-          // of graph importing
-          b.resolvePort(requestParsing.inlet).asInstanceOf[InPort[ByteString]],
-          b.resolvePort(renderer.outlet).asInstanceOf[OutPort[ByteString]],
+          requestParsing.inlet,
+          renderer.outlet,
           bypassApplicationInput,
           requestsIn)
     }
@@ -135,15 +135,15 @@ private[http] object HttpServer {
   }
 
   class BypassMerge(settings: ServerSettings, log: LoggingAdapter)
-    extends FlexiMerge[ResponseRenderingContext, FanIn3[RequestOutput, OneHundredContinue.type, HttpResponse, ResponseRenderingContext]](new FanIn3, OperationAttributes.name("BypassMerge")) {
+    extends FlexiMerge[ResponseRenderingContext, FanInShape3[RequestOutput, OneHundredContinue.type, HttpResponse, ResponseRenderingContext]](new FanInShape3("BypassMerge"), OperationAttributes.name("BypassMerge")) {
     import FlexiMerge._
 
     def createMergeLogic(p: PortT) = new MergeLogic[ResponseRenderingContext] {
       var requestStart: RequestStart = _
 
-      val bypassInput: InPort[RequestOutput] = p.in0
-      val oneHundredContinueInput: InPort[OneHundredContinue.type] = p.in1
-      val applicationInput: InPort[HttpResponse] = p.in2
+      val bypassInput: Inlet[RequestOutput] = p.in0
+      val oneHundredContinueInput: Inlet[OneHundredContinue.type] = p.in1
+      val applicationInput: Inlet[HttpResponse] = p.in2
 
       override val initialState: State[RequestOutput] = State[RequestOutput](Read(bypassInput)) {
         case (ctx, _, requestStart: RequestStart) ⇒
@@ -157,7 +157,7 @@ private[http] object HttpServer {
       override val initialCompletionHandling = eagerClose
 
       val waitingForApplicationResponse =
-        State[Any](ReadAny(oneHundredContinueInput.asInstanceOf[InPort[Any]] :: applicationInput.asInstanceOf[InPort[Any]] :: Nil)) {
+        State[Any](ReadAny(oneHundredContinueInput.asInstanceOf[Inlet[Any]] :: applicationInput.asInstanceOf[Inlet[Any]] :: Nil)) {
           case (ctx, _, response: HttpResponse) ⇒
             // see the comment on [[OneHundredContinue]] for an explanation of the closing logic here (and more)
             val close = requestStart.closeAfterResponseCompletion || requestStart.expect100ContinueResponsePending
