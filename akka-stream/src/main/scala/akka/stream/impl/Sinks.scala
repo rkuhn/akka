@@ -4,20 +4,17 @@
 package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicReference
+
 import akka.actor.{ ActorRef, Props }
-import akka.stream.impl.StreamLayout.{ LinearModule, Module }
-import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.scaladsl.{ Sink, OperationAttributes, Source }
-import akka.stream.stage._
-import akka.stream.{ Inlet, Outlet, InPort, OutPort }
-import org.reactivestreams.{ Processor, Publisher, Subscriber, Subscription }
+import akka.stream.impl.StreamLayout.Module
+import akka.stream.scaladsl.OperationAttributes
+import akka.stream.{ Inlet, Shape, SinkShape }
+import org.reactivestreams.{ Publisher, Subscriber, Subscription }
+
 import scala.annotation.unchecked.uncheckedVariance
 import scala.concurrent.{ Future, Promise }
-import scala.util.{ Failure, Success, Try }
-import akka.stream.{ Shape, SinkShape }
-import akka.event.Logging.simpleName
 
-abstract class SinkModule[-In, Mat](val shape: SinkShape[In]) extends LinearModule {
+abstract class SinkModule[-In, Mat](val shape: SinkShape[In]) extends Module {
 
   def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Subscriber[In] @uncheckedVariance, Mat)
 
@@ -33,9 +30,7 @@ abstract class SinkModule[-In, Mat](val shape: SinkShape[In]) extends LinearModu
     newInstance(SinkShape(in))
   }
 
-  override val inPortOption: Option[InPort] = Some(shape.inlet)
-  override def outPortOption: Option[OutPort] = None
-  override def stages: Vector[LinearModule] = Vector.empty
+  override def subModules: Set[Module] = Set.empty
 }
 
 /**

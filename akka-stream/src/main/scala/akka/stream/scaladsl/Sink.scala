@@ -36,8 +36,6 @@ final class Sink[-In, +Mat](private[stream] override val module: Module)
 
   def withAttributes(attr: OperationAttributes): Sink[In, Mat] =
     new Sink(module.withAttributes(attr).wrap())
-
-  override def toString: String = s"Sink[~> ${module.toString}]"
 }
 
 object Sink extends SinkApply {
