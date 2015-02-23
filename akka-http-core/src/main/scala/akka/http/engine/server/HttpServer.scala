@@ -5,7 +5,7 @@
 package akka.http.engine.server
 
 import akka.stream.impl.BlackholeSink
-import akka.stream.scaladsl.Graphs._
+import akka.stream._
 
 import scala.collection.immutable.Seq
 import scala.util.control.NonFatal
@@ -13,7 +13,6 @@ import akka.actor.{ ActorRef, Props }
 import akka.util.ByteString
 import akka.event.LoggingAdapter
 import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.FlattenStrategy
 import akka.stream.scaladsl._
 import akka.stream.stage.PushPullStage
 import akka.http.engine.parsing.{ HttpHeaderParser, HttpRequestParser }
@@ -22,8 +21,6 @@ import akka.http.engine.parsing.ParserOutput._
 import akka.http.engine.TokenSourceActor
 import akka.http.model._
 import akka.http.util._
-import akka.stream.FlowMaterializer
-import akka.stream.OverflowStrategy
 
 /**
  * INTERNAL API
@@ -31,25 +28,23 @@ import akka.stream.OverflowStrategy
 private[http] object HttpServer {
 
   case class HttpServerPorts(
-    bytesIn: InPort[ByteString],
-    bytesOut: OutPort[ByteString],
-    httpResponses: InPort[HttpResponse],
-    httpRequests: OutPort[HttpRequest]) extends Ports {
+    bytesIn: Inlet[ByteString],
+    bytesOut: Outlet[ByteString],
+    httpResponses: Inlet[HttpResponse],
+    httpRequests: Outlet[HttpRequest]) extends Shape {
 
-    override def inlets: Seq[InPort[_]] = bytesIn :: httpResponses :: Nil
-    override def outlets: Seq[OutPort[_]] = bytesOut :: httpRequests :: Nil
+    override def inlets: Seq[Inlet[_]] = bytesIn :: httpResponses :: Nil
+    override def outlets: Seq[Outlet[_]] = bytesOut :: httpRequests :: Nil
 
-    /**
-     * Create a copy of this Ports object, returning the same type as the
-     * original; this constraint can unfortunately not be expressed in the
-     * type system.
-     */
-    override def deepCopy(): Ports = HttpServerPorts(
+    override def deepCopy(): Shape = HttpServerPorts(
       new InPort(bytesIn.toString),
       new OutPort(bytesOut.toString),
       new InPort(httpRequests.toString),
       new OutPort(httpResponses.toString))
 
+    override def copyFromPorts(inlets: Seq[Inlet[_]], outlets: Seq[Outlet[_]]): Shape = {
+
+    }
   }
 
   def serverBlueprint(settings: ServerSettings,

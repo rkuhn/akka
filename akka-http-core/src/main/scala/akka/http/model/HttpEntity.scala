@@ -64,7 +64,7 @@ sealed trait HttpEntity extends japi.HttpEntity {
       }
 
     // TODO timerTransform is meant to be replaced / rewritten, it's currently private[akka]; See https://github.com/akka/akka/issues/16393
-    dataBytes.section(name("toStrict"))(_.timerTransform(transformer)).runWith(Sink.head)
+    dataBytes.section(name("toStrict"))(_.timerTransform(transformer)).runWith(Sink.head())
   }
 
   /**
@@ -176,7 +176,7 @@ object HttpEntity {
         case Success(Some(newData)) ⇒
           copy(data = newData)
         case Success(None) ⇒
-          Chunked.fromData(contentType, Source.single(data).via(transformer, Keep.left))
+          Chunked.fromData(contentType, Source.single(data).viaMat(transformer)(Keep.left))
         case Failure(ex) ⇒
           Chunked(contentType, Source.failed(ex))
       }
@@ -188,7 +188,7 @@ object HttpEntity {
             throw new IllegalStateException(s"Transformer didn't produce as much bytes (${newData.length}:'${newData.utf8String}') as claimed ($newContentLength)")
           copy(data = newData)
         case Success(None) ⇒
-          Default(contentType, newContentLength, Source.single(data).via(transformer, Keep.left))
+          Default(contentType, newContentLength, Source.single(data).viaMat(transformer)(Keep.left))
         case Failure(ex) ⇒
           Default(contentType, newContentLength, Source.failed(ex))
       }
@@ -214,10 +214,10 @@ object HttpEntity {
     def dataBytes: Source[ByteString, Unit] = data
 
     override def transformDataBytes(transformer: Flow[ByteString, ByteString, _]): Chunked =
-      Chunked.fromData(contentType, data.via(transformer, Keep.left))
+      Chunked.fromData(contentType, data.viaMat(transformer)(Keep.left))
 
     override def transformDataBytes(newContentLength: Long, transformer: Flow[ByteString, ByteString, _]): UniversalEntity =
-      Default(contentType, newContentLength, data.via(transformer, Keep.left))
+      Default(contentType, newContentLength, data.viaMat(transformer)(Keep.left))
 
     def withContentType(contentType: ContentType): Default =
       if (contentType == this.contentType) this else copy(contentType = contentType)
@@ -253,7 +253,7 @@ object HttpEntity {
       if (contentType == this.contentType) this else copy(contentType = contentType)
 
     override def transformDataBytes(transformer: Flow[ByteString, ByteString, _]): CloseDelimited =
-      HttpEntity.CloseDelimited(contentType, data.via(transformer, Keep.left))
+      HttpEntity.CloseDelimited(contentType, data.viaMat(transformer)(Keep.left))
 
     override def productPrefix = "HttpEntity.CloseDelimited"
   }
@@ -270,7 +270,7 @@ object HttpEntity {
       if (contentType == this.contentType) this else copy(contentType = contentType)
 
     override def transformDataBytes(transformer: Flow[ByteString, ByteString, _]): IndefiniteLength =
-      HttpEntity.IndefiniteLength(contentType, data.via(transformer, Keep.left))
+      HttpEntity.IndefiniteLength(contentType, data.viaMat(transformer)(Keep.left))
 
     override def productPrefix = "HttpEntity.IndefiniteLength"
   }
@@ -294,7 +294,7 @@ object HttpEntity {
           case LastChunk("", Nil) ⇒ ByteString.empty
           case _ ⇒
             throw new IllegalArgumentException("Chunked.transformDataBytes not allowed for chunks with metadata")
-        }.via(transformer, Keep.left)
+        }.viaMat(transformer)(Keep.left)
 
       Chunked.fromData(contentType, newData)
     }
