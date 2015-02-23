@@ -5,7 +5,6 @@
 package akka.http.engine.client
 
 import java.net.InetSocketAddress
-import akka.stream.scaladsl.Graphs.{ Graph, Ports, OutPort, InPort }
 
 import scala.annotation.tailrec
 import scala.collection.immutable.Seq
@@ -13,7 +12,7 @@ import scala.collection.mutable.ListBuffer
 import akka.stream.stage._
 import akka.util.ByteString
 import akka.event.LoggingAdapter
-import akka.stream.FlattenStrategy
+import akka.stream._
 import akka.stream.scaladsl._
 import akka.stream.scaladsl.OperationAttributes._
 import akka.http.model.{ IllegalResponseException, HttpMethod, HttpRequest, HttpResponse }
@@ -27,25 +26,23 @@ import akka.http.util._
 private[http] object HttpClient {
 
   case class HttpClientPorts(
-    bytesIn: InPort[ByteString],
-    bytesOut: OutPort[ByteString],
-    httpRequests: InPort[HttpRequest],
-    httpResponses: OutPort[HttpResponse]) extends Ports {
+    bytesIn: Inlet[ByteString],
+    bytesOut: Outlet[ByteString],
+    httpRequests: Inlet[HttpRequest],
+    httpResponses: Outlet[HttpResponse]) extends Shape {
 
-    override def inlets: Seq[InPort[_]] = bytesIn :: httpRequests :: Nil
-    override def outlets: Seq[OutPort[_]] = bytesOut :: httpResponses :: Nil
+    override val inlets: Seq[Inlet[_]] = bytesIn :: httpRequests :: Nil
+    override val outlets: Seq[Outlet[_]] = bytesOut :: httpResponses :: Nil
 
-    /**
-     * Create a copy of this Ports object, returning the same type as the
-     * original; this constraint can unfortunately not be expressed in the
-     * type system.
-     */
-    override def deepCopy(): Ports = HttpClientPorts(
-      new InPort(bytesIn.toString),
-      new OutPort(bytesOut.toString),
-      new InPort(httpResponses.toString),
-      new OutPort(httpRequests.toString))
+    override def deepCopy(): Shape = HttpClientPorts(
+      new Inlet(bytesIn.toString),
+      new Outlet(bytesOut.toString),
+      new Inlet(httpResponses.toString),
+      new Outlet(httpRequests.toString))
 
+    override def copyFromPorts(inlets: Seq[Inlet[_]], outlets: Seq[Outlet[_]]): Shape = {
+      HttpClientPorts(inlets)
+    }
   }
 
   def clientBlueprint(remoteAddress: InetSocketAddress,
@@ -100,12 +97,12 @@ private[http] object HttpClient {
         case (MessageStartError(_, info), _) ⇒ throw IllegalResponseException(info)
       }
 
-    FlowGraph.partial { implicit b ⇒
+    FlowGraph.partial() { implicit b ⇒
       import FlowGraph.Implicits._
-      val methodBypassFanout = Broadcast[HttpRequest](2)
+      val methodBypassFanout = b.add(Broadcast[HttpRequest](2))
       val responseParsingMerge = b.add(new ResponseParsingMerge(rootParser))
 
-      val terminationFanout = Broadcast[HttpResponse](2)
+      val terminationFanout = b.add(Broadcast[HttpResponse](2))
       val terminationMerge = b.add(new TerminationMerge)
 
       val bytesOut = (terminationMerge.out ~>
@@ -127,7 +124,7 @@ private[http] object HttpClient {
   // a simple merge stage that simply forwards its first input and ignores its second input
   // (the terminationBackchannelInput), but applies a special completion handling
   class TerminationMerge
-    extends FlexiMerge[HttpRequest, FanIn2[HttpRequest, HttpResponse, HttpRequest]](new FanIn2, OperationAttributes.name("TerminationMerge")) {
+    extends FlexiMerge[HttpRequest, FanInShape2[HttpRequest, HttpResponse, HttpRequest]](new FanInShape2("TerminationMerge"), OperationAttributes.name("TerminationMerge")) {
     import FlexiMerge._
 
     def createMergeLogic(p: PortT) = new MergeLogic[HttpRequest] {
@@ -160,7 +157,7 @@ private[http] object HttpClient {
    * 3. Go back to 1.
    */
   class ResponseParsingMerge(rootParser: HttpResponseParser)
-    extends FlexiMerge[List[ResponseOutput], FanIn2[ByteString, HttpMethod, List[ResponseOutput]]](new FanIn2, OperationAttributes.name("ResponsePersingMerge")) {
+    extends FlexiMerge[List[ResponseOutput], FanInShape2[ByteString, HttpMethod, List[ResponseOutput]]](new FanInShape2("ResponseParsingMerge"), OperationAttributes.name("ResponsePersingMerge")) {
     import FlexiMerge._
 
     def createMergeLogic(p: PortT) = new MergeLogic[List[ResponseOutput]] {
