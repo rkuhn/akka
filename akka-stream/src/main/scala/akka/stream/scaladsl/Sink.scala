@@ -13,86 +13,123 @@ import scala.annotation.unchecked.uncheckedVariance
 import scala.concurrent.{ Promise, Future }
 import scala.util.{ Success, Failure, Try }
 import akka.stream.FlowMaterializer
+import akka.stream.impl.StreamLayout.Module
 
 /**
  * A `Sink` is a set of stream processing steps that has one open input and an attached output.
  * Can be used as a `Subscriber`
  */
-final class Sink[-In, +Mat](m: StreamLayout.Module, val inlet: Inlet[In])
+final class Sink[-In, +Mat](private[stream] override val module: Module)
   extends Graph[SinkShape[In], Mat] {
-  private[stream] override val module: StreamLayout.Module = m
 
-  private[akka] def this(module: SinkModule[In @uncheckedVariance, Mat]) = this(module, module.inPort)
-
-  override val shape: SinkShape[In] = SinkShape(inlet)
-
-  private[stream] def carbonCopy(): Sink[In, Mat] = {
-    val sinkCopy = module.carbonCopy()
-    new Sink(sinkCopy.module, sinkCopy.inPorts(inlet).asInstanceOf[Inlet[In]])
-  }
+  override val shape: SinkShape[In] = module.shape.asInstanceOf[SinkShape[In]]
 
   /**
    * Connect this `Sink` to a `Source` and run it. The returned value is the materialized value
    * of the `Source`, e.g. the `Subscriber` of a [[SubscriberSource]].
    */
-  def runWith[Mat2](source: Source[In, Mat2])(implicit materializer: FlowMaterializer): Mat =
+  def runWith[Mat2](source: Source[In, Mat2])(implicit materializer: FlowMaterializer): Mat2 =
     source.to(this).run()
 
-  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Sink[In, Mat2] = {
-    val sinkCopy = module.carbonCopy()
-    new Sink(
-      sinkCopy.module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]),
-      sinkCopy.inPorts(inlet).asInstanceOf[Inlet[In]])
-  }
+  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Sink[In, Mat2] =
+    new Sink(module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]))
 
-  def withAttributes(attr: OperationAttributes): Sink[In, Mat] = {
-    val newModule = module.withAttributes(attr)
-    new Sink(newModule, newModule.inPorts.head.asInstanceOf[Inlet[In]])
-  }
+  def withAttributes(attr: OperationAttributes): Sink[In, Mat] =
+    new Sink(module.withAttributes(attr))
 
 }
 
 object Sink extends SinkApply {
 
+  import OperationAttributes.{ none, name ⇒ named }
+
+  private def shape[T](name: String): SinkShape[T] = SinkShape(new Inlet(name + ".in"))
+
+  /**
+   * A graph with the shape of a source logically is a source, this method makes
+   * it so also in type.
+   */
+  def wrap[T, M](g: Graph[SinkShape[T], M]): Sink[T, M] = new Sink(g.module)
+
   /**
    * Helper to create [[Sink]] from `Subscriber`.
    */
-  def apply[T](subscriber: Subscriber[T]): Sink[T, Unit] = new Sink(new SubscriberSink(subscriber))
+  def apply[T](subscriber: Subscriber[T]): Sink[T, Unit] = new Sink(new SubscriberSink(subscriber, none, shape("SubscriberSink")))
+
+  /**
+   * Helper to create [[Sink]] from `Subscriber`.
+   */
+  def apply[T](subscriber: Subscriber[T], name: String): Sink[T, Unit] = new Sink(new SubscriberSink(subscriber, named(name), shape(name)))
 
   /**
    * Creates a `Sink` that is materialized to an [[akka.actor.ActorRef]] which points to an Actor
    * created according to the passed in [[akka.actor.Props]]. Actor created by the `props` should
    * be [[akka.stream.actor.ActorSubscriber]].
    */
-  def apply[T](props: Props): Sink[T, ActorRef] = new Sink(new PropsSink(props))
+  def apply[T](props: Props): Sink[T, ActorRef] = new Sink(new PropsSink(props, none, shape("PropsSink")))
+
+  /**
+   * Creates a `Sink` that is materialized to an [[akka.actor.ActorRef]] which points to an Actor
+   * created according to the passed in [[akka.actor.Props]]. Actor created by the `props` should
+   * be [[akka.stream.actor.ActorSubscriber]].
+   */
+  def apply[T](props: Props, name: String): Sink[T, ActorRef] = new Sink(new PropsSink(props, named(name), shape(name)))
 
   /**
    * A `Sink` that immediately cancels its upstream after materialization.
    */
-  def cancelled[T]: Sink[T, Unit] = new Sink[Any, Unit](new CancelSink)
+  def cancelled[T](): Sink[T, Unit] = new Sink[Any, Unit](new CancelSink(none, shape("CancelledSink")))
+
+  /**
+   * A `Sink` that immediately cancels its upstream after materialization.
+   */
+  def cancelled[T](name: String): Sink[T, Unit] = new Sink[Any, Unit](new CancelSink(named(name), shape(name)))
 
   /**
    * A `Sink` that materializes into a `Future` of the first value received.
    */
-  def head[T]: Sink[T, Future[T]] = new Sink(HeadSink[T])
+  def head[T](): Sink[T, Future[T]] = new Sink(new HeadSink[T](none, shape("HeadSink")))
+
+  /**
+   * A `Sink` that materializes into a `Future` of the first value received.
+   */
+  def head[T](name: String): Sink[T, Future[T]] = new Sink(new HeadSink[T](named(name), shape(name)))
 
   /**
    * A `Sink` that materializes into a [[org.reactivestreams.Publisher]].
    * that can handle one [[org.reactivestreams.Subscriber]].
    */
-  def publisher[T]: Sink[T, Publisher[T]] = new Sink(PublisherSink[T])
+  def publisher[T](): Sink[T, Publisher[T]] = new Sink(new PublisherSink[T](none, shape("PublisherSink")))
+
+  /**
+   * A `Sink` that materializes into a [[org.reactivestreams.Publisher]].
+   * that can handle one [[org.reactivestreams.Subscriber]].
+   */
+  def publisher[T](name: String): Sink[T, Publisher[T]] = new Sink(new PublisherSink[T](named(name), shape(name)))
 
   /**
    * A `Sink` that materializes into a [[org.reactivestreams.Publisher]]
    * that can handle more than one [[org.reactivestreams.Subscriber]].
    */
   def fanoutPublisher[T](initialBufferSize: Int, maximumBufferSize: Int): Sink[T, Publisher[T]] =
-    new Sink(new FanoutPublisherSink[T](initialBufferSize, maximumBufferSize))
+    new Sink(new FanoutPublisherSink[T](initialBufferSize, maximumBufferSize, none, shape("FanoutPublisherSink")))
+
+  /**
+   * A `Sink` that materializes into a [[org.reactivestreams.Publisher]]
+   * that can handle more than one [[org.reactivestreams.Subscriber]].
+   */
+  def fanoutPublisher[T](initialBufferSize: Int, maximumBufferSize: Int, name: String): Sink[T, Publisher[T]] =
+    new Sink(new FanoutPublisherSink[T](initialBufferSize, maximumBufferSize, named(name), shape(name)))
 
   /**
    * A `Sink` that will consume the stream and discard the elements.
    */
-  def ignore: Sink[Any, Unit] = new Sink(new BlackholeSink())
+  def ignore(): Sink[Any, Unit] = new Sink(new BlackholeSink(none, shape("BlackholeSink")))
+
+  /**
+   * A `Sink` that will consume the stream and discard the elements.
+   */
+  def ignore(name: String): Sink[Any, Unit] = new Sink(new BlackholeSink(named(name), shape(name)))
 
   /**
    * A `Sink` that will invoke the given procedure for each received element. The sink is materialized

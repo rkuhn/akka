@@ -14,8 +14,8 @@ import akka.stream._
 object GraphFlowSpec {
   val source1 = Source(0 to 3)
 
-  val partialGraph = Graph.partial() { implicit b ⇒
-    import Graph.Implicits._
+  val partialGraph = FlowGraph.partial() { implicit b ⇒
+    import FlowGraph.Implicits._
     val source2 = Source(4 to 9)
     val source3 = Source.empty[Int]
     val source4 = Source.empty[String]
@@ -66,7 +66,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val flow = Flow(partialGraph) { implicit b ⇒
           partial ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
 
             (partial.inlet, partial.outlet.map(_.toInt).outlet)
         }
@@ -115,8 +115,8 @@ class GraphFlowSpec extends AkkaSpec {
             (importFlow.inlet, importFlow.outlet)
         }
 
-        Graph.closed() { implicit b ⇒
-          import Graph.Implicits._
+        FlowGraph.closed() { implicit b ⇒
+          import FlowGraph.Implicits._
           Source(1 to 5) ~> flow ~> flow ~> Sink(probe)
         }.run()
 
@@ -130,7 +130,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val source = Source(partialGraph) { implicit b ⇒
           partial ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             source1 ~> partial.inlet
             partial.outlet.map(_.toInt).outlet
         }
@@ -143,12 +143,12 @@ class GraphFlowSpec extends AkkaSpec {
       "work with a Sink when having KeyedSource inside" in {
         val probe = StreamTestKit.SubscriberProbe[Int]()
 
-        val source = Source(Source.subscriber[Int]) { implicit b ⇒
+        val source = Source.apply(Source.subscriber[Int]()) { implicit b ⇒
           subSource ⇒
             subSource.outlet
         }
 
-        val mm: Subscriber[Int] = source.to(Sink(probe), Keep.left).run()
+        val mm: Subscriber[Int] = source.to(Sink(probe)).run()
         source1.to(Sink(mm)).run()
 
         validateProbe(probe, 4, (0 to 3).toSet)
@@ -160,7 +160,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val source = Source(partialGraph) { implicit b ⇒
           partial ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             source1 ~> partial.inlet
             partial.outlet
         }
@@ -175,7 +175,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val source = Source(partialGraph) { implicit b ⇒
           partial ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             source1 ~> partial.inlet
             partial.outlet
         }
@@ -195,13 +195,13 @@ class GraphFlowSpec extends AkkaSpec {
 
         val source = Source(Source(1 to 5)) { implicit b ⇒
           s ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             s.outlet.map(_ * 2).outlet
         }
 
-        Graph.closed(source, source)(Pair.apply) { implicit b ⇒
+        FlowGraph.closed(source, source)(Pair.apply) { implicit b ⇒
           (s1, s2) ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             val merge = b.add(Merge[Int](2))
             s1.outlet ~> merge.in(0)
             merge.out ~> Sink(probe)
@@ -218,7 +218,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val sink = Sink(partialGraph) { implicit b ⇒
           partial ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             partial.outlet.map(_.toInt) ~> Sink(probe)
             partial.inlet
         }
@@ -237,7 +237,7 @@ class GraphFlowSpec extends AkkaSpec {
             p.inlet
         }
 
-        val mm = source1.to(sink).run()
+        val mm = source1.runWith(sink)
         Source(mm).to(Sink(probe)).run()
 
         validateProbe(probe, 4, (0 to 3).toSet)
@@ -248,7 +248,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val sink = Sink(partialGraph, Flow[String].map(_.toInt))(Pair.apply) { implicit b ⇒
           (partial, flow) ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             flow.outlet ~> partial.inlet
             partial.outlet.map(_.toInt) ~> Sink(probe)
             flow.inlet
@@ -271,7 +271,7 @@ class GraphFlowSpec extends AkkaSpec {
 
         val sink = Sink(Flow[String].map(_.toInt)) { implicit b ⇒
           flow ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             flow.outlet ~> Sink(probe)
             flow.inlet
         }
@@ -290,34 +290,34 @@ class GraphFlowSpec extends AkkaSpec {
 
         val flow = Flow(partialGraph) { implicit b ⇒
           partial ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             (partial.inlet, partial.outlet.map(_.toInt).outlet)
         }
 
         val source = Source(Flow[Int].map(_.toString), inSource)(Keep.right) { implicit b ⇒
           (flow, src) ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             src.outlet ~> flow.inlet
             flow.outlet
         }
 
         val sink = Sink(Flow[String].map(_.toInt), outSink)(Keep.right) { implicit b ⇒
           (flow, snk) ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             flow.outlet ~> snk.inlet
             flow.inlet
         }
 
-        val (m1, m2, m3) = Graph.closed(source, flow, sink)(Tuple3.apply) { implicit b ⇒
+        val (m1, m2, m3) = FlowGraph.closed(source, flow, sink)(Tuple3.apply) { implicit b ⇒
           (src, f, snk) ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             src.outlet.map(_.toInt) ~> f.inlet
             f.outlet.map(_.toString) ~> snk.inlet
         }.run()
 
         val subscriber = m1
         val publisher = m3
-        source1.runWith(Sink.publisher).subscribe(subscriber)
+        source1.runWith(Sink.publisher()).subscribe(subscriber)
         publisher.subscribe(probe)
 
         validateProbe(probe, stdRequests, stdResult)
@@ -338,16 +338,16 @@ class GraphFlowSpec extends AkkaSpec {
             snk.inlet
         }
 
-        val (m1, m2) = Graph.closed(source, sink)(Pair.apply) { implicit b ⇒
+        val (m1, m2) = FlowGraph.closed(source, sink)(Pair.apply) { implicit b ⇒
           (src, snk) ⇒
-            import Graph.Implicits._
+            import FlowGraph.Implicits._
             src.outlet ~> snk.inlet
         }.run()
 
         val subscriber = m1
         val publisher = m2
 
-        source1.runWith(Sink.publisher).subscribe(subscriber)
+        source1.runWith(Sink.publisher()).subscribe(subscriber)
         publisher.subscribe(probe)
 
         validateProbe(probe, 4, (0 to 3).toSet)

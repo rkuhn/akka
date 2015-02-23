@@ -52,6 +52,15 @@ private[akka] object FanOut {
     private val completed = Array.ofDim[Boolean](outputCount)
     private val errored = Array.ofDim[Boolean](outputCount)
 
+    override def toString: String =
+      s"""|OutputBunch
+          |  marked:    ${marked.mkString(", ")}
+          |  pending:   ${pending.mkString(", ")}
+          |  errored:   ${errored.mkString(", ")}
+          |  completed: ${completed.mkString(", ")}
+          |  cancelled: ${cancelled.mkString(", ")}
+          |    mark=$markedCount pend=$markedPending depl=$markedCancelled pref=$preferredId unmark=$unmarkCancelled""".stripMargin
+
     private var unmarkCancelled = true
 
     private var preferredId = 0
@@ -265,8 +274,7 @@ private[akka] abstract class FanOut(val settings: MaterializerSettings, val outp
     throw new IllegalStateException("This actor cannot be restarted")
   }
 
-  def receive = primaryInputs.subreceive orElse outputBunch.subreceive
-
+  def receive = primaryInputs.subreceive.orElse[Any, Unit](outputBunch.subreceive)
 }
 
 /**

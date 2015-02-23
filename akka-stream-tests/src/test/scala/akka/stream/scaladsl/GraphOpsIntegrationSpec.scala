@@ -12,7 +12,7 @@ import akka.util.ByteString
 import akka.stream.{ Inlet, Outlet, Shape, Graph }
 
 object GraphOpsIntegrationSpec {
-  import Graph.Implicits._
+  import FlowGraph.Implicits._
 
   object Shuffle {
 
@@ -23,10 +23,15 @@ object GraphOpsIntegrationSpec {
       override def deepCopy() = ShufflePorts(
         new Inlet[In](in1.toString), new Inlet[In](in2.toString),
         new Outlet[Out](out1.toString), new Outlet[Out](out2.toString))
+      override def copyFromPorts(inlets: immutable.Seq[Inlet[_]], outlets: immutable.Seq[Outlet[_]]) = {
+        assert(inlets.size == this.inlets.size)
+        assert(outlets.size == this.outlets.size)
+        ShufflePorts(inlets(0), inlets(1), outlets(0), outlets(1))
+      }
     }
 
     def apply[In, Out](pipeline: Flow[In, Out, _]): Graph[ShufflePorts[In, Out], Unit] = {
-      Graph.partial() { implicit b ⇒
+      FlowGraph.partial() { implicit b ⇒
         val merge = b.add(Merge[In](2))
         val balance = b.add(Balance[Out](2))
         merge.out ~> pipeline ~> balance.in
@@ -40,7 +45,7 @@ object GraphOpsIntegrationSpec {
 
 class GraphOpsIntegrationSpec extends AkkaSpec {
   import akka.stream.scaladsl.GraphOpsIntegrationSpec._
-  import Graph.Implicits._
+  import FlowGraph.Implicits._
 
   val settings = MaterializerSettings(system)
     .withInputBuffer(initialSize = 2, maxSize = 16)
@@ -50,7 +55,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
   "FlowGraphs" must {
 
     "support broadcast - merge layouts" in {
-      val resultFuture = Graph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
+      val resultFuture = FlowGraph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val bcast = b.add(Broadcast[Int](2))
           val merge = b.add(Merge[Int](2))
@@ -66,7 +71,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
 
     "support balance - merge (parallelization) layouts" in {
       val elements = 0 to 10
-      val out = Graph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
+      val out = FlowGraph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val balance = b.add(Balance[Int](5))
           val merge = b.add(Merge[Int](5))
@@ -86,7 +91,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
       // see https://en.wikipedia.org/wiki/Topological_sorting#mediaviewer/File:Directed_acyclic_graph.png
       val seqSink = Sink.head[Seq[Int]]
 
-      val (resultFuture2, resultFuture9, resultFuture10) = Graph.closed(seqSink, seqSink, seqSink)(Tuple3.apply) { implicit b ⇒
+      val (resultFuture2, resultFuture9, resultFuture10) = FlowGraph.closed(seqSink, seqSink, seqSink)(Tuple3.apply) { implicit b ⇒
         (sink2, sink9, sink10) ⇒
           // FIXME: Attributes for junctions
           val b3 = b.add(Broadcast[Int](2))
@@ -133,7 +138,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
 
     "allow adding of flows to sources and sinks to flows" in {
 
-      val resultFuture = Graph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
+      val resultFuture = FlowGraph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
         (sink) ⇒
           val bcast = b.add(Broadcast[Int](2))
           val merge = b.add(Merge[Int](2))
@@ -148,10 +153,10 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
     }
 
     "be able to run plain flow" in {
-      val p = Source(List(1, 2, 3)).runWith(Sink.publisher)
+      val p = Source(List(1, 2, 3)).runWith(Sink.publisher())
       val s = SubscriberProbe[Int]
       val flow = Flow[Int].map(_ * 2)
-      Graph.closed() { implicit builder ⇒
+      FlowGraph.closed() { implicit builder ⇒
         Source(p) ~> flow ~> Sink(s)
       }.run()
       val sub = s.expectSubscription()
@@ -165,7 +170,7 @@ class GraphOpsIntegrationSpec extends AkkaSpec {
     "be possible to use as lego bricks" in {
       val shuffler = Shuffle(Flow[Int].map(_ + 1))
 
-      val f: Future[Seq[Int]] = Graph.closed(shuffler, shuffler, shuffler, Sink.head[Seq[Int]])((_, _, _, fut) ⇒ fut) { implicit b ⇒
+      val f: Future[Seq[Int]] = FlowGraph.closed(shuffler, shuffler, shuffler, Sink.head[Seq[Int]])((_, _, _, fut) ⇒ fut) { implicit b ⇒
         (s1, s2, s3, sink) ⇒
           val merge = b.add(Merge[Int](2))
 

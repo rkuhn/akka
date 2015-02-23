@@ -2,7 +2,7 @@ package akka.stream.scaladsl
 
 import scala.concurrent.duration._
 import scala.util.control.NoStackTrace
-import Graph.Implicits._
+import FlowGraph.Implicits._
 import akka.stream.FlowMaterializer
 import akka.stream.testkit.AkkaSpec
 import akka.stream.testkit.StreamTestKit.AutoPublisher
@@ -61,7 +61,7 @@ object GraphFlexiRouteSpec {
     }
   }
 
-  class Unzip[A, B] extends FlexiRoute[(A, B), FanOutShape2[(A, B), A, B]](new FanOutShape2, OperationAttributes.name("Unzip")) {
+  class Unzip[A, B] extends FlexiRoute[(A, B), FanOutShape2[(A, B), A, B]](new FanOutShape2("Unzip"), OperationAttributes.name("Unzip")) {
     import FlexiRoute._
 
     override def createRouteLogic(p: PortT) = new RouteLogic[(A, B)] {
@@ -77,7 +77,7 @@ object GraphFlexiRouteSpec {
     }
   }
 
-  class TestRoute extends FlexiRoute[String, FanOutShape2[String, String, String]](new FanOutShape2, OperationAttributes.name("TestRoute")) {
+  class TestRoute extends FlexiRoute[String, FanOutShape2[String, String, String]](new FanOutShape2("TestRoute"), OperationAttributes.name("TestRoute")) {
     import FlexiRoute._
 
     var throwFromOnComplete = false
@@ -136,7 +136,7 @@ object GraphFlexiRouteSpec {
     val publisher = PublisherProbe[String]
     val s1 = SubscriberProbe[String]
     val s2 = SubscriberProbe[String]
-    Graph.closed() { implicit b ⇒
+    FlowGraph.closed() { implicit b ⇒
       val route = b.add(new TestRoute)
       Source(publisher) ~> route.in
       route.out0 ~> Sink(s1)
@@ -170,7 +170,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       // we can't know exactly which elements that go to each output, because if subscription/request
       // from one of the downstream is delayed the elements will be pushed to the other output
       val s = SubscriberProbe[String]
-      val m = Graph.closed() { implicit b ⇒
+      val m = FlowGraph.closed() { implicit b ⇒
         val merge = b.add(Merge[String](2))
         val route = b.add(new Fair[String])
         in ~> route.in
@@ -189,7 +189,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
     }
 
     "build simple round-robin route" in {
-      val (p1, p2) = Graph.closed(out1, out2)(Pair.apply) { implicit b ⇒
+      val (p1, p2) = FlowGraph.closed(out1, out2)(Pair.apply) { implicit b ⇒
         (o1, o2) ⇒
           val route = b.add(new StrictRoundRobin[String])
           in ~> route.in
@@ -221,7 +221,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       val outA = Sink.publisher[Int]
       val outB = Sink.publisher[String]
 
-      val (p1, p2) = Graph.closed(outA, outB)(Pair.apply) { implicit b ⇒
+      val (p1, p2) = FlowGraph.closed(outA, outB)(Pair.apply) { implicit b ⇒
         (oa, ob) ⇒
           val route = b.add(new Unzip[Int, String])
           Source(List(1 -> "A", 2 -> "B", 3 -> "C", 4 -> "D")) ~> route.in
@@ -353,7 +353,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       sub2.request(2)
       sub1.cancel()
 
-      s2.expectNext("onCancel: out0")
+      s2.expectNext("onCancel: TestRoute.out0")
       s1.expectNoMsg(200.millis)
 
       autoPublisher.sendNext("c")
@@ -416,7 +416,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       sub2.request(2)
       sub1.cancel()
 
-      s2.expectNext("onCancel: out0")
+      s2.expectNext("onCancel: TestRoute.out0")
       sub2.cancel()
 
       autoPublisher.subscription.expectCancellation()

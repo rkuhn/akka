@@ -10,11 +10,11 @@ import scala.concurrent.duration._
 import akka.stream.testkit.{ TwoStreamsSetup, AkkaSpec, StreamTestKit }
 
 class GraphMergeSpec extends TwoStreamsSetup {
-  import Graph.Implicits._
+  import FlowGraph.Implicits._
 
   override type Outputs = Int
 
-  override def fixture(b: Graph.Builder): Fixture = new Fixture(b: Graph.Builder) {
+  override def fixture(b: FlowGraph.Builder): Fixture = new Fixture(b: FlowGraph.Builder) {
     val merge = b add Merge[Outputs](2)
 
     override def left: Inlet[Outputs] = merge.in(0)
@@ -32,7 +32,7 @@ class GraphMergeSpec extends TwoStreamsSetup {
       val source3 = Source(List[Int]())
       val probe = StreamTestKit.SubscriberProbe[Int]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val m1 = b.add(Merge[Int](2))
         val m2 = b.add(Merge[Int](2))
 
@@ -66,7 +66,7 @@ class GraphMergeSpec extends TwoStreamsSetup {
 
       val probe = StreamTestKit.SubscriberProbe[Int]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val merge = b.add(Merge[Int](6))
 
         source1 ~> merge.in(0)

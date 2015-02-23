@@ -25,7 +25,7 @@ class FlowJoinSpec extends AkkaSpec(ConfigFactory.parseString("akka.loglevel=INF
       val probe = StreamTestKit.SubscriberProbe[Seq[Int]]()
 
       val flow1 = Flow() { implicit b ⇒
-        import Graph.Implicits._
+        import FlowGraph.Implicits._
         val merge = b.add(Merge[Int](2))
         val broadcast = b.add(Broadcast[Int](2))
         source ~> merge.in(0)

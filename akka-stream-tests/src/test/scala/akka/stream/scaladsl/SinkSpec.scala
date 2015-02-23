@@ -8,7 +8,7 @@ import akka.stream.testkit.StreamTestKit.SubscriberProbe
 import akka.stream.FlowMaterializer
 
 class SinkSpec extends AkkaSpec {
-  import Graph.Implicits._
+  import FlowGraph.Implicits._
 
   implicit val mat = FlowMaterializer()
 

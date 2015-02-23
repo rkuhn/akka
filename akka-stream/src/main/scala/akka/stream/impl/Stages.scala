@@ -62,11 +62,7 @@ private[akka] object Stages {
     def withAttributes(attributes: OperationAttributes): StageModule
 
     protected def newInstance: StageModule
-    override def carbonCopy: () ⇒ Mapping = () ⇒ {
-      val copy = newInstance
-      Mapping(copy, collection.immutable.Map(inPort -> copy.inPort), collection.immutable.Map(outPort -> copy.outPort))
-    }
-
+    override def carbonCopy: Module = newInstance
   }
 
   final case class TimerTransform(mkStage: () ⇒ TimerTransformer[Any, Any], attributes: OperationAttributes = timerTransform) extends StageModule {
@@ -195,9 +191,5 @@ private[akka] object Stages {
     def withAttributes(attributes: OperationAttributes) = copy(attributes = attributes)
     override protected def newInstance: StageModule = this.copy()
   }
-
-  //  final case class DirectProcessorWithKey(p: () ⇒ (Processor[Any, Any], Any), key: Key[_], attributes: OperationAttributes = processorWithKey) extends StageModule {
-  //    //def withAttributes(attributes: OperationAttributes) = copy(attributes = attributes)
-  //  }
 
 }

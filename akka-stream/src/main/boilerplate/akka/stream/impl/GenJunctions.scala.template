@@ -5,8 +5,8 @@ package akka.stream.impl
 
 import akka.actor.Props
 import akka.stream._
-import akka.stream.impl.Junctions.FaninModule
-import akka.stream.impl.StreamLayout.{ Mapping, Module }
+import akka.stream.impl.Junctions.FanInModule
+import akka.stream.impl.StreamLayout.Module
 import akka.stream.scaladsl.OperationAttributes
 import akka.stream.scaladsl.OperationAttributes._
 
@@ -22,14 +22,11 @@ object GenJunctions {
   final case class ZipWith1Module[[#A1#], B](
     shape: FanInShape1[[#A1#], B],
     f: ([#A1#]) ⇒ B,
-    override val attributes: OperationAttributes = name("zipWith1")) extends FaninModule with ZipWithModule {
+    override val attributes: OperationAttributes = name("zipWith1")) extends FanInModule with ZipWithModule {
 
     override def withAttributes(attr: OperationAttributes): Module = copy(attributes = attr)
 
-    override def carbonCopy: () ⇒ Mapping = () ⇒ {
-      val newZip = ZipWith1Module(shape.deepCopy(), f, attributes)
-      Mapping(newZip, shape.inlets.zip(newZip.shape.inlets).toMap, Map(shape.out -> newZip.shape.out))
-    }
+    override def carbonCopy: Module = ZipWith1Module(shape.deepCopy(), f, attributes)
 
     override def props(settings: MaterializerSettings): Props =
       Props(new Zip1With(settings, f.asInstanceOf[Function1[[#Any#], Any]]))

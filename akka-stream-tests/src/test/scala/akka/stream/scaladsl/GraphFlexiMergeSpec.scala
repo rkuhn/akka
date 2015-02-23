@@ -59,7 +59,7 @@ object GraphFlexiMergeSpec {
     }
   }
 
-  class MyZip[A, B] extends FlexiMerge[(A, B), FanInShape2[A, B, (A, B)]](new FanInShape2, OperationAttributes.name("MyZip")) {
+  class MyZip[A, B] extends FlexiMerge[(A, B), FanInShape2[A, B, (A, B)]](new FanInShape2("MyZip"), OperationAttributes.name("MyZip")) {
     def createMergeLogic(p: PortT): MergeLogic[(A, B)] = new MergeLogic[(A, B)] {
       var lastInA: A = _
 
@@ -80,7 +80,7 @@ object GraphFlexiMergeSpec {
   }
 
   class TripleCancellingZip[A, B, C](var cancelAfter: Int = Int.MaxValue, defVal: Option[A] = None)
-    extends FlexiMerge[(A, B, C), FanInShape3[A, B, C, (A, B, C)]](new FanInShape3, OperationAttributes.name("TripleCancellingZip")) {
+    extends FlexiMerge[(A, B, C), FanInShape3[A, B, C, (A, B, C)]](new FanInShape3("TripleCancellingZip"), OperationAttributes.name("TripleCancellingZip")) {
     def createMergeLogic(p: PortT) = new MergeLogic[(A, B, C)] {
       override def initialState = State(ReadAll(p.in0, p.in1, p.in2)) {
         case (ctx, input, inputs) ⇒
@@ -179,7 +179,7 @@ object GraphFlexiMergeSpec {
     def createMergeLogic(p: PortT) = new MergeLogic[String] {
       var throwFromOnComplete = false
 
-      override def initialState = State(ReadAny(p.in: _*)) {
+      override def initialState = State(ReadAny(p.inArray: _*)) {
         (ctx, input, element) ⇒
           if (element == "cancel")
             ctx.cancel(input)
@@ -219,7 +219,7 @@ object GraphFlexiMergeSpec {
 
 class GraphFlexiMergeSpec extends AkkaSpec {
   import GraphFlexiMergeSpec._
-  import Graph.Implicits._
+  import FlowGraph.Implicits._
 
   implicit val materializer = FlowMaterializer()
 
@@ -233,7 +233,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
   "FlexiMerge" must {
 
     "build simple fair merge" in {
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(fairString)
 
@@ -252,7 +252,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     }
 
     "be able to have two fleximerges in a graph" in {
-      val p = Graph.closed(in1, in2, out)((i1, i2, o) ⇒ o) { implicit b ⇒
+      val p = FlowGraph.closed(in1, in2, out)((i1, i2, o) ⇒ o) { implicit b ⇒
         (in1, in2, o) ⇒
           val m1 = b.add(fairString)
           val m2 = b.add(fairString)
@@ -285,7 +285,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
         merge.in(1) → merge.out
       }
 
-      val g = Graph.closed(out) { implicit b ⇒
+      val g = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val zip = b add Zip[String, String]()
           in1 ~> flow ~> Flow[String].map { of ⇒ of } ~> zip.in0
@@ -317,7 +317,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
         (merge.in1, merge.out)
       }
 
-      val g = Graph.closed(out) { implicit b ⇒
+      val g = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val zip = b add Zip[String, String]()
 
@@ -337,7 +337,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     }
 
     "build simple round robin merge" in {
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(new StrictRoundRobin[String])
           in1 ~> merge.in(0)
@@ -359,7 +359,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     }
 
     "build simple zip merge" in {
-      val p = Graph.closed(Sink.publisher[(Int, String)]) { implicit b ⇒
+      val p = FlowGraph.closed(Sink.publisher[(Int, String)]) { implicit b ⇒
         o ⇒
           val merge = b.add(new MyZip[Int, String])
           Source(List(1, 2, 3, 4)) ~> merge.in0
@@ -378,7 +378,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     }
 
     "build simple triple-zip merge using ReadAll" in {
-      val p = Graph.closed(Sink.publisher[(Long, Int, String)]) { implicit b ⇒
+      val p = FlowGraph.closed(Sink.publisher[(Long, Int, String)]) { implicit b ⇒
         o ⇒
           val merge = b.add(new TripleCancellingZip[Long, Int, String])
         // format: OFF
@@ -400,7 +400,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     }
 
     "build simple triple-zip merge using ReadAll, and continue with provided value for cancelled input" in {
-      val p = Graph.closed(Sink.publisher[(Long, Int, String)]) { implicit b ⇒
+      val p = FlowGraph.closed(Sink.publisher[(Long, Int, String)]) { implicit b ⇒
         o ⇒
           val merge = b.add(new TripleCancellingZip[Long, Int, String](1, Some(0L)))
         // format: OFF
@@ -424,7 +424,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     }
 
     "build simple ordered merge 1" in {
-      val p = Graph.closed(Sink.publisher[Int]) { implicit b ⇒
+      val p = FlowGraph.closed(Sink.publisher[Int]) { implicit b ⇒
         o ⇒
           val merge = b.add(OrderedMerge)
           Source(List(3, 5, 6, 7, 8)) ~> merge.in(0)
@@ -445,7 +445,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     "build simple ordered merge 2" in {
       val output = Sink.publisher[Int]
 
-      val p = Graph.closed(output) { implicit b ⇒
+      val p = FlowGraph.closed(output) { implicit b ⇒
         o ⇒
           val merge = b.add(OrderedMerge)
           Source(List(3, 5, 6, 7, 8)) ~> merge.in(0)
@@ -473,7 +473,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "build perferring merge" in {
       val output = Sink.publisher[Int]
-      val p = Graph.closed(output) { implicit b ⇒
+      val p = FlowGraph.closed(output) { implicit b ⇒
         o ⇒
           val merge = b.add(PreferringMerge)
           Source(List(1, 2, 3)) ~> merge.in(0)
@@ -515,7 +515,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       val otherDriver1 = PublisherProbe[Int]()
       val otherDriver2 = PublisherProbe[Int]()
 
-      val p = Graph.closed(output) { implicit b ⇒
+      val p = FlowGraph.closed(output) { implicit b ⇒
         o ⇒
           val merge = b.add(PreferringMerge)
           Source(preferredDriver) ~> merge.in(0)
@@ -568,7 +568,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "support cancel of input" in {
       val publisher = PublisherProbe[String]
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source(publisher) ~> merge.in(0)
@@ -589,12 +589,12 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       val outputs =
         for (_ ← 1 to 8) yield {
           val next = s.expectNext()
-          if (next.startsWith("onInput: ")) next.charAt(9) else next.charAt(14)
+          if (next.startsWith("onInput: ")) next.substring(9) else next.substring(12)
         }
-      val one = Seq('a')
-      val two = Seq('b', 'c', 'd')
-      val three = Seq('e', 'f')
-      val four = Set('1', '2')
+      val one = Seq("a")
+      val two = Seq("b", "c", "d")
+      val three = Seq("e", "f")
+      val four = Set("UniformFanIn.in1", "UniformFanIn.in2")
       outputs.filter(one.contains) should ===(one)
       outputs.filter(two.contains) should ===(two)
       outputs.filter(three.contains) should ===(three)
@@ -609,7 +609,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       val publisher1 = PublisherProbe[String]
       val publisher2 = PublisherProbe[String]
       val publisher3 = PublisherProbe[String]
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source(publisher1) ~> merge.in(0)
@@ -642,7 +642,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     }
 
     "handle error" in {
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source.failed[String](new IllegalArgumentException("ERROR") with NoStackTrace) ~> merge.in(0)
@@ -659,11 +659,11 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       val outputs =
         for (_ ← 1 to 5) yield {
           val next = s.expectNext()
-          if (next.startsWith("onInput: ")) next.charAt(9) else next.charAt(14)
+          if (next.startsWith("onInput: ")) next.substring(9) else next.substring(12)
         }
-      val one = Seq('a', 'b')
-      val two = Seq('c')
-      val three = Set('1', '2')
+      val one = Seq("a", "b")
+      val two = Seq("c")
+      val three = Set("UniformFanIn.in1", "UniformFanIn.in2")
       outputs.filter(one.contains) should ===(one)
       outputs.filter(two.contains) should ===(two)
       outputs.filter(three.contains).toSet should ===(three)
@@ -673,7 +673,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "propagate error" in {
       val publisher = PublisherProbe[String]
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source(publisher) ~> merge.in(0)
@@ -689,7 +689,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "emit error" in {
       val publisher = PublisherProbe[String]
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source(List("err")) ~> merge.in(0)
@@ -708,7 +708,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "emit error for user thrown exception" in {
       val publisher = PublisherProbe[String]
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source(List("exc")) ~> merge.in(0)
@@ -726,7 +726,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "emit error for user thrown exception in onComplete" in {
       val publisher = PublisherProbe[String]
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source(List("onComplete-exc")) ~> merge.in(0)
@@ -744,7 +744,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "emit error for user thrown exception in onComplete 2" in {
       val publisher = PublisherProbe[String]
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source.empty[String] ~> merge.in(0)
@@ -769,7 +769,7 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "support complete from onInput" in {
       val publisher = PublisherProbe[String]
-      val p = Graph.closed(out) { implicit b ⇒
+      val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
           val merge = b.add(TestMerge)
           Source(List("a", "complete")) ~> merge.in(0)

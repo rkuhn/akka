@@ -18,7 +18,7 @@ class SourceSpec extends AkkaSpec {
 
   "Singleton Source" must {
     "produce element" in {
-      val p = Source.single(1).runWith(Sink.publisher)
+      val p = Source.single(1).runWith(Sink.publisher())
       val c = StreamTestKit.SubscriberProbe[Int]()
       p.subscribe(c)
       val sub = c.expectSubscription()
@@ -28,7 +28,7 @@ class SourceSpec extends AkkaSpec {
     }
 
     "produce elements to later subscriber" in {
-      val p = Source.single(1).runWith(Sink.publisher)
+      val p = Source.single(1).runWith(Sink.publisher())
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[Int]()
       p.subscribe(c1)
@@ -48,7 +48,7 @@ class SourceSpec extends AkkaSpec {
 
   "Empty Source" must {
     "complete immediately" in {
-      val p = Source.empty.runWith(Sink.publisher)
+      val p = Source.empty.runWith(Sink.publisher())
       val c = StreamTestKit.SubscriberProbe[Int]()
       p.subscribe(c)
       c.expectComplete()
@@ -62,7 +62,7 @@ class SourceSpec extends AkkaSpec {
   "Failed Source" must {
     "emit error immediately" in {
       val ex = new RuntimeException with NoStackTrace
-      val p = Source.failed(ex).runWith(Sink.publisher)
+      val p = Source.failed(ex).runWith(Sink.publisher())
       val c = StreamTestKit.SubscriberProbe[Int]()
       p.subscribe(c)
       c.expectError(ex)
@@ -81,7 +81,7 @@ class SourceSpec extends AkkaSpec {
 
       val s = Source(source, source, source, source, source)(Seq(_, _, _, _, _)) { implicit b ⇒
         (i0, i1, i2, i3, i4) ⇒
-          import Graph.Implicits._
+          import FlowGraph.Implicits._
           val m = b.add(Merge[Int](5))
           i0.outlet ~> m.in(0)
           i1.outlet ~> m.in(1)
@@ -89,7 +89,7 @@ class SourceSpec extends AkkaSpec {
           i3.outlet ~> m.in(3)
           i4.outlet ~> m.in(4)
           m.out
-      }.to(Sink(out), Keep.left).run()
+      }.to(Sink(out)).run()
 
       for (i ← 0 to 4) probes(i).subscribe(s(i))
       val sub = out.expectSubscription()
@@ -122,7 +122,7 @@ class SourceSpec extends AkkaSpec {
     //      val s = mm.get(ks)
     //      mm.get(mk1) should be(s.toString)
     //      mm.get(mk2) should be(s.toString.toUpperCase)
-    //      val p = Source.single(1).runWith(Sink.publisher)
+    //      val p = Source.single(1).runWith(Sink.publisher())
     //      p.subscribe(s)
     //      val sub = sp.expectSubscription()
     //      sub.request(1)
@@ -149,7 +149,7 @@ class SourceSpec extends AkkaSpec {
     //      val s = mm.get(ks)
     //      mm.get(mk1) should be(s.toString)
     //      mm.get(mk2) should be(s.toString.toUpperCase)
-    //      val p = Source.single(1).runWith(Sink.publisher)
+    //      val p = Source.single(1).runWith(Sink.publisher())
     //      p.subscribe(s)
     //      val sub = sp.expectSubscription()
     //      sub.request(1)

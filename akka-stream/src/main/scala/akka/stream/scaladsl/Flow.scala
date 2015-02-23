@@ -4,8 +4,8 @@
 package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
-import akka.stream.impl.StreamLayout.Module
-import akka.stream.{ FlowShape, Inlet, Outlet, InPort, OutPort }
+import akka.stream.impl.StreamLayout.{ Module }
+import akka.stream.{ FlowShape, Inlet, Outlet, InPort, OutPort, SinkShape }
 import akka.stream.scaladsl.OperationAttributes._
 import akka.stream.{ TimerTransformer, TransformerLike, OverflowStrategy, FlowMaterializer, FlattenStrategy, Graph }
 import akka.util.Collections.EmptyImmutableSeq
@@ -21,108 +21,101 @@ import akka.stream.impl.{ Stages, StreamLayout, FlowModule }
 /**
  * A `Flow` is a set of stream processing steps that has one open input and one open output.
  */
-final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Inlet[In], val outlet: Outlet[Out])
+final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
   extends FlowOps[Out, Mat] with Graph[FlowShape[In, Out], Mat] {
 
-  private[stream] override val module: StreamLayout.Module = m
-
-  private[stream] def this(module: FlowModule[In @uncheckedVariance, Out @uncheckedVariance, Mat]) =
-    this(module, module.inPort, module.outPort)
-
-  override val shape: FlowShape[In, Out] = FlowShape(inlet, outlet)
-
-  private[stream] def carbonCopy(): Flow[In, Out, Mat] = {
-    val flowCopy = this.module.carbonCopy()
-    new Flow(
-      flowCopy.module,
-      flowCopy.inPorts(inlet).asInstanceOf[Inlet[In]],
-      flowCopy.outPorts(outlet).asInstanceOf[Outlet[Out]])
-  }
+  override val shape: FlowShape[In, Out] = module.shape.asInstanceOf[FlowShape[In, Out]]
 
   override type Repr[+O, +M] = Flow[In @uncheckedVariance, O, M]
-
-  def via[T, Mat2](flow: Flow[Out, T, Mat2]): Flow[In, T, Mat2] = via(flow, (f1: Mat, f2: Mat2) ⇒ f2)
 
   /**
    * Transform this [[Flow]] by appending the given processing steps.
    */
-  def via[T, Mat2, Mat3](flow: Flow[Out, T, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
-    val flowCopy = flow.carbonCopy()
+  def via[T, Mat2](flow: Flow[Out, T, Mat2]): Flow[In, T, Mat] = viaMat(flow)(Keep.left)
+
+  /**
+   * Transform this [[Flow]] by appending the given processing steps.
+   */
+  def viaMat[T, Mat2, Mat3](flow: Flow[Out, T, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
+    val flowCopy = flow.module.carbonCopy
     new Flow(
       module
-        .grow(flowCopy.module, combine)
-        .connect(outlet, flowCopy.inlet),
-      this.inlet,
-      flowCopy.outlet)
-  }
-
-  def to[Mat2, Mat3 >: Mat](sink: Sink[Out, Mat2]): Sink[In, Mat3] = {
-    to(sink, (flowm: Mat, sinkm: Mat2) ⇒ flowm)
+        .grow(flowCopy, combine)
+        .connect(shape.outlet, flowCopy.shape.inlets.head)
+        .replaceShape(FlowShape(shape.inlet, flowCopy.shape.outlets.head)))
   }
 
   /**
    * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
    */
-  def to[Mat2, Mat3](sink: Sink[Out, Mat2], combine: (Mat, Mat2) ⇒ Mat3): Sink[In, Mat3] = {
-    val sinkCopy = sink.carbonCopy()
-    new Sink(module
-      .grow(sinkCopy.module, combine)
-      .connect(outlet, sinkCopy.inlet),
-      inlet)
+  def to[Mat2](sink: Sink[Out, Mat2]): Sink[In, Mat] = {
+    toMat(sink)(Keep.left)
   }
 
-  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Repr[Out, Mat2] = {
-    val sourceCopy = module.carbonCopy()
-    new Flow(
-      sourceCopy.module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]),
-      sourceCopy.inPorts(inlet).asInstanceOf[Inlet[In]],
-      sourceCopy.outPorts(outlet).asInstanceOf[Outlet[Out]])
+  /**
+   * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
+   */
+  def toMat[Mat2, Mat3](sink: Sink[Out, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Sink[In, Mat3] = {
+    val sinkCopy = sink.module.carbonCopy
+    new Sink(
+      module
+        .grow(sinkCopy, combine)
+        .connect(shape.outlet, sinkCopy.shape.inlets.head)
+        .replaceShape(SinkShape(shape.inlet)))
+  }
+
+  /**
+   * Transform the materialized value of this Flow, leaving all other properties as they were.
+   */
+  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): Repr[Out, Mat2] =
+    new Flow(module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]))
+
+  /**
+   * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
+   */
+  def joinMat[Mat2, Mat3](flow: Flow[Out, In, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
+    val flowCopy = flow.module.carbonCopy
+    RunnableFlow(
+      module
+        .grow(flowCopy, combine)
+        .connect(shape.outlet, flowCopy.shape.inlets.head)
+        .connect(flowCopy.shape.outlets.head, shape.inlet))
   }
 
   /**
    * Join this [[Flow]] to another [[Flow]], by cross connecting the inputs and outputs, creating a [[RunnableFlow]]
    */
-  def join[Mat2, Mat3](flow: Flow[Out, In, Mat2], combine: (Mat, Mat2) ⇒ Mat3): RunnableFlow[Mat3] = {
-    val flowCopy = flow.carbonCopy()
-    RunnableFlow(
-      module.grow(flowCopy.module, combine)
-        .connect(this.outlet, flowCopy.inlet)
-        .connect(flowCopy.outlet, this.inlet))
+  def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[(Mat, Mat2)] = {
+    joinMat(flow)(Keep.both)
   }
 
-  def join[Mat2](flow: Flow[Out, In, Mat2]): RunnableFlow[Mat2] = {
-    join(flow, (_: Mat, m2: Mat2) ⇒ m2)
-  }
-
-  // FIXME: Materialized value is not combined!
-  def concat[Out2 >: Out, Mat2](source: Source[Out2, Mat2]): Flow[In, Out2, Unit] = {
-    this.via(Flow() { implicit builder ⇒
-      import Graph.Implicits._
-      val concat = builder.add(Concat[Out2]())
-      source ~> concat.in(1)
-      (concat.in(0), concat.out)
-    })
+  def concat[Out2 >: Out, Mat2](source: Source[Out2, Mat2]): Flow[In, Out2, (Mat, Mat2)] = {
+    this.viaMat(Flow(source) { implicit builder ⇒
+      s ⇒
+        import FlowGraph.Implicits._
+        val concat = builder.add(Concat[Out2]())
+        s.outlet ~> concat.in(1)
+        (concat.in(0), concat.out)
+    })(Keep.both)
   }
 
   /** INTERNAL API */
   override private[stream] def andThen[U](op: StageModule): Repr[U, Mat] = {
-    //No need to copy here, op is a fresh instance
-    new Flow[In, U, Mat](module.grow(op).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Outlet[U]])
+    //No need to copy here, op is a fresh instanc
+    new Flow(module.grow(op).connect(shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
   private[stream] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
-    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Outlet[U]])
+    new Flow(module.grow(op, Keep.right).connect(shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
   private[stream] def andThenMat[U, Mat2, O >: Out](processorFactory: () ⇒ (Processor[O, U], Mat2)): Repr[U, Mat2] = {
     val op = Stages.DirectProcessor(processorFactory.asInstanceOf[() ⇒ (Processor[Any, Any], Any)])
-    new Flow[In, U, Mat2](module.grow(op, (m: Mat, m2: Mat2) ⇒ m2).connect(outlet, op.inPort), inlet, op.outPort.asInstanceOf[Outlet[U]])
+    new Flow[In, U, Mat2](module.grow(op, Keep.right).connect(shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
-  override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
-    val newModule = module.withAttributes(attr)
-    new Flow(newModule, newModule.inPorts.head.asInstanceOf[Inlet[In]], newModule.outPorts.head.asInstanceOf[Outlet[Out]])
-  }
+  override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] =
+    new Flow(module.withAttributes(attr))
 
   /**
    * Connect the `Source` to this `Flow` and then connect it to the `Sink` and run it. The returned tuple contains
@@ -130,17 +123,16 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Inlet[In], 
    * and `Publisher` of a [[PublisherSink]].
    */
   def runWith[Mat1, Mat2](source: Source[In, Mat1], sink: Sink[Out, Mat2])(implicit materializer: FlowMaterializer): (Mat1, Mat2) = {
-    source.via(this, (sm: Mat1, fm: Mat) ⇒ sm).to(sink, (sourcem: Mat1, sinkm: Mat2) ⇒ (sourcem, sinkm)).run()
+    source.via(this).toMat(sink)(Keep.both).run()
   }
 
   def section[O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[In, O, Mat3] = {
-    val subFlow = section(Flow[O2]).withAttributes(attributes).carbonCopy()
+    val subFlow = section(Flow[O2]).module.carbonCopy.withAttributes(attributes)
     new Flow(
       module
-        .grow(subFlow.module.wrap(), combine)
-        .connect(outlet, subFlow.inlet),
-      this.inlet,
-      subFlow.outlet)
+        .grow(subFlow.wrap(), combine)
+        .connect(shape.outlet, subFlow.shape.inlets.head)
+        .replaceShape(FlowShape(shape.inlet, subFlow.shape.outlets.head)))
   }
 
   /**
@@ -154,14 +146,18 @@ final class Flow[-In, +Out, +Mat](m: StreamLayout.Module, val inlet: Inlet[In], 
 
 object Flow extends FlowApply {
 
+  import OperationAttributes.{ none, name ⇒ named }
+  private def shape[I, O](name: String): FlowShape[I, O] = FlowShape(new Inlet(name + ".in"), new Outlet(name + ".out"))
+
   /**
    * Creates an empty `Flow` of type `T`
    */
-  def empty[T]: Flow[T, T, Unit] = {
-    // FIXME: This creates unused elements
-    val identity = Stages.Identity()
-    new Flow[Any, Any, Any](identity, identity.inPort, identity.outPort).asInstanceOf[Flow[T, T, Unit]]
-  }
+  def empty[T]: Flow[T, T, Unit] = new Flow(Stages.Identity())
+
+  /**
+   * Creates an empty `Flow` of type `T`
+   */
+  def empty[T](name: String): Flow[T, T, Unit] = new Flow(Stages.Identity(named(name)))
 
   /**
    * Helper to create `Flow` without a [[Source]] or a [[Sink]].
@@ -169,13 +165,31 @@ object Flow extends FlowApply {
    */
   def apply[T]: Flow[T, T, Unit] = empty
 
+  /**
+   * Helper to create `Flow` without a [[Source]] or a [[Sink]].
+   * Example usage: `Flow[Int]`
+   */
+  def apply[T](name: String): Flow[T, T, Unit] = empty(name)
+
+  /**
+   * A graph with the shape of a source logically is a source, this method makes
+   * it so also in type.
+   */
+  def wrap[I, O, M](g: Graph[FlowShape[I, O], M]): Flow[I, O, M] = new Flow(g.module)
+
 }
 
 /**
  * Flow with attached input and output, can be executed.
  */
-case class RunnableFlow[Mat](private[stream] val module: StreamLayout.Module) {
+case class RunnableFlow[+Mat](private[stream] val module: StreamLayout.Module) {
   assert(module.isRunnable)
+
+  /**
+   * Transform only the materialized value of this RunnableFlow, leaving all other properties as they were.
+   */
+  def mapMaterialized[Mat2](f: Mat ⇒ Mat2): RunnableFlow[Mat2] =
+    copy(module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]))
 
   /**
    * Run this flow and return the [[MaterializedMap]] containing the values for the [[KeyedMaterializable]] of the flow.

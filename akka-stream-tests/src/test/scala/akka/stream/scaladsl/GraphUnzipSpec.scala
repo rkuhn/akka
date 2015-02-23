@@ -14,13 +14,13 @@ class GraphUnzipSpec extends AkkaSpec {
   implicit val materializer = FlowMaterializer(settings)
 
   "A unzip" must {
-    import Graph.Implicits._
+    import FlowGraph.Implicits._
 
     "unzip to two subscribers" in {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val unzip = b.add(Unzip[Int, String]())
         Source(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in
         unzip.out1 ~> Flow[String].buffer(16, OverflowStrategy.backpressure) ~> Sink(c2)
@@ -49,7 +49,7 @@ class GraphUnzipSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val unzip = b.add(Unzip[Int, String]())
         Source(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in
         unzip.out0 ~> Sink(c1)
@@ -70,7 +70,7 @@ class GraphUnzipSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val unzip = b.add(Unzip[Int, String]())
         Source(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in
         unzip.out0 ~> Sink(c1)
@@ -92,7 +92,7 @@ class GraphUnzipSpec extends AkkaSpec {
       val c1 = StreamTestKit.SubscriberProbe[Int]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val unzip = b.add(Unzip[Int, String]())
         Source(p1.getPublisher) ~> unzip.in
         unzip.out0 ~> Sink(c1)
@@ -118,7 +118,7 @@ class GraphUnzipSpec extends AkkaSpec {
 
     "work with zip" in {
       val c1 = StreamTestKit.SubscriberProbe[(Int, String)]()
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val zip = b.add(Zip[Int, String]())
         val unzip = b.add(Unzip[Int, String]())
         Source(List(1 -> "a", 2 -> "b", 3 -> "c")) ~> unzip.in

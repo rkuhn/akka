@@ -163,13 +163,13 @@ class StreamTcpSpec extends AkkaSpec with TcpHelper {
 
       val conn1F =
         Source(tcpWriteProbe1.publisherProbe)
-          .via(outgoingConnection)
-          .to(Sink(tcpReadProbe1.subscriberProbe), (c: Future[OutgoingConnection], _: Unit) ⇒ c).run()
+          .viaMat(outgoingConnection)(Keep.right)
+          .to(Sink(tcpReadProbe1.subscriberProbe)).run()
       val serverConnection1 = server.waitAccept()
       val conn2F =
         Source(tcpWriteProbe2.publisherProbe)
-          .via(outgoingConnection)
-          .to(Sink(tcpReadProbe2.subscriberProbe), (c: Future[OutgoingConnection], _: Unit) ⇒ c)
+          .viaMat(outgoingConnection)(Keep.right)
+          .to(Sink(tcpReadProbe2.subscriberProbe))
           .run()
       val serverConnection2 = server.waitAccept()
 
@@ -202,7 +202,7 @@ class StreamTcpSpec extends AkkaSpec with TcpHelper {
       val (bindingFuture, echoServerFinish) =
         StreamTcp()
           .bind(serverAddress)
-          .to(echoHandler, (f: Future[StreamTcp.ServerBinding], f2: Future[Unit]) ⇒ (f, f2))
+          .toMat(echoHandler)(Keep.both)
           .run()
 
       // make sure that the server has bound to the socket
@@ -223,7 +223,7 @@ class StreamTcpSpec extends AkkaSpec with TcpHelper {
       val (bindingFuture, echoServerFinish) =
         StreamTcp()
           .bind(serverAddress)
-          .to(echoHandler, (f: Future[StreamTcp.ServerBinding], f2: Future[Unit]) ⇒ (f, f2))
+          .toMat(echoHandler)(Keep.both)
           .run()
 
       // make sure that the server has bound to the socket

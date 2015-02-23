@@ -14,7 +14,7 @@ class GraphConcatSpec extends TwoStreamsSetup {
 
   override type Outputs = Int
 
-  override def fixture(b: Graph.Builder): Fixture = new Fixture(b: Graph.Builder) {
+  override def fixture(b: FlowGraph.Builder): Fixture = new Fixture(b: FlowGraph.Builder) {
     val concat = b add Concat[Outputs]()
 
     override def left: Inlet[Outputs] = concat.in(0)
@@ -24,12 +24,12 @@ class GraphConcatSpec extends TwoStreamsSetup {
   }
 
   "Concat" must {
-    import Graph.Implicits._
+    import FlowGraph.Implicits._
 
     "work in the happy case" in {
       val probe = StreamTestKit.SubscriberProbe[Int]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
 
         val concat1 = b add Concat[Int]()
         val concat2 = b add Concat[Int]()
@@ -131,7 +131,7 @@ class GraphConcatSpec extends TwoStreamsSetup {
       val promise = Promise[Int]()
       val subscriber = StreamTestKit.SubscriberProbe[Int]()
 
-      Graph.closed() { implicit b ⇒
+      FlowGraph.closed() { implicit b ⇒
         val concat = b add Concat[Int]()
         Source(List(1, 2, 3)) ~> concat.in(0)
         Source(promise.future) ~> concat.in(1)

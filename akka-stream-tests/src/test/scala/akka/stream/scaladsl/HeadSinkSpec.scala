@@ -26,7 +26,7 @@ class HeadSinkSpec extends AkkaSpec with ScriptedTest {
 
     "yield the first value" in {
       val p = StreamTestKit.PublisherProbe[Int]()
-      val f: Future[Int] = Source(p).map(identity).runWith(Sink.head)
+      val f: Future[Int] = Source(p).map(identity).runWith(Sink.head())
       val proc = p.expectSubscription
       proc.expectRequest()
       proc.sendNext(42)
@@ -38,7 +38,7 @@ class HeadSinkSpec extends AkkaSpec with ScriptedTest {
       val p = StreamTestKit.PublisherProbe[Int]()
       val f = Sink.head[Int]
       val s = Source.subscriber[Int]
-      val (subscriber, future) = s.to(f, (sub, fut: Future[Int]) ⇒ (sub, fut)).run()
+      val (subscriber, future) = s.toMat(f)(Keep.both).run()
 
       p.subscribe(subscriber)
       val proc = p.expectSubscription
@@ -50,7 +50,7 @@ class HeadSinkSpec extends AkkaSpec with ScriptedTest {
 
     "yield the first error" in {
       val p = StreamTestKit.PublisherProbe[Int]()
-      val f = Source(p).runWith(Sink.head)
+      val f = Source(p).runWith(Sink.head())
       val proc = p.expectSubscription
       proc.expectRequest()
       val ex = new RuntimeException("ex")
@@ -61,7 +61,7 @@ class HeadSinkSpec extends AkkaSpec with ScriptedTest {
 
     "yield NoSuchElementExcption for empty stream" in {
       val p = StreamTestKit.PublisherProbe[Int]()
-      val f = Source(p).runWith(Sink.head)
+      val f = Source(p).runWith(Sink.head())
       val proc = p.expectSubscription
       proc.expectRequest()
       proc.sendComplete()

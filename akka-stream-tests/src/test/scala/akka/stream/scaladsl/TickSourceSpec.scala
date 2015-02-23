@@ -50,7 +50,7 @@ class TickSourceSpec extends AkkaSpec {
     }
 
     "reject multiple subscribers, but keep the first" in {
-      val p = Source(1.second, 1.second, "tick").runWith(Sink.publisher)
+      val p = Source(1.second, 1.second, "tick").runWith(Sink.publisher())
       val c1 = StreamTestKit.SubscriberProbe[String]()
       val c2 = StreamTestKit.SubscriberProbe[String]()
       p.subscribe(c1)
@@ -69,7 +69,7 @@ class TickSourceSpec extends AkkaSpec {
     //      val c = StreamTestKit.SubscriberProbe[Int]()
     //
     //      FlowGraph { implicit b ⇒
-    //        import Graph.Implicits._
+    //        import FlowGraph.Implicits._
     //        val zip = Zip[Int, String]
     //        Source(1 to 100) ~> zip.left
     //        Source(1.second, 1.second, "tick") ~> zip.right
@@ -88,7 +88,7 @@ class TickSourceSpec extends AkkaSpec {
     "be possible to cancel" in {
       val c = StreamTestKit.SubscriberProbe[String]()
       val tickSource = Source(1.second, 500.millis, "tick")
-      val cancellable = tickSource.to(Sink(c), (c: Cancellable, _: Unit) ⇒ c).run()
+      val cancellable = tickSource.to(Sink(c)).run()
       val sub = c.expectSubscription()
       sub.request(3)
       c.expectNoMsg(600.millis)

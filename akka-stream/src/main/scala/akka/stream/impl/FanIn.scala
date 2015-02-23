@@ -49,6 +49,15 @@ private[akka] object FanIn {
     private var markedDepleted = 0
     private val cancelled = Array.ofDim[Boolean](inputCount)
 
+    override def toString: String =
+      s"""|InputBunch
+          |  marked:    ${marked.mkString(", ")}
+          |  pending:   ${pending.mkString(", ")}
+          |  depleted:  ${depleted.mkString(", ")}
+          |  completed: ${completed.mkString(", ")}
+          |  cancelled: ${cancelled.mkString(", ")}
+          |    mark=$markCount pend=$markedPending depl=$markedDepleted pref=$preferredId""".stripMargin
+
     private var preferredId = 0
 
     def cancel(): Unit =

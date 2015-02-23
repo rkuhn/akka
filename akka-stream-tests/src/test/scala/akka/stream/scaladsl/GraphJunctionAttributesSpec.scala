@@ -27,7 +27,7 @@ class GraphJunctionAttributesSpec extends AkkaSpec {
       case object FastTick extends FastTick
 
       val source = Source[(SlowTick, List[FastTick])]() { implicit b ⇒
-        import Graph.Implicits._
+        import FlowGraph.Implicits._
 
         val slow = Source(0.seconds, 100.millis, SlowTick)
         val fast = Source(0.seconds, 10.millis, FastTick)
@@ -40,7 +40,7 @@ class GraphJunctionAttributesSpec extends AkkaSpec {
         zip.out
       }
 
-      val future = source.grouped(10).runWith(Sink.head)
+      val future = source.grouped(10).runWith(Sink.head())
 
       // FIXME #16435 drop(2) needed because first two SlowTicks get only one FastTick
       Await.result(future, 2.seconds).map(_._2.size).filter(_ == 1).drop(2) should be(Nil)

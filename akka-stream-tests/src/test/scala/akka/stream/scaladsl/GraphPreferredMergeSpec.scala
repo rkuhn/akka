@@ -10,11 +10,11 @@ import scala.concurrent.Await
 import scala.concurrent.duration._
 
 class GraphPreferredMergeSpec extends TwoStreamsSetup {
-  import Graph.Implicits._
+  import FlowGraph.Implicits._
 
   override type Outputs = Int
 
-  override def fixture(b: Graph.Builder): Fixture = new Fixture(b: Graph.Builder) {
+  override def fixture(b: FlowGraph.Builder): Fixture = new Fixture(b: FlowGraph.Builder) {
     val merge = b.add(MergePreferred[Outputs](1))
 
     override def left: Inlet[Outputs] = merge.preferred
@@ -32,7 +32,7 @@ class GraphPreferredMergeSpec extends TwoStreamsSetup {
       val preferred = Source(Stream.fill(numElements)(1))
       val aux = Source(Stream.fill(numElements)(2))
 
-      val result = Graph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
+      val result = FlowGraph.closed(Sink.head[Seq[Int]]) { implicit b ⇒
         sink ⇒
           val merge = b.add(MergePreferred[Int](3))
           preferred ~> merge.preferred

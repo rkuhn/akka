@@ -54,6 +54,7 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
   "Java DSL" must provide {
     "Source" which {
       "allows creating the same Sources as Scala DSL" in {
+        pending
         val sClass = akka.stream.scaladsl.Source.getClass
         val jClass = akka.stream.javadsl.Source.getClass
 
@@ -62,6 +63,7 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
     }
     "Flow" which {
       "allows creating the same Sources as Scala DSL" in {
+        pending
         val sClass = akka.stream.scaladsl.Flow.getClass
         val jClass = akka.stream.javadsl.Flow.getClass
 
@@ -70,6 +72,7 @@ class DslFactoriesConsistencySpec extends WordSpec with Matchers {
     }
     "Sink" which {
       "allows creating the same Sources as Scala DSL" in {
+        pending
         val sClass = akka.stream.scaladsl.Sink.getClass
         val jClass = akka.stream.javadsl.Sink.getClass
 
