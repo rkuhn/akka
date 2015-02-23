@@ -4,27 +4,21 @@
 package akka.stream.impl
 
 import java.util.concurrent.atomic.AtomicBoolean
-import akka.actor.{ PoisonPill, Cancellable, Props, ActorRef }
-import akka.stream.FlowMaterializer
-import akka.stream.scaladsl.OperationAttributes
-import org.reactivestreams._
-import scala.annotation.unchecked.uncheckedVariance
-import scala.annotation.tailrec
-import scala.collection.immutable
-import scala.concurrent.{ Promise, ExecutionContext, Future }
-import scala.concurrent.duration.FiniteDuration
-import scala.util.control.NonFatal
-import scala.util.{ Success, Failure }
+
+import akka.actor.{ ActorRef, Cancellable, PoisonPill, Props }
 import akka.stream.impl.StreamLayout.Module
-import akka.stream.{ Inlet, Outlet, InPort, OutPort }
-import akka.stream.{ Shape, SourceShape }
-import akka.event.Logging.simpleName
+import akka.stream.scaladsl.OperationAttributes
+import akka.stream.{ Outlet, Shape, SourceShape }
+import org.reactivestreams._
+
+import scala.annotation.unchecked.uncheckedVariance
+import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.{ Future, Promise }
+import scala.util.{ Failure, Success }
 
 abstract class SourceModule[+Out, +Mat](val shape: SourceShape[Out]) extends Module {
 
   def create(materializer: ActorBasedFlowMaterializer, flowName: String): (Publisher[Out] @uncheckedVariance, Mat)
-
-  override def subModules: Set[Module] = Set.empty
 
   override def replaceShape(s: Shape): Module =
     if (s == shape) this
@@ -37,6 +31,8 @@ abstract class SourceModule[+Out, +Mat](val shape: SourceShape[Out]) extends Mod
     val out = new Outlet[Out](shape.outlet.toString)
     newInstance(SourceShape(out))
   }
+
+  override def subModules: Set[Module] = Set.empty
 }
 
 /**

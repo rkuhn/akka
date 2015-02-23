@@ -4,10 +4,9 @@
 package akka.stream.scaladsl
 
 import akka.stream.impl.Stages.{ MaterializingStageFactory, StageModule }
-import akka.stream.impl.StreamLayout.{ Module }
-import akka.stream.{ FlowShape, Inlet, Outlet, InPort, OutPort, SinkShape }
+import akka.stream.impl.StreamLayout.{ EmptyModule, Module }
+import akka.stream._
 import akka.stream.scaladsl.OperationAttributes._
-import akka.stream.{ TimerTransformer, TransformerLike, OverflowStrategy, FlowMaterializer, FlattenStrategy, Graph }
 import akka.util.Collections.EmptyImmutableSeq
 import org.reactivestreams.Processor
 import scala.annotation.unchecked.uncheckedVariance
@@ -28,6 +27,8 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
 
   override type Repr[+O, +M] = Flow[In @uncheckedVariance, O, M]
 
+  private[stream] def isIdentity: Boolean = this.module.isInstanceOf[Stages.Identity]
+
   /**
    * Transform this [[Flow]] by appending the given processing steps.
    */
@@ -37,12 +38,14 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
    * Transform this [[Flow]] by appending the given processing steps.
    */
   def viaMat[T, Mat2, Mat3](flow: Flow[Out, T, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Flow[In, T, Mat3] = {
-    val flowCopy = flow.module.carbonCopy
-    new Flow(
-      module
-        .grow(flowCopy, combine)
-        .connect(shape.outlet, flowCopy.shape.inlets.head)
-        .replaceShape(FlowShape(shape.inlet, flowCopy.shape.outlets.head)))
+    if (this.isIdentity) flow.asInstanceOf[Flow[In, T, Mat3]]
+    else {
+      val flowCopy = flow.module.carbonCopy
+      new Flow(
+        module
+          .growConnect(flowCopy, shape.outlet, flowCopy.shape.inlets.head, combine)
+          .replaceShape(FlowShape(shape.inlet, flowCopy.shape.outlets.head)))
+    }
   }
 
   /**
@@ -56,12 +59,14 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
    * Connect this [[Flow]] to a [[Sink]], concatenating the processing steps of both.
    */
   def toMat[Mat2, Mat3](sink: Sink[Out, Mat2])(combine: (Mat, Mat2) ⇒ Mat3): Sink[In, Mat3] = {
-    val sinkCopy = sink.module.carbonCopy
-    new Sink(
-      module
-        .grow(sinkCopy, combine)
-        .connect(shape.outlet, sinkCopy.shape.inlets.head)
-        .replaceShape(SinkShape(shape.inlet)))
+    if (isIdentity) sink.asInstanceOf[Sink[In, Mat3]]
+    else {
+      val sinkCopy = sink.module.carbonCopy
+      new Sink(
+        module
+          .growConnect(sinkCopy, shape.outlet, sinkCopy.shape.inlets.head, combine)
+          .replaceShape(SinkShape(shape.inlet)))
+    }
   }
 
   /**
@@ -102,20 +107,25 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
   /** INTERNAL API */
   override private[stream] def andThen[U](op: StageModule): Repr[U, Mat] = {
     //No need to copy here, op is a fresh instanc
-    new Flow(module.grow(op).connect(shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
+    if (this.isIdentity) new Flow(op).asInstanceOf[Repr[U, Mat]]
+    else new Flow(module.growConnect(op, shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
   private[stream] def andThenMat[U, Mat2](op: MaterializingStageFactory): Repr[U, Mat2] = {
-    new Flow(module.grow(op, Keep.right).connect(shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
+    if (this.isIdentity) new Flow(op).asInstanceOf[Repr[U, Mat2]]
+    else new Flow(module.growConnect(op, shape.outlet, op.inPort, Keep.right).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
   private[stream] def andThenMat[U, Mat2, O >: Out](processorFactory: () ⇒ (Processor[O, U], Mat2)): Repr[U, Mat2] = {
     val op = Stages.DirectProcessor(processorFactory.asInstanceOf[() ⇒ (Processor[Any, Any], Any)])
-    new Flow[In, U, Mat2](module.grow(op, Keep.right).connect(shape.outlet, op.inPort).replaceShape(FlowShape(shape.inlet, op.outPort)))
+    if (this.isIdentity) new Flow(op).asInstanceOf[Repr[U, Mat2]]
+    else new Flow[In, U, Mat2](module.growConnect(op, shape.outlet, op.inPort, Keep.right).replaceShape(FlowShape(shape.inlet, op.outPort)))
   }
 
-  override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] =
-    new Flow(module.withAttributes(attr))
+  override def withAttributes(attr: OperationAttributes): Repr[Out, Mat] = {
+    require(this.module ne EmptyModule, "Cannot set the attributes of empty flow")
+    new Flow(module.withAttributes(attr).wrap())
+  }
 
   /**
    * Connect the `Source` to this `Flow` and then connect it to the `Sink` and run it. The returned tuple contains
@@ -127,11 +137,11 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
   }
 
   def section[O, O2 >: Out, Mat2, Mat3](attributes: OperationAttributes, combine: (Mat, Mat2) ⇒ Mat3)(section: Flow[O2, O2, Unit] ⇒ Flow[O2, O, Mat2]): Flow[In, O, Mat3] = {
-    val subFlow = section(Flow[O2]).module.carbonCopy.withAttributes(attributes)
-    new Flow(
+    val subFlow = section(Flow[O2]).module.carbonCopy.withAttributes(attributes).wrap()
+    if (this.isIdentity) new Flow(subFlow).asInstanceOf[Flow[In, O, Mat3]]
+    else new Flow(
       module
-        .grow(subFlow.wrap(), combine)
-        .connect(shape.outlet, subFlow.shape.inlets.head)
+        .growConnect(subFlow, shape.outlet, subFlow.shape.inlets.head, combine)
         .replaceShape(FlowShape(shape.inlet, subFlow.shape.outlets.head)))
   }
 
@@ -146,30 +156,13 @@ final class Flow[-In, +Out, +Mat](private[stream] override val module: Module)
 
 object Flow extends FlowApply {
 
-  import OperationAttributes.{ none, name ⇒ named }
   private def shape[I, O](name: String): FlowShape[I, O] = FlowShape(new Inlet(name + ".in"), new Outlet(name + ".out"))
 
   /**
-   * Creates an empty `Flow` of type `T`
-   */
-  def empty[T]: Flow[T, T, Unit] = new Flow(Stages.Identity())
-
-  /**
-   * Creates an empty `Flow` of type `T`
-   */
-  def empty[T](name: String): Flow[T, T, Unit] = new Flow(Stages.Identity(named(name)))
-
-  /**
    * Helper to create `Flow` without a [[Source]] or a [[Sink]].
    * Example usage: `Flow[Int]`
    */
-  def apply[T]: Flow[T, T, Unit] = empty
-
-  /**
-   * Helper to create `Flow` without a [[Source]] or a [[Sink]].
-   * Example usage: `Flow[Int]`
-   */
-  def apply[T](name: String): Flow[T, T, Unit] = empty(name)
+  def apply[T]: Flow[T, T, Unit] = new Flow[Any, Any, Any](Stages.Identity()).asInstanceOf[Flow[T, T, Unit]]
 
   /**
    * A graph with the shape of a source logically is a source, this method makes
@@ -195,7 +188,6 @@ case class RunnableFlow[+Mat](private[stream] val module: StreamLayout.Module) {
    * Run this flow and return the [[MaterializedMap]] containing the values for the [[KeyedMaterializable]] of the flow.
    */
   def run()(implicit materializer: FlowMaterializer): Mat = materializer.materialize(this)
-
 }
 
 /**

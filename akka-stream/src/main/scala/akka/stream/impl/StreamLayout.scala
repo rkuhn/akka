@@ -4,7 +4,7 @@
 package akka.stream.impl
 
 import akka.stream.scaladsl.{ Keep, OperationAttributes }
-import akka.stream.{ Inlet, Outlet, InPort, OutPort, Shape, EmptyShape, AmorphousShape }
+import akka.stream._
 import org.reactivestreams.{ Subscription, Publisher, Subscriber }
 import akka.event.Logging.simpleName
 import scala.collection.mutable
@@ -35,13 +35,19 @@ private[akka] object StreamLayout {
      */
     def replaceShape(s: Shape): Module
 
-    final lazy val inPorts: Set[InPort] = shape.inlets.toSet
-    final lazy val outPorts: Set[OutPort] = shape.outlets.toSet
+    lazy val inPorts: Set[InPort] = shape.inlets.toSet
+    lazy val outPorts: Set[OutPort] = shape.outlets.toSet
 
     def isRunnable: Boolean = inPorts.isEmpty && outPorts.isEmpty
     def isSink: Boolean = (inPorts.size == 1) && outPorts.isEmpty
     def isSource: Boolean = (outPorts.size == 1) && inPorts.isEmpty
     def isFlow: Boolean = (inPorts.size == 1) && (outPorts.size == 1)
+
+    def growConnect(that: Module, from: OutPort, to: InPort): Module =
+      growConnect(that, from, to, Keep.left)
+
+    def growConnect[A, B, C](that: Module, from: OutPort, to: InPort, f: (A, B) ⇒ C): Module =
+      this.grow(that, f).connect(from, to)
 
     def connect[A, B](from: OutPort, to: InPort): Module = {
       if (debug) validate()
@@ -61,7 +67,7 @@ private[akka] object StreamLayout {
       if (debug) validate()
 
       CompositeModule(
-        subModules = this.subModules,
+        subModules = if (this.isAtomic) Set(this) else this.subModules,
         shape,
         connections,
         Transform(f, this.materializedValueComputation),
@@ -103,7 +109,7 @@ private[akka] object StreamLayout {
          * in carbonCopy.
          */
         Atomic(this),
-        attributes)
+        OperationAttributes.none)
     }
 
     def subModules: Set[Module]

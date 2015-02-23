@@ -35,8 +35,7 @@ final class Sink[-In, +Mat](private[stream] override val module: Module)
     new Sink(module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]))
 
   def withAttributes(attr: OperationAttributes): Sink[In, Mat] =
-    new Sink(module.withAttributes(attr))
-
+    new Sink(module.withAttributes(attr).wrap())
 }
 
 object Sink extends SinkApply {
@@ -160,9 +159,7 @@ object Sink extends SinkApply {
       (stage, promise.future)
     }
 
-    Flow[T].section(name("foreach")) { section ⇒
-      section.transformMaterializing(newForeachStage)
-    }.to(Sink.ignore)
+    Flow[T].transformMaterializing(newForeachStage).to(Sink.ignore).withAttributes(name("foreach"))
 
   }
 
@@ -200,9 +197,7 @@ object Sink extends SinkApply {
       (stage, promise.future)
     }
 
-    Flow[T].section(name("fold")) { section ⇒
-      section.transformMaterializing(newFoldStage)
-    }.to(Sink.ignore)
+    Flow[T].transformMaterializing(newFoldStage).to(Sink.ignore).withAttributes(name("fold"))
 
   }
 
@@ -227,8 +222,6 @@ object Sink extends SinkApply {
       }
     }
 
-    Flow[T].section(name("onComplete")) { section ⇒
-      section.transform(newOnCompleteStage)
-    }.to(Sink.ignore)
+    Flow[T].transform(newOnCompleteStage).to(Sink.ignore).withAttributes(name("onComplete"))
   }
 }
