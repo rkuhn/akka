@@ -41,7 +41,13 @@ private[http] object HttpClient {
       new Outlet(httpRequests.toString))
 
     override def copyFromPorts(inlets: Seq[Inlet[_]], outlets: Seq[Outlet[_]]): Shape = {
-      HttpClientPorts(inlets)
+      val bIn :: htpIn :: Nil = inlets
+      val bOut :: htpOut :: Nil = outlets
+      HttpClientPorts(
+        bIn.asInstanceOf[Inlet[ByteString]],
+        bOut.asInstanceOf[Outlet[ByteString]],
+        htpIn.asInstanceOf[Inlet[HttpRequest]],
+        htpOut.asInstanceOf[Outlet[HttpResponse]])
     }
   }
 

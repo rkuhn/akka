@@ -6,7 +6,7 @@ package akka.http
 
 import java.net.InetSocketAddress
 import akka.http.engine.server.HttpServer.HttpServerPorts
-import akka.stream.scaladsl.Graphs.Graph
+import akka.stream.Graph
 import com.typesafe.config.Config
 import scala.collection.immutable
 import scala.concurrent.Future
@@ -65,9 +65,9 @@ class HttpExt(config: Config)(implicit system: ActorSystem) extends akka.actor.E
                                options: immutable.Traversable[Inet.SocketOption] = Nil,
                                settings: Option[ServerSettings] = None,
                                log: LoggingAdapter = system.log)(implicit fm: FlowMaterializer): Future[ServerBinding] = {
-    bind(interface, port, backlog, options, settings, log).to(Sink.foreach { conn ⇒
+    bind(interface, port, backlog, options, settings, log).toMat(Sink.foreach { conn ⇒
       conn.flow.join(handler)
-    }, Keep.left).run()
+    })(Keep.left).run()
   }
 
   /**
@@ -201,7 +201,7 @@ object Http extends ExtensionId[HttpExt] with ExtensionIdProvider {
      * and the respective [[MaterializedMap]] returned.
      */
     def handleWith[Mat](handler: Flow[HttpRequest, HttpResponse, Mat])(implicit fm: FlowMaterializer): Mat =
-      flow.join(handler).run()
+      flow.join(handler).mapMaterialized(_._2).run()
 
     /**
      * Handles the connection with the given handler function.
