@@ -80,10 +80,7 @@ class SourceSpec extends AkkaSpec {
       val neverSource = Source.lazyEmpty()
       val pubSink = Sink.publisher
 
-      val mat = neverSource.to(pubSink).run()
-
-      val f = mat.get(neverSource)
-      val neverPub = mat.get(pubSink)
+      val (f, neverPub) = neverSource.toMat(pubSink)(Pair.apply).run()
 
       val c = StreamTestKit.SubscriberProbe()
       neverPub.subscribe(c)
@@ -100,10 +97,7 @@ class SourceSpec extends AkkaSpec {
       val neverSource = Source.lazyEmpty[Int]()
       val counterSink = Sink.fold[Int, Int](0) { (acc, _) ⇒ acc + 1 }
 
-      val mat = neverSource.to(counterSink).run()
-
-      val neverPromise = mat.get(neverSource)
-      val counterFuture = mat.get(counterSink)
+      val (neverPromise, counterFuture) = neverSource.toMat(counterSink)(Pair.apply).run()
 
       // external cancellation
       neverPromise.success(())
@@ -116,10 +110,7 @@ class SourceSpec extends AkkaSpec {
       val neverSource = Source.lazyEmpty()
       val counterSink = Sink.fold[Int, Int](0) { (acc, _) ⇒ acc + 1 }
 
-      val mat = neverSource.to(counterSink).run()
-
-      val neverPromise = mat.get(neverSource)
-      val counterFuture = mat.get(counterSink)
+      val (neverPromise, counterFuture) = neverSource.toMat(counterSink)(Pair.apply).run()
 
       // external cancellation
       neverPromise.failure(new Exception("Boom") with NoStackTrace)

@@ -5,6 +5,7 @@ package akka.stream.scaladsl
 
 import java.util.concurrent.atomic.AtomicLong
 import akka.dispatch.Dispatchers
+import akka.stream.Supervision._
 import akka.stream.impl.Stages.StageModule
 import akka.stream.stage.Stage
 import scala.collection.immutable
@@ -58,7 +59,7 @@ class FlowSpec extends AkkaSpec(ConfigFactory.parseString("akka.actor.debug.rece
   }
 
   val faultyFlow: Flow[Any, Any, _] ⇒ Flow[Any, Any, _] = in ⇒ in.andThenMat { () ⇒
-    val props = Props(new BrokenActorInterpreter(settings, List(fusing.Map { x: Any ⇒ x }), "a3"))
+    val props = Props(new BrokenActorInterpreter(settings, List(fusing.Map({ x: Any ⇒ x }, stoppingDecider)), "a3"))
       .withDispatcher("akka.test.stream-dispatcher")
     val processor = ActorProcessorFactory[Any, Any](system.actorOf(
       props,

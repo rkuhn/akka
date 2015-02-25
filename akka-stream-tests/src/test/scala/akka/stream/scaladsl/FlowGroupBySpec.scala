@@ -194,8 +194,8 @@ class FlowGroupBySpec extends AkkaSpec {
       val exc = TE("test")
       val publisher = Source(publisherProbeProbe)
         .groupBy(elem ⇒ if (elem == 2) throw exc else elem % 2)
-        .runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+        .runWith(Sink.publisher())
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, Unit])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbeProbe.expectSubscription()
@@ -206,7 +206,7 @@ class FlowGroupBySpec extends AkkaSpec {
       upstreamSubscription.sendNext(1)
 
       val (_, substream) = subscriber.expectNext()
-      val substreamPuppet = StreamPuppet(substream.runWith(Sink.publisher))
+      val substreamPuppet = StreamPuppet(substream.runWith(Sink.publisher()))
 
       substreamPuppet.request(1)
       substreamPuppet.expectNext(1)
@@ -221,10 +221,10 @@ class FlowGroupBySpec extends AkkaSpec {
     "resume stream when groupBy function throws" in {
       val publisherProbeProbe = StreamTestKit.PublisherProbe[Int]()
       val exc = TE("test")
-      val publisher = Source(publisherProbeProbe).section(supervisionStrategy(resumingDecider))(
+      val publisher = Source(publisherProbeProbe).section(OperationAttributes.supervisionStrategy(resumingDecider))(
         _.groupBy(elem ⇒ if (elem == 2) throw exc else elem % 2))
-        .runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int])]()
+        .runWith(Sink.publisher())
+      val subscriber = StreamTestKit.SubscriberProbe[(Int, Source[Int, Unit])]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbeProbe.expectSubscription()
@@ -235,7 +235,7 @@ class FlowGroupBySpec extends AkkaSpec {
       upstreamSubscription.sendNext(1)
 
       val (_, substream1) = subscriber.expectNext()
-      val substreamPuppet1 = StreamPuppet(substream1.runWith(Sink.publisher))
+      val substreamPuppet1 = StreamPuppet(substream1.runWith(Sink.publisher()))
       substreamPuppet1.request(10)
       substreamPuppet1.expectNext(1)
 
@@ -243,7 +243,7 @@ class FlowGroupBySpec extends AkkaSpec {
       upstreamSubscription.sendNext(4)
 
       val (_, substream2) = subscriber.expectNext()
-      val substreamPuppet2 = StreamPuppet(substream2.runWith(Sink.publisher))
+      val substreamPuppet2 = StreamPuppet(substream2.runWith(Sink.publisher()))
       substreamPuppet2.request(10)
       substreamPuppet2.expectNext(4) // note that 2 was dropped
 

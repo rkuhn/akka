@@ -113,8 +113,8 @@ class FlowSplitWhenSpec extends AkkaSpec {
       val exc = TE("test")
       val publisher = Source(publisherProbeProbe)
         .splitWhen(elem ⇒ if (elem == 3) throw exc else elem % 3 == 0)
-        .runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[Source[Int]]()
+        .runWith(Sink.publisher())
+      val subscriber = StreamTestKit.SubscriberProbe[Source[Int, Unit]]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbeProbe.expectSubscription()
@@ -125,7 +125,7 @@ class FlowSplitWhenSpec extends AkkaSpec {
       upstreamSubscription.sendNext(1)
 
       val substream = subscriber.expectNext()
-      val substreamPuppet = StreamPuppet(substream.runWith(Sink.publisher))
+      val substreamPuppet = StreamPuppet(substream.runWith(Sink.publisher()))
 
       substreamPuppet.request(10)
       substreamPuppet.expectNext(1)
@@ -143,10 +143,10 @@ class FlowSplitWhenSpec extends AkkaSpec {
     "resume stream when splitWhen function throws" in {
       val publisherProbeProbe = StreamTestKit.PublisherProbe[Int]()
       val exc = TE("test")
-      val publisher = Source(publisherProbeProbe).section(supervisionStrategy(resumingDecider))(
+      val publisher = Source(publisherProbeProbe).section(OperationAttributes.supervisionStrategy(resumingDecider))(
         _.splitWhen(elem ⇒ if (elem == 3) throw exc else elem % 3 == 0))
-        .runWith(Sink.publisher)
-      val subscriber = StreamTestKit.SubscriberProbe[Source[Int]]()
+        .runWith(Sink.publisher())
+      val subscriber = StreamTestKit.SubscriberProbe[Source[Int, Unit]]()
       publisher.subscribe(subscriber)
 
       val upstreamSubscription = publisherProbeProbe.expectSubscription()
@@ -157,7 +157,7 @@ class FlowSplitWhenSpec extends AkkaSpec {
       upstreamSubscription.sendNext(1)
 
       val substream1 = subscriber.expectNext()
-      val substreamPuppet1 = StreamPuppet(substream1.runWith(Sink.publisher))
+      val substreamPuppet1 = StreamPuppet(substream1.runWith(Sink.publisher()))
 
       substreamPuppet1.request(10)
       substreamPuppet1.expectNext(1)
@@ -175,7 +175,7 @@ class FlowSplitWhenSpec extends AkkaSpec {
       upstreamSubscription.sendNext(6)
       substreamPuppet1.expectComplete()
       val substream2 = subscriber.expectNext()
-      val substreamPuppet2 = StreamPuppet(substream2.runWith(Sink.publisher))
+      val substreamPuppet2 = StreamPuppet(substream2.runWith(Sink.publisher()))
       substreamPuppet2.request(10)
       substreamPuppet2.expectNext(6)
 

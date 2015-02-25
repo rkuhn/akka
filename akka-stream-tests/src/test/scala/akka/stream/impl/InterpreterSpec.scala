@@ -3,6 +3,7 @@
  */
 package akka.stream.impl
 
+import akka.stream.Supervision._
 import akka.stream.testkit.AkkaSpec
 import akka.stream._
 import akka.stream.scaladsl._
@@ -17,7 +18,7 @@ class InterpreterSpec extends AkkaSpec {
   class Setup {
     val up = PublisherProbe[Int]
     val down = SubscriberProbe[Int]
-    private val props = ActorInterpreter.props(mat.settings, List(fusing.Map { x: Any ⇒ x })).withDispatcher("akka.test.stream-dispatcher")
+    private val props = ActorInterpreter.props(mat.settings, List(fusing.Map({ x: Any ⇒ x }, stoppingDecider))).withDispatcher("akka.test.stream-dispatcher")
     val processor = ActorProcessorFactory[Int, Int](system.actorOf(props))
   }
 
