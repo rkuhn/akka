@@ -185,7 +185,7 @@ case class RunnableFlow[+Mat](private[stream] val module: StreamLayout.Module) {
     copy(module.transformMaterializedValue(f.asInstanceOf[Any ⇒ Any]))
 
   /**
-   * Run this flow and return the [[MaterializedMap]] containing the values for the [[KeyedMaterializable]] of the flow.
+   * Run this flow and return the materialized instance from the flow.
    */
   def run()(implicit materializer: ActorFlowMaterializer): Mat = materializer.materialize(this)
 }

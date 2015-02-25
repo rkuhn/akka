@@ -174,9 +174,9 @@ object FlexiRoute {
 
 /**
  * Base class for implementing custom route junctions.
- * Such a junction always has one [[#in]] port and one or more output ports.
- * The output ports are to be defined in the concrete subclass and are created with
- * [[#createOutputPort]].
+ * Such a junction always has one `in` port and one or more `out` ports.
+ * The ports need to be defined by the concrete subclass by providing them as a constructor argument
+ * to the [[FlexiRoute]] base class.
  *
  * The concrete subclass must implement [[#createRouteLogic]] to define the [[FlexiRoute#RouteLogic]]
  * that will be used when reading input elements and emitting output elements.
@@ -184,9 +184,8 @@ object FlexiRoute {
  * must not hold mutable state, since it may be shared across several materialized ``FlowGraph``
  * instances.
  *
- * Note that a `FlexiRoute` instance can only be used at one place in the `FlowGraph` (one vertex).
- *
- * @param attributes optional attributes for this vertex
+ * @param ports ports that this junction exposes
+ * @param attributes optional attributes for this junction
  */
 abstract class FlexiRoute[In, S <: Shape](val shape: S, attributes: OperationAttributes) extends Graph[S, Unit] {
   import akka.stream.scaladsl.FlexiRoute._

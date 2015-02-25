@@ -52,8 +52,12 @@ private[akka] object StreamLayout {
     def connect[A, B](from: OutPort, to: InPort): Module = {
       if (debug) validate()
 
-      require(outPorts(from), s"The output port [$from] is not part of the underlying graph.")
-      require(inPorts(to), s"The input port [$to] is not part of the underlying graph.")
+      require(outPorts(from),
+        if (downstreams.contains(from)) s"The output port [$from] is already connected"
+        else s"The output port [$from] is not part of the underlying graph.")
+      require(inPorts(to),
+        if (upstreams.contains(to)) s"The input port [$to] is already connected"
+        else s"The input port [$to] is not part of the underlying graph.")
 
       CompositeModule(
         subModules,

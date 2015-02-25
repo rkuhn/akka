@@ -199,7 +199,7 @@ class FlowGraphCompileSpec extends AkkaSpec {
     }
 
     "distinguish between input and output ports" in {
-      intercept[IllegalStateException] {
+      intercept[IllegalArgumentException] {
         FlowGraph.closed() { implicit b ⇒
           val zip = b.add(Zip[Int, String]())
           val unzip = b.add(Unzip[Int, String]())

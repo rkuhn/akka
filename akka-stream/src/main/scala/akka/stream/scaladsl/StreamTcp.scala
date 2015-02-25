@@ -49,7 +49,7 @@ object StreamTcp extends ExtensionId[StreamTcp] with ExtensionIdProvider {
 
     /**
      * Handles the connection using the given flow, which is materialized exactly once and the respective
-     * [[MaterializedMap]] returned.
+     * materialized instance is returned.
      *
      * Convenience shortcut for: `flow.join(handler).run()`.
      */

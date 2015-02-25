@@ -3,12 +3,12 @@
  */
 package akka.stream.scaladsl
 
-import akka.stream.impl.Junctions.FlexiMergeModule
 import akka.stream.scaladsl.FlexiMerge.MergeLogic
 import akka.stream.{ Inlet, Shape, InPort, Graph }
 import scala.collection.immutable
 import scala.collection.immutable.Seq
 import akka.stream.impl.StreamLayout
+import akka.stream.impl.Junctions.FlexiMergeModule
 
 object FlexiMerge {
 
@@ -207,9 +207,9 @@ object FlexiMerge {
 
 /**
  * Base class for implementing custom merge junctions.
- * Such a junction always has one [[#out]] port and one or more input ports.
- * The input ports are to be defined in the concrete subclass and are created with
- * [[#createInputPort]].
+ * Such a junction always has one `out` port and one or more `in` ports.
+ * The ports need to be defined by the concrete subclass by providing them as a constructor argument
+ * to the [[FlexiMerge]] base class.
  *
  * The concrete subclass must implement [[#createMergeLogic]] to define the [[FlexiMerge#MergeLogic]]
  * that will be used when reading input elements and emitting output elements.
@@ -219,10 +219,8 @@ object FlexiMerge {
  * must not hold mutable state, since it may be shared across several materialized ``FlowGraph``
  * instances.
  *
- * Note that a `FlexiMerge` instance can only be used at one place in the `FlowGraph` (one vertex).
- *
  * @param ports ports that this junction exposes
- * @param attributes optional attributes for this vertex
+ * @param attributes optional attributes for this junction
  */
 abstract class FlexiMerge[Out, S <: Shape](val shape: S, attributes: OperationAttributes) extends Graph[S, Unit] {
   val module: StreamLayout.Module = new FlexiMergeModule(shape, createMergeLogic)
