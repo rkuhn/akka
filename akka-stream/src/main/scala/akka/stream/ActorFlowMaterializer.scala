@@ -49,7 +49,7 @@ object ActorFlowMaterializer {
    * the processing steps. The default `namePrefix` is `"flow"`. The actor names are built up of
    * `namePrefix-flowNumber-flowStepNumber-stepName`.
    */
-  def apply(materializerSettings: ActorFlowMaterializerSettings, namePrefix: String)(implicit context: ActorRefFactory): ActorFlowMaterializer = {
+  def apply(materializerSettings: ActorFlowMaterializerSettings, namePrefix: String, optimizations: Optimizations = Optimizations.none)(implicit context: ActorRefFactory): ActorFlowMaterializer = {
     val system = actorSystemOf(context)
 
     new ActorFlowMaterializerImpl(
@@ -57,7 +57,8 @@ object ActorFlowMaterializer {
       system.dispatchers,
       context.actorOf(StreamSupervisor.props(materializerSettings).withDispatcher(materializerSettings.dispatcher)),
       FlowNameCounter(system).counter,
-      namePrefix)
+      namePrefix,
+      optimizations)
   }
 
   /**

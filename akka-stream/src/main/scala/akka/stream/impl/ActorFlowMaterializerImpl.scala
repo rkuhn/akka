@@ -14,24 +14,10 @@ import akka.stream.impl.Junctions._
 import akka.stream.impl.StreamLayout.Module
 import akka.stream.impl.fusing.ActorInterpreter
 import akka.stream.scaladsl._
-import akka.stream.{ ActorFlowMaterializer, FlowMaterializer, ActorFlowMaterializerSettings, InPort }
+import akka.stream._
 import org.reactivestreams._
 
 import scala.concurrent.{ Await, ExecutionContext }
-
-/**
- * INTERNAL API
- */
-final object Optimizations {
-  val none: Optimizations = Optimizations(collapsing = false, elision = false, simplification = false, fusion = false)
-  val all: Optimizations = Optimizations(collapsing = true, elision = true, simplification = true, fusion = true)
-}
-/**
- * INTERNAL API
- */
-final case class Optimizations(collapsing: Boolean, elision: Boolean, simplification: Boolean, fusion: Boolean) {
-  def isEnabled: Boolean = collapsing || elision || simplification || fusion
-}
 
 /**
  * INTERNAL API
