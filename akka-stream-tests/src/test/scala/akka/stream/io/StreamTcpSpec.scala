@@ -158,9 +158,10 @@ class StreamTcpSpec extends AkkaSpec with TcpHelper {
       tcpWriteProbe.close()
 
       // Need a write on the server side to detect the close event
-      serverConnection.write(testData)
-      serverConnection.write(testData)
-      serverConnection.expectClosed(_.isErrorClosed)
+      awaitAssert({
+        serverConnection.write(testData)
+        serverConnection.expectClosed(_.isErrorClosed, 500.millis)
+      }, max = 5.seconds)
       serverConnection.expectTerminated()
     }
 
@@ -190,9 +191,10 @@ class StreamTcpSpec extends AkkaSpec with TcpHelper {
       tcpReadProbe.tcpReadSubscription.cancel()
 
       // Need a write on the server side to detect the close event
-      serverConnection.write(testData)
-      serverConnection.write(testData)
-      serverConnection.expectClosed(_.isErrorClosed)
+      awaitAssert({
+        serverConnection.write(testData)
+        serverConnection.expectClosed(_.isErrorClosed, 500.millis)
+      }, max = 5.seconds)
       serverConnection.expectTerminated()
     }
 
