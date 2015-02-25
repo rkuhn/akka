@@ -72,9 +72,9 @@ object FlexiRoute {
     trait RouteLogicContext {
 
       /**
-            * Emit one element downstream. It is only allowed to `emit` at most one element to
-            * each output in response to `onInput`, `IllegalStateException` is thrown.
-            */
+       * Emit one element downstream. It is only allowed to `emit` at most one element to
+       * each output in response to `onInput`, `IllegalStateException` is thrown.
+       */
       def emit[Out](output: Outlet[Out])(elem: Out): Unit
 
       /**
@@ -145,9 +145,9 @@ object FlexiRoute {
      * handlers may be invoked at any time (without regard to downstream demand being available).
      */
     sealed case class CompletionHandling(
-                                          onUpstreamFinish: RouteLogicContext ⇒ Unit,
-                                          onUpstreamFailure: (RouteLogicContext, Throwable) ⇒ Unit,
-                                          onDownstreamFinish: (RouteLogicContext, OutPort) ⇒ State[_])
+      onUpstreamFinish: RouteLogicContext ⇒ Unit,
+      onUpstreamFailure: (RouteLogicContext, Throwable) ⇒ Unit,
+      onDownstreamFinish: (RouteLogicContext, OutPort) ⇒ State[_])
 
     /**
      * When an output cancels it continues with remaining outputs.

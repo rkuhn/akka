@@ -151,13 +151,12 @@ private[akka] class FlexiMergeImpl[T, S <: Shape](
 
   })
 
-  private def triggerCompletionAfterRead(inputs: Seq[InPort]): Unit = {
-  private def callOnInput(input: InputHandle, element: Any): Unit = {
+  private def callOnInput(input: InPort, element: Any): Unit = {
     emitted = false
     changeBehavior(behavior.onInput(ctx, input, element))
   }
 
-  private def triggerCompletionAfterRead(inputs: Seq[InputHandle]): Unit = {
+  private def triggerCompletionAfterRead(inputs: Seq[InPort]): Unit = {
     var j = 0
     while (j < inputs.length) {
       triggerCompletionAfterRead(inputs(j))
