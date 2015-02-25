@@ -59,8 +59,6 @@ private[akka] class FlexiRouteImpl[T, S <: Shape](_settings: ActorFlowMaterializ
       require(outputBunch.isPending(idx), s"emit to [$output] not allowed when no demand available")
       if (emitted(idx))
         throw new IllegalStateException("It is only allowed to `emit` at most one element to each output in response to `onInput`")
-      require(outputBunch.isPending(output.portIndex),
-        s"emit to [$output] not allowed when no demand available")
       emitted(idx) = true
       outputBunch.enqueue(idx, elem)
     }
@@ -116,9 +114,6 @@ private[akka] class FlexiRouteImpl[T, S <: Shape](_settings: ActorFlowMaterializ
         case DemandFrom(output) ⇒
           require(indexOf.contains(output), s"Unknown output handle $output")
           val idx = indexOf(output)
-
-          require(!outputBunch.isCancelled(idx), s"Demand not allowed from cancelled $output")
-          require(!outputBunch.isCompleted(idx), s"Demand not allowed from completed $output")
           outputBunch.unmarkAllOutputs()
           outputBunch.markOutput(idx)
       }
@@ -128,30 +123,25 @@ private[akka] class FlexiRouteImpl[T, S <: Shape](_settings: ActorFlowMaterializ
   changeCompletionHandling(routeLogic.initialCompletionHandling)
 
   nextPhase(TransferPhase(precondition) { () ⇒
-    val elem = primaryInputs.dequeueInputElement()
+    val elem = primaryInputs.dequeueInputElement().asInstanceOf[T]
     behavior.condition match {
       case any: DemandFromAny ⇒
         val id = outputBunch.idToEnqueueAndYield()
         val outputHandle = outputMapping(id)
-        callOnInput(outputHandle, elem)
+        callOnInput(behavior.asInstanceOf[routeLogic.State[OutPort]], outputHandle, elem)
 
       case DemandFrom(outputHandle) ⇒
-        callOnInput(outputHandle, elem)
+        callOnInput(anyBehavior, outputHandle, elem)
 
       case all: DemandFromAll ⇒
-        changeBehavior(behavior.asInstanceOf[routeLogic.State[Unit]].onInput(ctx, (), elem.asInstanceOf[T]))
-
+        callOnInput(behavior.asInstanceOf[routeLogic.State[Unit]], (), elem)
     }
 
   })
 
-  private def callOnInput(output: OutPort, element: Any): Unit = {
-    var i = 0
-    while (i < emitted.length) {
-      emitted(i) = false
-      i += 1
-    }
-    changeBehavior(behavior.onInput(ctx, output, element))
+  private def callOnInput[U](b: routeLogic.State[U], output: U, element: T): Unit = {
+    java.util.Arrays.fill(emitted, false)
+    changeBehavior(b.onInput(ctx, output, element))
   }
 
 }

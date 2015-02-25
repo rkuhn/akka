@@ -86,7 +86,14 @@ object FlexiMerge {
      * is thrown.
      */
     def emit(elem: Out): Unit
+  }
 
+  /**
+   * Context that is passed to the `onInput` function of [[State]].
+   * The context provides means for performing side effects, such as emitting elements
+   * downstream.
+   */
+  trait MergeLogicContextBase[Out] {
     /**
      * Complete this stream successfully. Upstream subscriptions will be cancelled.
      */
@@ -125,8 +132,8 @@ object FlexiMerge {
    * handlers may be invoked at any time (without regard to downstream demand being available).
    */
   abstract class CompletionHandling[Out] {
-    def onUpstreamFinish(ctx: MergeLogicContext[Out], input: InPort): State[_, Out]
-    def onUpstreamFailure(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[_, Out]
+    def onUpstreamFinish(ctx: MergeLogicContextBase[Out], input: InPort): State[_, Out]
+    def onUpstreamFailure(ctx: MergeLogicContextBase[Out], input: InPort, cause: Throwable): State[_, Out]
   }
 
   /**
@@ -164,7 +171,7 @@ object FlexiMerge {
     /**
      * Convenience to create a [[ReadAny]] condition.
      */
-    @varargs def readAny(inputs: InputHandle*): ReadAny = {
+    @varargs def readAny[U](inputs: InPort*): ReadAny[U] = {
       import scala.collection.JavaConverters._
       new ReadAny(inputs.asJava)
     }
@@ -191,9 +198,9 @@ object FlexiMerge {
      */
     def defaultCompletionHandling: CompletionHandling[Out] =
       new CompletionHandling[Out] {
-        override def onUpstreamFinish(ctx: MergeLogicContext[Out], input: InPort): State[_, Out] =
+        override def onUpstreamFinish(ctx: MergeLogicContextBase[Out], input: InPort): State[_, Out] =
           sameState
-        override def onUpstreamFailure(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[_, Out] = {
+        override def onUpstreamFailure(ctx: MergeLogicContextBase[Out], input: InPort, cause: Throwable): State[_, Out] = {
           ctx.fail(cause)
           sameState
         }
@@ -205,11 +212,11 @@ object FlexiMerge {
      */
     def eagerClose: CompletionHandling[Out] =
       new CompletionHandling[Out] {
-        override def onUpstreamFinish(ctx: MergeLogicContext[Out], input: InPort): State[_, Out] = {
+        override def onUpstreamFinish(ctx: MergeLogicContextBase[Out], input: InPort): State[_, Out] = {
           ctx.finish()
           sameState
         }
-        override def onUpstreamFailure(ctx: MergeLogicContext[Out], input: InPort, cause: Throwable): State[_, Out] = {
+        override def onUpstreamFailure(ctx: MergeLogicContextBase[Out], input: InPort, cause: Throwable): State[_, Out] = {
           ctx.fail(cause)
           sameState
         }
@@ -249,18 +256,21 @@ object FlexiMerge {
         CompletionHandling(
           onUpstreamFinish = (ctx, inputHandle) ⇒ {
             val newDelegateState = delegateCompletionHandling.onUpstreamFinish(
-              new MergeLogicContextWrapper(ctx), inputHandle)
+              new MergeLogicContextBaseWrapper(ctx), inputHandle)
             wrapState(newDelegateState)
           },
           onUpstreamFailure = (ctx, inputHandle, cause) ⇒ {
             val newDelegateState = delegateCompletionHandling.onUpstreamFailure(
-              new MergeLogicContextWrapper(ctx), inputHandle, cause)
+              new MergeLogicContextBaseWrapper(ctx), inputHandle, cause)
             wrapState(newDelegateState)
           })
 
-      class MergeLogicContextWrapper(delegate: MergeLogicContext) extends FlexiMerge.MergeLogicContext[Out] {
+      class MergeLogicContextWrapper(delegate: MergeLogicContext)
+        extends MergeLogicContextBaseWrapper(delegate) with FlexiMerge.MergeLogicContext[Out] {
         override def emit(elem: Out): Unit = delegate.emit(elem)
-        override def finsh(): Unit = delegate.finish()
+      }
+      class MergeLogicContextBaseWrapper(delegate: MergeLogicContextBase) extends FlexiMerge.MergeLogicContextBase[Out] {
+        override def finish(): Unit = delegate.finish()
         override def fail(cause: Throwable): Unit = delegate.fail(cause)
         override def cancel(input: InPort): Unit = delegate.cancel(input)
         override def changeCompletionHandling(completion: FlexiMerge.CompletionHandling[Out]): Unit =

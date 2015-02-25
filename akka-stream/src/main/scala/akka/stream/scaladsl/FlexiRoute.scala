@@ -69,14 +69,15 @@ object FlexiRoute {
      * The context provides means for performing side effects, such as emitting elements
      * downstream.
      */
-    trait RouteLogicContext {
-
+    trait RouteLogicContext extends RouteLogicContextBase {
       /**
        * Emit one element downstream. It is only allowed to `emit` at most one element to
        * each output in response to `onInput`, `IllegalStateException` is thrown.
        */
       def emit[Out](output: Outlet[Out])(elem: Out): Unit
+    }
 
+    trait RouteLogicContextBase {
       /**
        * Complete the given downstream successfully.
        */
@@ -145,9 +146,9 @@ object FlexiRoute {
      * handlers may be invoked at any time (without regard to downstream demand being available).
      */
     sealed case class CompletionHandling(
-      onUpstreamFinish: RouteLogicContext ⇒ Unit,
-      onUpstreamFailure: (RouteLogicContext, Throwable) ⇒ Unit,
-      onDownstreamFinish: (RouteLogicContext, OutPort) ⇒ State[_])
+      onUpstreamFinish: RouteLogicContextBase ⇒ Unit,
+      onUpstreamFailure: (RouteLogicContextBase, Throwable) ⇒ Unit,
+      onDownstreamFinish: (RouteLogicContextBase, OutPort) ⇒ State[_])
 
     /**
      * When an output cancels it continues with remaining outputs.
