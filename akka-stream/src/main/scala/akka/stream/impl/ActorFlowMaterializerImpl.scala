@@ -72,7 +72,7 @@ case class ActorFlowMaterializerImpl(override val settings: ActorFlowMaterialize
       private def processorFor(op: StageModule, effectiveAttributes: OperationAttributes): (Processor[Any, Any], Any) = op match {
         case DirectProcessor(processorFactory, _) ⇒ processorFactory()
         case _ ⇒
-          val (opprops, mat) = ActorProcessorFactory.props(ActorFlowMaterializerImpl.this, op)
+          val (opprops, mat) = ActorProcessorFactory.props(ActorFlowMaterializerImpl.this, op, effectiveAttributes)
           val processor = ActorProcessorFactory[Any, Any](actorOf(
             opprops,
             stageName(effectiveAttributes),
@@ -208,21 +208,24 @@ private[akka] class StreamSupervisor(settings: ActorFlowMaterializerSettings) ex
 private[akka] object ActorProcessorFactory {
   import akka.stream.impl.Stages._
 
-  def props(materializer: ActorFlowMaterializerImpl, op: StageModule): (Props, Any) = {
-    val settings = materializer.settings // USE THIS TO AVOID CLOSING OVER THE MATERIALIZER BELOW
+  def props(materializer: ActorFlowMaterializerImpl, op: StageModule, parentAttributes: OperationAttributes): (Props, Any) = {
+    val att = parentAttributes and op.attributes
+    // USE THIS TO AVOID CLOSING OVER THE MATERIALIZER BELOW
+    // Also, otherwise the attributes will not affect the settings properly!
+    val settings = att.settings(materializer.settings)
     op match {
-      case Identity(att)              ⇒ (ActorInterpreter.props(settings, List(fusing.Map({ x: Any ⇒ x }, att.settings(settings).supervisionDecider))), ())
+      case Identity(_)                ⇒ (ActorInterpreter.props(settings, List(fusing.Map({ x: Any ⇒ x }, att.settings(settings).supervisionDecider))), ())
       case Fused(ops, _)              ⇒ (ActorInterpreter.props(settings, ops), ())
-      case Map(f, att)                ⇒ (ActorInterpreter.props(settings, List(fusing.Map(f, att.settings(settings).supervisionDecider))), ())
-      case Filter(p, att)             ⇒ (ActorInterpreter.props(settings, List(fusing.Filter(p, att.settings(settings).supervisionDecider))), ())
+      case Map(f, _)                  ⇒ (ActorInterpreter.props(settings, List(fusing.Map(f, att.settings(settings).supervisionDecider))), ())
+      case Filter(p, _)               ⇒ (ActorInterpreter.props(settings, List(fusing.Filter(p, att.settings(settings).supervisionDecider))), ())
       case Drop(n, _)                 ⇒ (ActorInterpreter.props(settings, List(fusing.Drop(n))), ())
       case Take(n, _)                 ⇒ (ActorInterpreter.props(settings, List(fusing.Take(n))), ())
-      case Collect(pf, att)           ⇒ (ActorInterpreter.props(settings, List(fusing.Collect(att.settings(settings).supervisionDecider)(pf))), ())
-      case Scan(z, f, att)            ⇒ (ActorInterpreter.props(settings, List(fusing.Scan(z, f, att.settings(settings).supervisionDecider))), ())
+      case Collect(pf, _)             ⇒ (ActorInterpreter.props(settings, List(fusing.Collect(att.settings(settings).supervisionDecider)(pf))), ())
+      case Scan(z, f, _)              ⇒ (ActorInterpreter.props(settings, List(fusing.Scan(z, f, att.settings(settings).supervisionDecider))), ())
       case Expand(s, f, _)            ⇒ (ActorInterpreter.props(settings, List(fusing.Expand(s, f))), ())
-      case Conflate(s, f, att)        ⇒ (ActorInterpreter.props(settings, List(fusing.Conflate(s, f, att.settings(settings).supervisionDecider))), ())
+      case Conflate(s, f, _)          ⇒ (ActorInterpreter.props(settings, List(fusing.Conflate(s, f, att.settings(settings).supervisionDecider))), ())
       case Buffer(n, s, _)            ⇒ (ActorInterpreter.props(settings, List(fusing.Buffer(n, s))), ())
-      case MapConcat(f, att)          ⇒ (ActorInterpreter.props(settings, List(fusing.MapConcat(f, att.settings(settings).supervisionDecider))), ())
+      case MapConcat(f, _)            ⇒ (ActorInterpreter.props(settings, List(fusing.MapConcat(f, att.settings(settings).supervisionDecider))), ())
       case MapAsync(f, _)             ⇒ (MapAsyncProcessorImpl.props(settings, f), ())
       case MapAsyncUnordered(f, _)    ⇒ (MapAsyncUnorderedProcessorImpl.props(settings, f), ())
       case Grouped(n, _)              ⇒ (ActorInterpreter.props(settings, List(fusing.Grouped(n))), ())

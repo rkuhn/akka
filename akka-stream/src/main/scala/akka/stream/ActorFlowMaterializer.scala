@@ -230,8 +230,7 @@ final case class ActorFlowMaterializerSettings(
 
   require(initialInputBufferSize > 0, "initialInputBufferSize must be > 0")
 
-  require(maxInputBufferSize > 0, "maxInputBufferSize must be > 0")
-  require(isPowerOfTwo(maxInputBufferSize), "maxInputBufferSize must be a power of two")
+  requirePowerOfTwo(maxInputBufferSize, "maxInputBufferSize")
   require(initialInputBufferSize <= maxInputBufferSize, s"initialInputBufferSize($initialInputBufferSize) must be <= maxInputBufferSize($maxInputBufferSize)")
 
   def withInputBuffer(initialSize: Int, maxSize: Int): ActorFlowMaterializerSettings =
@@ -262,9 +261,10 @@ final case class ActorFlowMaterializerSettings(
   def withOptimizations(optimizations: Optimizations): ActorFlowMaterializerSettings =
     copy(optimizations = optimizations)
 
-  // This considers 0 a power of 2, but this is called after a require n > 0. Never call this method without that
-  // kind of guard in front of it
-  private def isPowerOfTwo(n: Integer): Boolean = (n & (n - 1)) == 0
+  private def requirePowerOfTwo(n: Integer, name: String): Unit = {
+    require(maxInputBufferSize > 0, s"$name must be > 0")
+    require((n & (n - 1)) == 0, s"$name must be a power of two")
+  }
 }
 
 object StreamSubscriptionTimeoutSettings {
