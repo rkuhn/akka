@@ -165,7 +165,7 @@ object FlexiRoute {
     val eagerClose: CompletionHandling = CompletionHandling(
       onUpstreamFinish = _ ⇒ (),
       onUpstreamFailure = (ctx, cause) ⇒ (),
-      onDownstreamFinish = (ctx, _) ⇒ { ctx.complete(); SameState })
+      onDownstreamFinish = (ctx, _) ⇒ { ctx.finish(); SameState })
 
   }
 

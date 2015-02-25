@@ -19,18 +19,16 @@ import akka.actor.ExtensionIdProvider
 import akka.actor.Props
 import akka.io.Inet.SocketOption
 import akka.io.Tcp
-import akka.stream.{ FlowMaterializer, MaterializerSettings }
+import akka.stream._
 import akka.stream.impl._
 import akka.stream.scaladsl._
 import akka.util.ByteString
-import org.reactivestreams.{ Processor, Subscriber, Subscription }
+import org.reactivestreams.{ Publisher, Processor, Subscriber, Subscription }
 import akka.actor.actorRef2Scala
 import akka.stream.impl.io.TcpStreamActor
 import akka.stream.impl.io.TcpListenStreamActor
 import akka.stream.impl.io.DelayedInitProcessor
 import akka.stream.impl.io.StreamTcpManager
-import akka.stream.SourceShape
-import akka.stream.Outlet
 
 object StreamTcp extends ExtensionId[StreamTcp] with ExtensionIdProvider {
 

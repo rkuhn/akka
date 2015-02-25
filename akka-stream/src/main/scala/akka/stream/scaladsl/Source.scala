@@ -358,17 +358,6 @@ object Source extends SourceApply {
   def failed[T](cause: Throwable): Source[T, Unit] = apply(ErrorPublisher(cause, "failed"), "FailedSource")
 
   /**
-   * Create a `Source` with no elements, which does not complete its downstream,
-   * until externally triggered to do so.
-   *
-   * It materializes a [[scala.concurrent.Promise]] which will be completed
-   * when the downstream stage of this source cancels. This promise can also
-   * be used to externally trigger completion, which the source then signalls
-   * to its downstream.
-   */
-  def lazyEmpty[T]() = LazyEmptySource[T]()
-
-  /**
    * Create a `Source` that immediately ends the stream with the `cause` failure to every connected `Sink`.
    */
   def failed[T](cause: Throwable, name: String): Source[T, Unit] = apply(ErrorPublisher(cause, "failed"), name)

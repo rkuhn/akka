@@ -228,17 +228,17 @@ object FlexiRoute {
             delegateCompletionHandling.onUpstreamFailure(new RouteLogicContextWrapper(widenedCtxt), cause)
           },
           onDownstreamFinish = (ctx, outputHandle) ⇒ {
-            val newDelegateState = delegateCompletionHandling.onCancel(
+            val newDelegateState = delegateCompletionHandling.onDownstreamFinish(
               new RouteLogicContextWrapper(ctx), outputHandle)
             wrapState(newDelegateState)
           })
 
       class RouteLogicContextWrapper(delegate: RouteLogicContext) extends FlexiRoute.RouteLogicContext[In] {
         override def emit[T](output: Outlet[T], elem: T): Unit = delegate.emit(output)(elem)
-        override def complete(): Unit = delegate.complete()
-        override def complete(output: OutPort): Unit = delegate.complete(output)
-        override def error(cause: Throwable): Unit = delegate.error(cause)
-        override def error(output: OutPort, cause: Throwable): Unit = delegate.error(output, cause)
+        override def finish(): Unit = delegate.finish()
+        override def finish(output: OutPort): Unit = delegate.finish(output)
+        override def fail(cause: Throwable): Unit = delegate.fail(cause)
+        override def fail(output: OutPort, cause: Throwable): Unit = delegate.fail(output, cause)
         override def changeCompletionHandling(completion: FlexiRoute.CompletionHandling[In]): Unit =
           delegate.changeCompletionHandling(wrapCompletionHandling(completion))
       }
