@@ -57,13 +57,15 @@ abstract class CoderSpec extends WordSpec with CodecSpecSupport with Inspectors 
       val request = HttpRequest(POST, entity = HttpEntity(largeText))
       Coder.decode(Coder.encode(request)).toStrict(1.second).awaitResult(1.second) should equal(request)
     }
-    "throw an error on corrupt input" in {
-      corruptInputMessage foreach { message ⇒
+
+    if (corruptInputCheck) {
+      "throw an error on corrupt input" in {
         (the[RuntimeException] thrownBy {
           ourDecode(corruptContent)
         }).getCause should be(a[DataFormatException])
       }
     }
+
     "not throw an error if a subsequent block is corrupt" in {
       pending // FIXME: should we read as long as possible and only then report an error, that seems somewhat arbitrary
       ourDecode(Seq(encode("Hello,"), encode(" dear "), corruptContent).join) should readAs("Hello, dear ")

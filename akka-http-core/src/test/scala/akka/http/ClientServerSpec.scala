@@ -41,9 +41,9 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
     "properly bind a server" in {
       val (hostname, port) = temporaryServerHostnameAndPort()
       val probe = StreamTestKit.SubscriberProbe[Http.IncomingConnection]()
-      val binding = Http().bind(hostname, port).runWith(Sink(probe))
+      val binding = Http().bind(hostname, port).toMat(Sink(probe))(Keep.left).run()
       val sub = probe.expectSubscription() // if we get it we are bound
-      val address = Await.result(binding.localAddress(mm), 1.second)
+      val address = Await.result(binding, 1.second).localAddress
       sub.cancel()
     }
 
@@ -51,40 +51,30 @@ class ClientServerSpec extends WordSpec with Matchers with BeforeAndAfterAll {
       val (hostname, port) = temporaryServerHostnameAndPort()
       val binding = Http().bind(hostname, port)
       val probe1 = StreamTestKit.SubscriberProbe[Http.IncomingConnection]()
-      val b1 = Await.result(binding.toMat(Sink(probe1))(Keep.left).run(), 3.seconds)
+      // Bind succeeded, we have a local address
+      val b1 = Await.result(binding.to(Sink(probe1)).run(), 3.seconds)
       probe1.expectSubscription()
 
-      // Bind succeeded, we have a local address
-      Await.result(binding), 1.second)
-
       val probe2 = StreamTestKit.SubscriberProbe[Http.IncomingConnection]()
-      val mm2 = binding.connections.to(Sink(probe2)).run()
+      an[BindFailedException] shouldBe thrownBy { Await.result(binding.to(Sink(probe2)).run(), 3.seconds) }
       probe2.expectErrorOrSubscriptionFollowedByError()
 
       val probe3 = StreamTestKit.SubscriberProbe[Http.IncomingConnection]()
-      val mm3 = binding.connections.to(Sink(probe3)).run()
+      an[BindFailedException] shouldBe thrownBy { Await.result(binding.to(Sink(probe3)).run(), 3.seconds) }
       probe3.expectErrorOrSubscriptionFollowedByError()
 
-      an[BindFailedException] shouldBe thrownBy { Await.result(binding.localAddress(mm2), 1.second) }
-      an[BindFailedException] shouldBe thrownBy { Await.result(binding.localAddress(mm3), 1.second) }
-
-      // The unbind should NOT fail even though the bind failed.
-      Await.result(binding.unbind(mm2), 1.second)
-      Await.result(binding.unbind(mm3), 1.second)
-
       // Now unbind the first
-      Await.result(binding.unbind(mm1), 1.second)
+      Await.result(b1.unbind(), 1.second)
       probe1.expectComplete()
 
       if (!akka.util.Helpers.isWindows) {
         val probe4 = StreamTestKit.SubscriberProbe[Http.IncomingConnection]()
-        val mm4 = binding.connections.to(Sink(probe4)).run()
+        // Bind succeeded, we have a local address
+        val b2 = Await.result(binding.to(Sink(probe4)).run(), 3.seconds)
         probe4.expectSubscription()
 
-        // Bind succeeded, we have a local address
-        Await.result(binding.localAddress(mm4), 1.second)
         // clean up
-        Await.result(binding.unbind(mm4), 1.second)
+        Await.result(b2.unbind(), 1.second)
       }
     }
 

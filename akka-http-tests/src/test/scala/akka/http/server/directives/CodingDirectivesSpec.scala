@@ -126,7 +126,7 @@ class CodingDirectivesSpec extends RoutingSpec {
     }
     "encode the response content with GZIP if the request has no Accept-Encoding header" in {
       Post() ~> {
-        encodeResponse(Gzip) { yeah }
+        encodeResponseWith(Gzip) { yeah }
       } ~> check { strictify(responseEntity) shouldEqual HttpEntity(ContentType(`text/plain`, `UTF-8`), yeahGzipped) }
     }
     "reject the request if the client does not accept GZIP encoding" in {
