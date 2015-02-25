@@ -9,9 +9,10 @@ import akka.stream.testkit.AkkaSpec
 import akka.stream.testkit.StreamTestKit.{ PublisherProbe, AutoPublisher, OnNext, SubscriberProbe }
 import org.reactivestreams.Publisher
 import akka.stream._
-
 import scala.util.control.NoStackTrace
 import scala.collection.immutable
+import akka.actor.ActorRef
+import akka.testkit.TestProbe
 
 object GraphFlexiMergeSpec {
 
@@ -100,8 +101,6 @@ object GraphFlexiMergeSpec {
     }
   }
 
-
-
   object PreferringMerge extends FlexiMerge[Int, UniformFanInShape[Int, Int]](new UniformFanInShape(3), OperationAttributes.name("PreferringMerge")) {
     def createMergeLogic(p: PortT) = new MergeLogic[Int] {
       override def initialState = State(Read(p.in(0))) {
@@ -117,7 +116,9 @@ object GraphFlexiMergeSpec {
     }
   }
 
-  object TestMerge extends FlexiMerge[String, UniformFanInShape[String, String]](new UniformFanInShape(3), OperationAttributes.name("TestMerge")) {
+  class TestMerge(completionProbe: ActorRef)
+    extends FlexiMerge[String, UniformFanInShape[String, String]](new UniformFanInShape(3), OperationAttributes.name("TestMerge")) {
+
     def createMergeLogic(p: PortT) = new MergeLogic[String] {
       var throwFromOnComplete = false
 
@@ -126,12 +127,12 @@ object GraphFlexiMergeSpec {
           if (element == "cancel")
             ctx.cancel(input)
           else if (element == "err")
-            ctx.error(new RuntimeException("err") with NoStackTrace)
+            ctx.fail(new RuntimeException("err") with NoStackTrace)
           else if (element == "exc")
             throw new RuntimeException("exc") with NoStackTrace
           else if (element == "complete")
-            ctx.complete()
-          else if (element == "onComplete-exc")
+            ctx.finish()
+          else if (element == "onUpstreamFinish-exc")
             throwFromOnComplete = true
           else
             ctx.emit("onInput: " + element)
@@ -140,17 +141,16 @@ object GraphFlexiMergeSpec {
       }
 
       override def initialCompletionHandling = CompletionHandling(
-        onComplete = { (ctx, input) ⇒
+        onUpstreamFinish = { (ctx, input) ⇒
           if (throwFromOnComplete)
-            throw new RuntimeException("onComplete-exc") with NoStackTrace
-          if (ctx.isDemandAvailable)
-            ctx.emit("onComplete: " + input)
+            throw new RuntimeException("onUpstreamFinish-exc") with NoStackTrace
+          completionProbe ! input.toString
           SameState
         },
-        onError = { (ctx, input, cause) ⇒
+        onUpstreamFailure = { (ctx, input, cause) ⇒
           cause match {
             case _: IllegalArgumentException ⇒ // swallow
-            case _                           ⇒ ctx.error(cause)
+            case _                           ⇒ ctx.fail(cause)
           }
           SameState
         })
@@ -252,16 +252,16 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "allow zip reuse" in {
       val flow = Flow() { implicit b ⇒
-        val merge = b.add(new MyZip[String, String])
+        val zip = b.add(new MyZip[String, String])
 
-        Source(() ⇒ Iterator.continually("+")) ~> merge.in0
+        Source(() ⇒ Iterator.continually("+")) ~> zip.in0
 
-        (merge.in1, merge.out)
+        (zip.in1, zip.out)
       }
 
       val g = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val zip = b add Zip[String, String]()
+          val zip = b.add(Zip[String, String]())
 
           in1 ~> flow.map(_.toString()) ~> zip.in0
           in2 ~> zip.in1
@@ -462,9 +462,10 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "support cancel of input" in {
       val publisher = PublisherProbe[String]
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
+          val merge = b.add(new TestMerge(completionProbe.ref))
           Source(publisher) ~> merge.in(0)
           Source(List("b", "c", "d")) ~> merge.in(1)
           Source(List("e", "f")) ~> merge.in(2)
@@ -481,18 +482,17 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       val sub = s.expectSubscription()
       sub.request(10)
       val outputs =
-        for (_ ← 1 to 8) yield {
+        for (_ ← 1 to 6) yield {
           val next = s.expectNext()
           if (next.startsWith("onInput: ")) next.substring(9) else next.substring(12)
         }
       val one = Seq("a")
       val two = Seq("b", "c", "d")
       val three = Seq("e", "f")
-      val four = Set("UniformFanIn.in1", "UniformFanIn.in2")
       outputs.filter(one.contains) should ===(one)
       outputs.filter(two.contains) should ===(two)
       outputs.filter(three.contains) should ===(three)
-      outputs.filter(four.contains).toSet should ===(four)
+      completionProbe.expectMsgAllOf("UniformFanIn.in1", "UniformFanIn.in2")
 
       autoPublisher.sendNext("x")
 
@@ -503,9 +503,10 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       val publisher1 = PublisherProbe[String]
       val publisher2 = PublisherProbe[String]
       val publisher3 = PublisherProbe[String]
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
+          val merge = b.add(new TestMerge(completionProbe.ref))
           Source(publisher1) ~> merge.in(0)
           Source(publisher2) ~> merge.in(1)
           Source(publisher3) ~> merge.in(2)
@@ -536,9 +537,10 @@ class GraphFlexiMergeSpec extends AkkaSpec {
     }
 
     "handle failure" in {
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
+          val merge = b.add(new TestMerge(completionProbe.ref))
           Source.failed[String](new IllegalArgumentException("ERROR") with NoStackTrace) ~> merge.in(0)
           Source(List("a", "b")) ~> merge.in(1)
           Source(List("c")) ~> merge.in(2)
@@ -551,25 +553,25 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       sub.request(10)
       // IllegalArgumentException is swallowed by the CompletionHandler
       val outputs =
-        for (_ ← 1 to 5) yield {
+        for (_ ← 1 to 3) yield {
           val next = s.expectNext()
           if (next.startsWith("onInput: ")) next.substring(9) else next.substring(12)
         }
       val one = Seq("a", "b")
       val two = Seq("c")
-      val three = Set("UniformFanIn.in1", "UniformFanIn.in2")
+      completionProbe.expectMsgAllOf("UniformFanIn.in1", "UniformFanIn.in2")
       outputs.filter(one.contains) should ===(one)
       outputs.filter(two.contains) should ===(two)
-      outputs.filter(three.contains).toSet should ===(three)
 
       s.expectComplete()
     }
 
     "propagate failure" in {
       val publisher = PublisherProbe[String]
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
+          val merge = b.add(new TestMerge(completionProbe.ref))
           Source(publisher) ~> merge.in(0)
           Source.failed[String](new IllegalStateException("ERROR") with NoStackTrace) ~> merge.in(1)
           Source.empty[String] ~> merge.in(2)
@@ -583,9 +585,10 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "emit failure" in {
       val publisher = PublisherProbe[String]
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
+          val merge = b.add(new TestMerge(completionProbe.ref))
           Source(List("err")) ~> merge.in(0)
           Source(publisher) ~> merge.in(1)
           Source.empty[String] ~> merge.in(2)
@@ -602,9 +605,10 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "emit failure for user thrown exception" in {
       val publisher = PublisherProbe[String]
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
+          val merge = b.add(new TestMerge(completionProbe.ref))
           Source(List("exc")) ~> merge.in(0)
           Source(publisher) ~> merge.in(1)
           Source.empty[String] ~> merge.in(2)
@@ -620,10 +624,11 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "emit failure for user thrown exception in onComplete" in {
       val publisher = PublisherProbe[String]
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
-          Source(List("onComplete-exc")) ~> merge.in(0)
+          val merge = b.add(new TestMerge(completionProbe.ref))
+          Source(List("onUpstreamFinish-exc")) ~> merge.in(0)
           Source(publisher) ~> merge.in(1)
           Source.empty[String] ~> merge.in(2)
           merge.out ~> o.inlet
@@ -633,14 +638,15 @@ class GraphFlexiMergeSpec extends AkkaSpec {
       p.subscribe(s)
       val sub = s.expectSubscription()
       sub.request(10)
-      s.expectError().getMessage should be("onComplete-exc")
+      s.expectError().getMessage should be("onUpstreamFinish-exc")
     }
 
     "emit failure for user thrown exception in onUpstreamFinish 2" in {
       val publisher = PublisherProbe[String]
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
+          val merge = b.add(new TestMerge(completionProbe.ref))
           Source.empty[String] ~> merge.in(0)
           Source(publisher) ~> merge.in(1)
           Source.empty[String] ~> merge.in(2)
@@ -663,9 +669,10 @@ class GraphFlexiMergeSpec extends AkkaSpec {
 
     "support finish from onInput" in {
       val publisher = PublisherProbe[String]
+      val completionProbe = TestProbe()
       val p = FlowGraph.closed(out) { implicit b ⇒
         o ⇒
-          val merge = b.add(TestMerge)
+          val merge = b.add(new TestMerge(completionProbe.ref))
           Source(List("a", "complete")) ~> merge.in(0)
           Source(publisher) ~> merge.in(1)
           Source.empty[String] ~> merge.in(2)

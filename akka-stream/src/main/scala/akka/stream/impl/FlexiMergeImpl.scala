@@ -134,26 +134,23 @@ private[akka] class FlexiMergeImpl[T, S <: Shape](
       case Read(input) ⇒
         val elem = inputBunch.dequeue(indexOf(input))
         // FIXME: callOnInput
-        changeBehavior(anyBehavior.onInput(ctx, input, elem))
+        callOnInput(input, elem)
         triggerCompletionAfterRead(input)
       case read: ReadAll[t] ⇒
-        val inputHandles = read.inputs
-
-        val values = inputHandles.collect {
+        val inputs = read.inputs
+        val values = inputs.collect {
           case input if include(input) ⇒ input → inputBunch.dequeue(indexOf(input))
         }
-
-        changeBehavior(behavior.onInput(ctx, inputHandles.head, read.mkResult(Map(values: _*))))
-
+        callOnInput(inputs.head, read.mkResult(Map(values: _*)))
         // must be triggered after emitting the accumulated out value
-        triggerCompletionAfterRead(inputHandles)
+        triggerCompletionAfterRead(inputs)
     }
 
   })
 
   private def callOnInput(input: InPort, element: Any): Unit = {
     emitted = false
-    changeBehavior(behavior.onInput(ctx, input, element))
+    changeBehavior(anyBehavior.onInput(ctx, input, element))
   }
 
   private def triggerCompletionAfterRead(inputs: Seq[InPort]): Unit = {

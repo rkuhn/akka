@@ -79,7 +79,8 @@ object GraphFlexiRouteSpec {
     }
   }
 
-  class TestRoute extends FlexiRoute[String, FanOutShape2[String, String, String]](new FanOutShape2("TestRoute"), OperationAttributes.name("TestRoute")) {
+  class TestRoute(completionProbe: ActorRef)
+    extends FlexiRoute[String, FanOutShape2[String, String, String]](new FanOutShape2("TestRoute"), OperationAttributes.name("TestRoute")) {
     import FlexiRoute._
 
     var throwFromOnComplete = false
@@ -119,7 +120,7 @@ object GraphFlexiRouteSpec {
           }
         },
         onDownstreamFinish = { (ctx, cancelledOutput) ⇒
-          completionProbe ! "onDownstreamFinish: " + cancelledOutput.portIndex
+          completionProbe ! "onDownstreamFinish: " + cancelledOutput
           SameState
         })
     }
@@ -131,7 +132,7 @@ object GraphFlexiRouteSpec {
     val s2 = SubscriberProbe[String]
     val completionProbe = TestProbe()
     FlowGraph.closed() { implicit b ⇒
-      val route = b.add(new TestRoute)
+      val route = b.add(new TestRoute(completionProbe.ref))
       Source(publisher) ~> route.in
       route.out0 ~> Sink(s1)
       route.out1 ~> Sink(s2)
@@ -346,7 +347,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       sub2.request(2)
       sub1.cancel()
 
-      s2.expectNext("onDownstreamFinish: TestRoute.out0")
+      completionProbe.expectMsg("onDownstreamFinish: TestRoute.out0")
       s1.expectNoMsg(200.millis)
 
       autoPublisher.sendNext("c")
@@ -407,7 +408,7 @@ class GraphFlexiRouteSpec extends AkkaSpec {
       sub2.request(2)
       sub1.cancel()
 
-      s2.expectNext("onDownstreamFinish: TestRoute.out0")
+      completionProbe.expectMsg("onDownstreamFinish: TestRoute.out0")
       sub2.cancel()
 
       autoPublisher.subscription.expectCancellation()

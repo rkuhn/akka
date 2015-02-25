@@ -180,12 +180,12 @@ public class FlexiMergeTest {
       return new MergeLogic<T, T>() {
         private final CompletionHandling<T> emitOtherOnClose = new CompletionHandling<T>() {
           @Override
-          public State<T, T> onUpstreamFinish(MergeLogicContext<T> ctx, InPort input) {
+          public State<T, T> onUpstreamFinish(MergeLogicContextBase<T> ctx, InPort input) {
             ctx.changeCompletionHandling(defaultCompletionHandling());
             return readRemaining(other(input));
           }
           @Override
-          public State<T, T> onUpstreamFailure(MergeLogicContext<T> ctx, InPort inputHandle, Throwable cause) {
+          public State<T, T> onUpstreamFailure(MergeLogicContextBase<T> ctx, InPort inputHandle, Throwable cause) {
               ctx.fail(cause);
             return sameState();
           }

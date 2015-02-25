@@ -99,7 +99,7 @@ object FlexiMerge {
     def initialCompletionHandling: CompletionHandling = defaultCompletionHandling
 
     /**
-     * Context that is passed to the `onInput` function of [[State]].
+     * Context that is passed to the `onInput` function of [[FlexiMerge$.State]].
      * The context provides means for performing side effects, such as emitting elements
      * downstream.
      */
@@ -110,7 +110,15 @@ object FlexiMerge {
        * is thrown.
        */
       def emit(elem: Out): Unit
+    }
 
+    /**
+     * Context that is passed to the `onUpstreamFinish` and `onUpstreamFailure`
+     * functions of [[FlexiMerge$.CompletionHandling]].
+     * The context provides means for performing side effects, such as emitting elements
+     * downstream.
+     */
+    trait MergeLogicContextBase {
       /**
        * Complete this stream successfully. Upstream subscriptions will be cancelled.
        */
@@ -175,8 +183,8 @@ object FlexiMerge {
      * handlers may be invoked at any time (without regard to downstream demand being available).
      */
     sealed case class CompletionHandling(
-      onUpstreamFinish: (MergeLogicContext, InPort) ⇒ State[_],
-      onUpstreamFailure: (MergeLogicContext, InPort, Throwable) ⇒ State[_])
+      onUpstreamFinish: (MergeLogicContextBase, InPort) ⇒ State[_],
+      onUpstreamFailure: (MergeLogicContextBase, InPort, Throwable) ⇒ State[_])
 
     /**
      * Will continue to operate until a read becomes unsatisfiable, then it completes.
